@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.11.1
+// @version      1.12.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -229,27 +229,45 @@
   const GLOSSARY_TTL = 10 * 60 * 1000;
 
   // glossary.txt 형식: 한 줄에 '한국어=태국어', '#' 로 시작하는 줄은 설명.
+  // 칸 제목('# --- … ---')에 MOD_TAG 가 붙은 칸의 말은 꾸밈말(색·소재·성별·냉동…)로 따로
+  // 모아 둔다. 조합할 때 상품 이름 뒤로 보내는 데 쓴다(assembleThai).
+  const MOD_TAG = '@꾸밈말';
+
   function parseGlossary(text) {
-    const out = {};
+    const map = {};
+    const mods = new Set(); // squash 한 한국어
+    let inMod = false;
     for (const line of String(text || '').split('\n')) {
       const t = line.trim();
-      if (!t || t.startsWith('#')) continue;
+      if (t.startsWith('#')) {
+        if (/^#\s*---/.test(t)) inMod = t.includes(MOD_TAG);
+        continue;
+      }
       const i = t.indexOf('=');
       if (i <= 0) continue;
       const k = normKey(t.slice(0, i));
       const v = t.slice(i + 1).trim();
-      if (k && v) out[k] = v;
+      if (!k || !v) continue;
+      map[k] = v;
+      if (inMod) mods.add(squash(k));
+      else mods.delete(squash(k)); // 같은 말이 아래에 또 있으면 아래 칸을 따른다
     }
-    return out;
+    return { map, mods };
   }
 
   let glossaryStore = GM_getValue(GLOSSARY_STORE, null);
-  let glossaryMap = null; // 처음 쓸 때 해석한다 (normKey 가 쓰는 상수가 아직 정의 전이라)
+  let glossaryParsed = null; // 처음 쓸 때 해석한다 (normKey 가 쓰는 상수가 아직 정의 전이라)
   let glossaryLoading = null;
 
+  function parsedGlossary() {
+    if (!glossaryParsed) glossaryParsed = parseGlossary(glossaryStore && glossaryStore.text);
+    return glossaryParsed;
+  }
   function remoteGlossary() {
-    if (!glossaryMap) glossaryMap = parseGlossary(glossaryStore && glossaryStore.text);
-    return glossaryMap;
+    return parsedGlossary().map;
+  }
+  function glossaryMods() {
+    return parsedGlossary().mods;
   }
 
   // GitHub 에서 받아 사본을 갈아 끼운다. 실패하면 있던 사본을 그대로 쓴다.
@@ -259,11 +277,11 @@
       for (const src of GLOSSARY_SOURCES) {
         try {
           const text = await request({ method: 'GET', url: src.url, headers: src.headers, timeout: 8000 });
-          const map = parseGlossary(text);
-          if (!Object.keys(map).length) throw new Error('내용이 비어 있습니다');
+          const parsed = parseGlossary(text);
+          if (!Object.keys(parsed.map).length) throw new Error('내용이 비어 있습니다');
           glossaryStore = { text, at: Date.now() };
           GM_setValue(GLOSSARY_STORE, glossaryStore);
-          glossaryMap = map;
+          glossaryParsed = parsed;
           return true;
         } catch (e) {
           console.warn(`[${APP_NAME}] 용어집 받기 실패 (${src.url}):`, e.message);
@@ -417,7 +435,7 @@
       }
       glossaryStore = { text: merged.text, at: Date.now() };
       GM_setValue(GLOSSARY_STORE, glossaryStore);
-      glossaryMap = parseGlossary(merged.text);
+      glossaryParsed = parseGlossary(merged.text);
       return merged;
     }
   }
@@ -1265,10 +1283,15 @@
     return { pieces: merged, unknown: merged.filter((p) => p.kind === 'unknown') };
   }
 
-  // 조각을 태국어 검색어로 잇는다. 한국어는 꾸미는 말이 앞에, 태국어는 뒤에 온다
-  // (여성용 방수 운동화 → รองเท้าผ้าใบ กันน้ำ ผู้หญิง). 그래서 순서를 뒤집는다.
-  // 영문·숫자가 이어진 부분(iPhone 15 Pro)은 한 덩어리로 묶어 제 순서를 지킨다.
-  // 숫자에 바로 붙은 단위(27인치 → 27 นิ้ว)도 그 덩어리에 넣는다. 뒤집으면 'นิ้ว 27' 이 된다.
+  // 조각을 태국어 검색어로 잇는다. 태국 상품명은 상품 이름이 먼저, 꾸밈말이 뒤에 온다
+  // (ไส้ใหญ่หมูแช่แข็ง, รองเท้าผ้าใบกันน้ำผู้หญิง). 한국어로는 꾸밈말을 앞에도 뒤에도 친다
+  // ('냉동 돼지막창' / '돼지막창 냉동'). 처음에는 순서를 통째로 뒤집었는데, 그러면 뒤에 친
+  // 꾸밈말이 앞으로 가 버렸다(돼지막창 냉동 → แช่แข็ง ไส้ใหญ่หมู). 그래서
+  //   상품 이름(뒤집어서) → 상품 앞에 쳤던 꾸밈말(뒤집어서) → 상품 뒤에 쳤던 꾸밈말(그대로)
+  // 로 잇는다. 상품 이름끼리 뒤집는 것은 '고양이 모래 → ทราย แมว' 때문이다.
+  // 꾸밈말: 용어집의 @꾸밈말 칸, 영문·숫자 덩어리(iPhone 15 Pro, 27 นิ้ว, L), 용어집에 없던 말.
+  // 영문·숫자가 이어진 부분은 한 덩어리로 묶어 제 순서를 지키고, 숫자에 바로 붙은 단위
+  // (27인치 → 27 นิ้ว)도 그 덩어리에 넣는다.
   function assembleThai(pieces) {
     const groups = [];
     let run = null;
@@ -1278,18 +1301,35 @@
       const latin = !THAI.test(p.th);
       const unit = run && prev && prev.word === p.word && /^[\d.,]+$/.test(prev.th);
       if (run && (latin || unit)) {
-        run.push(p.th);
+        run.push(p);
       } else if (latin) {
-        groups.push((run = [p.th]));
+        groups.push((run = [p]));
       } else {
         run = null;
-        groups.push([p.th]);
+        groups.push([p]);
       }
       prev = p;
     }
+
+    const mods = glossaryMods();
+    const isHead = (g) =>
+      g.length === 1 && g[0].kind === 'glossary' && THAI.test(g[0].th) && !mods.has(squash(g[0].ko));
+    let last = -1;
+    groups.forEach((g, i) => {
+      if (isHead(g)) last = i;
+    });
+    const ordered =
+      last < 0
+        ? groups.slice().reverse() // 상품 이름을 모르면 예전처럼 뒤집는다
+        : [
+            ...groups.filter((g, i) => i <= last && isHead(g)).reverse(),
+            ...groups.filter((g, i) => i < last && !isHead(g)).reverse(),
+            ...groups.slice(last + 1),
+          ];
+
     const out = [];
-    for (const g of groups.reverse()) {
-      const s = g.join(' ');
+    for (const g of ordered) {
+      const s = g.map((p) => p.th).join(' ');
       if (!out.includes(s)) out.push(s); // '유리컵' → แก้ว + แก้ว 같은 겹침
     }
     return out.join(' ');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.10.0
+// @version      1.11.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -16,7 +16,6 @@
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @grant        GM_xmlhttpRequest
-// @grant        GM_setClipboard
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -31,7 +30,7 @@
 // (실제로 이름을 '라자다 …' → '태국 쇼핑 …' 으로 고쳤다가 업데이트 고리가 끊긴 적 있다.)
 // 사이트를 추가할 때 손대는 곳은 @match, @description, 그리고 아래 SITES 뿐이다.
 
-/* global GM_xmlhttpRequest, GM_setValue, GM_getValue, GM_addStyle, GM_registerMenuCommand, GM_setClipboard */
+/* global GM_xmlhttpRequest, GM_setValue, GM_getValue, GM_addStyle, GM_registerMenuCommand */
 
 (function () {
   'use strict';
@@ -186,6 +185,8 @@
     confirmSearch: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
     glossary: {},      // 예전 방식의 '내 용어집'(이 PC에만). 이제는 GitHub glossary.txt 를 쓴다
+    githubToken: '',   // 용어집 저장용. th-korean-glossary 쓰기 권한만 있는 토큰 (이 PC에만)
+    githubUser: '',    // 토큰 확인 때 받은 GitHub 아이디 (표시용)
     pageGlossary: {},  // 표시: 원문 -> 한국어 (브랜드명 보존 등)
   };
 
@@ -208,7 +209,11 @@
   // 사본이 GLOSSARY_TTL 보다 오래되면 뒤에서 조용히 새로 받는다.
   // ---------------------------------------------------------------------------
 
-  const GLOSSARY_REPO = 'wotjq2/th-korean';
+  // 용어집은 스크립트(wotjq2/th-korean)와 다른 저장소에 둔다. 브라우저에 두는 저장용 토큰이
+  // 이 저장소에만 쓸 수 있으면, 토큰이 새어 나가도 바뀌는 것은 단어뿐이고 모든 PC가 자동
+  // 업데이트로 받는 스크립트 코드는 건드릴 수 없다. 용어집은 글자로만 쓰이므로(검색어·토스트
+  // 모두 textContent / encodeURIComponent) 이상한 값이 들어와도 코드로 실행되지 않는다.
+  const GLOSSARY_REPO = 'wotjq2/th-korean-glossary';
   const GLOSSARY_FILE = 'glossary.txt';
   // API 는 고친 내용을 1분 안에 준다. raw 주소는 CDN 캐시로 몇 분 늦을 수 있어 예비로만 쓴다.
   // API 는 로그인 없이 IP 당 시간 60회까지라, 10분에 한 번 받는 정도는 넉넉하다.
@@ -287,6 +292,147 @@
     const at = new Date(glossaryStore.at).toLocaleString();
     const legacy = Object.keys(cfg.glossary || {}).length;
     return `${n}개 (GitHub, ${at} 받음)` + (legacy ? ` + 이 PC에만 있는 예전 단어 ${legacy}개` : '');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 용어집 저장 — 설정 패널 칸에 적은 단어를 GitHub glossary.txt 에 바로 커밋한다
+  //
+  // 저장에는 GitHub 토큰이 필요하다. 크롬의 GitHub 로그인은 github.com 웹페이지에서만
+  // 통하고 스크립트가 빌려 쓸 수 없어서다. 토큰은 th-korean-glossary 저장소 하나, 내용 쓰기
+  // 권한만 주도록 안내한다. 스크립트 저장소나, 이 계정에서 배포 파일을 올리는 다른 공개
+  // 저장소까지 쓸 수 있는 토큰을 브라우저에 두면 새어 나갔을 때 피해가 거기까지 번진다.
+  // 토큰은 이 PC 의 Tampermonkey 저장소에만 있고 api.github.com 에만 보낸다.
+  // ---------------------------------------------------------------------------
+
+  const GITHUB_API_FILE = `https://api.github.com/repos/${GLOSSARY_REPO}/contents/${GLOSSARY_FILE}`;
+  // 새 토큰 화면. 이름·대상·권한을 미리 채워 달라고 주소에 적는다(GitHub 가 모르는 값은 무시한다).
+  const GITHUB_TOKEN_URL =
+    'https://github.com/settings/personal-access-tokens/new' +
+    `?name=${encodeURIComponent('th-korean 용어집')}` +
+    `&description=${encodeURIComponent('태국 사이트 한국어 - 설정 패널에서 용어집 저장')}` +
+    `&target_name=${GLOSSARY_REPO.split('/')[0]}&contents=write`;
+  // 패널에서 추가한 새 단어가 모이는 칸. 파일 맨 끝에 한 번 만들고 그 뒤로 이어 붙인다.
+  const ADDED_SECTION = '# --- 설정 패널에서 추가한 단어 ---';
+
+  function githubHeaders(token) {
+    return {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+  }
+
+  // GitHub 파일 내용은 base64 다. 한글·태국어가 깨지지 않게 UTF-8 바이트로 오간다.
+  function b64ToUtf8(b64) {
+    const bin = atob(String(b64).replace(/\s/g, ''));
+    return new TextDecoder('utf-8').decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+  function utf8ToB64(text) {
+    const bytes = new TextEncoder().encode(text);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  }
+
+  // 패널 칸에 적은 글을 [한국어, 태국어] 목록으로. 형식이 틀린 줄은 따로 돌려준다.
+  function parseEntries(text) {
+    const map = new Map();
+    const bad = [];
+    for (const line of String(text || '').split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      const i = t.indexOf('=');
+      const k = i > 0 ? normKey(t.slice(0, i)) : '';
+      const v = i > 0 ? t.slice(i + 1).trim() : '';
+      if (!k || !v) bad.push(t);
+      else map.set(k, v); // 같은 말을 두 번 적으면 아래 것
+    }
+    return { entries: [...map], bad };
+  }
+
+  // glossary.txt 에 단어를 넣는다. 이미 있는 말은 그 줄의 뜻만 고치고(자리 유지),
+  // 새 말은 맨 끝 '설정 패널에서 추가한 단어' 칸에 붙인다.
+  function mergeIntoGlossary(text, entries) {
+    const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+    const at = new Map(); // 같은 말이 두 번 있으면 실제로 쓰이는 아래 줄
+    lines.forEach((line, i) => {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) return;
+      const eq = t.indexOf('=');
+      if (eq > 0) at.set(normKey(t.slice(0, eq)), i);
+    });
+    const added = [];
+    const changed = [];
+    for (const [k, v] of entries) {
+      const i = at.get(k);
+      if (i === undefined) {
+        added.push([k, v]);
+      } else if (lines[i].slice(lines[i].indexOf('=') + 1).trim() !== v) {
+        lines[i] = `${k}=${v}`;
+        changed.push(k);
+      }
+    }
+    if (added.length) {
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      if (!lines.some((l) => l.trim() === ADDED_SECTION)) lines.push('', ADDED_SECTION);
+      for (const [k, v] of added) lines.push(`${k}=${v}`);
+    }
+    return {
+      text: lines.join('\n').replace(/\n*$/, '\n'),
+      added: added.map(([k]) => k),
+      changed,
+    };
+  }
+
+  // GitHub 에서 지금 파일을 받아 합친 뒤 커밋한다. 이 PC 에는 바로 반영된다.
+  async function saveGlossaryToGitHub(entries) {
+    const token = (cfg.githubToken || '').trim();
+    if (!token) throw new Error('GitHub 연결이 필요합니다');
+    const headers = githubHeaders(token);
+    for (let attempt = 0; ; attempt++) {
+      const cur = JSON.parse(await request({ method: 'GET', url: `${GITHUB_API_FILE}?ref=main`, headers }));
+      const merged = mergeIntoGlossary(b64ToUtf8(cur.content), entries);
+      if (merged.added.length || merged.changed.length) {
+        const names = [...merged.added, ...merged.changed];
+        const message =
+          `용어집: ${names.slice(0, 5).join(', ')}` + (names.length > 5 ? ` 외 ${names.length - 5}개` : '');
+        try {
+          await request({
+            method: 'PUT',
+            url: GITHUB_API_FILE,
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            data: JSON.stringify({ message, content: utf8ToB64(merged.text), sha: cur.sha, branch: 'main' }),
+          });
+        } catch (e) {
+          // 다른 PC가 그 사이에 먼저 저장했다(파일 버전이 바뀜). 새로 받아 한 번 더 합친다.
+          if (attempt === 0 && /HTTP 409/.test(e.message)) continue;
+          throw e;
+        }
+      }
+      glossaryStore = { text: merged.text, at: Date.now() };
+      GM_setValue(GLOSSARY_STORE, glossaryStore);
+      glossaryMap = parseGlossary(merged.text);
+      return merged;
+    }
+  }
+
+  async function checkGitHubToken(token) {
+    const me = JSON.parse(
+      await request({ method: 'GET', url: 'https://api.github.com/user', headers: githubHeaders(token) })
+    );
+    return me.login;
+  }
+
+  function githubErrorMessage(e) {
+    const m = String((e && e.message) || e);
+    if (/HTTP 401/.test(m)) return '토큰이 맞지 않거나 기간이 끝났습니다. GitHub 연결에서 새 토큰을 넣으세요.';
+    if (/HTTP 40[34]/.test(m)) {
+      return '이 토큰에는 용어집 저장소 쓰기 권한이 없습니다. 토큰을 만들 때 저장소 th-korean-glossary, Contents: Read and write 를 고르세요.';
+    }
+    if (/HTTP 409/.test(m)) return '다른 PC에서 방금 용어집을 고쳤습니다. 저장을 한 번 더 눌러 주세요.';
+    return m;
   }
 
   // ---------------------------------------------------------------------------
@@ -736,7 +882,7 @@
         if (filled.length) {
           notes.push(
             '용어집에 없던 말: ' + filled.map((p) => `${p.ko} → ${p.th}`).join(', ') +
-              '\n(자주 쓰면 GitHub 용어집에 넣어 두세요: 한 버튼 → GitHub에서 편집)'
+              '\n(자주 쓰면 한 버튼 → 검색 용어집 칸에 적고 저장하세요)'
           );
         }
         if (dropped.length) notes.push('번역하지 못해 뺀 말: ' + dropped.map((p) => p.ko).join(', '));
@@ -1604,6 +1750,31 @@
     panel.innerHTML = `
       <h3>${APP_NAME} 설정 <span style="font-weight:400;opacity:.6">· ${SITE.label}</span></h3>
 
+      <label>검색 용어집 (한국어=태국어, 한 줄에 하나)</label>
+      <textarea id="lzk-glossary" placeholder="사무실=สำนักงาน&#10;쇼파=โซฟา"></textarea>
+      <div class="lzk-actions" style="margin-top:6px">
+        <button id="lzk-gl-save" type="button">저장</button>
+      </div>
+      <div class="lzk-hint">적고 <b>저장</b>을 누르면 GitHub 용어집에 바로 저장되고 칸은 비워집니다. 모든 PC가 같이 씁니다. 이미 있는 단어를 적으면 그 뜻으로 고칩니다.</div>
+      <div class="lzk-hint" id="lzk-gl-status" style="white-space:pre-line"></div>
+
+      <details id="lzk-gh-setup">
+        <summary>GitHub 연결 <span id="lzk-gh-state" style="font-weight:400"></span></summary>
+        <div class="lzk-hint">용어집을 저장하려면 PC마다 처음 한 번 필요합니다. 한 번 만든 토큰을 모든 PC에 똑같이 넣어도 됩니다.</div>
+        <ol class="lzk-hint" style="padding-left:18px;margin:6px 0">
+          <li><b>토큰 만들기</b>를 누르면 GitHub 화면이 열립니다</li>
+          <li>Expiration: 길게 (고를 수 있으면 No expiration)</li>
+          <li>Repository access: <b>Only select repositories → th-korean-glossary</b> (이것만)</li>
+          <li>Permissions: <b>Contents → Read and write</b></li>
+          <li><b>Generate token</b> → 나온 토큰(github_pat_…)을 아래에 붙여 넣고 <b>연결 확인</b></li>
+        </ol>
+        <input type="password" id="lzk-gh-token" autocomplete="off" placeholder="github_pat_...">
+        <div class="lzk-actions" style="margin-top:6px">
+          <button class="lzk-ghost" id="lzk-gh-create" type="button">토큰 만들기</button>
+          <button class="lzk-ghost" id="lzk-gh-check" type="button">연결 확인</button>
+        </div>
+      </details>
+
       <label>페이지 표시 번역 엔진</label>
       <select id="lzk-page-engine">
         <option value="free">무료 API (빠름, 키 불필요)</option>
@@ -1628,21 +1799,6 @@
         <input type="checkbox" id="lzk-selection"><span>글자를 드래그하면 '한국어로' 버튼 표시</span>
       </div>
       <div class="lzk-hint">페이지 번역을 끄고 크롬 자동번역을 쓸 때, 뭉개진 상품명만 골라 보는 용도입니다. AI 키가 있으면 AI가 처리합니다.</div>
-
-      <label>검색 용어집 (GitHub · 모든 PC 공용)</label>
-      <div class="lzk-hint" id="lzk-gl-status"></div>
-      <div class="lzk-actions" style="margin-top:6px">
-        <button id="lzk-gl-edit" type="button">GitHub에서 편집</button>
-        <button class="lzk-ghost" id="lzk-gl-refresh" type="button">지금 새로 받기</button>
-      </div>
-      <div class="lzk-hint">GitHub의 glossary.txt 한 곳에 저장되고 모든 PC가 같은 것을 씁니다. '한국어=태국어' 한 줄을 넣고 GitHub에서 <b>Commit changes</b>를 누르면 저장됩니다(크롬에 GitHub 로그인 필요). 저장 후 '지금 새로 받기'를 누르면 이 PC에 바로 반영되고, 다른 PC는 10분 안에 받아 갑니다.</div>
-      <div id="lzk-gl-legacy" style="display:none">
-        <div class="lzk-hint" id="lzk-gl-legacy-msg" style="color:#a15c00"></div>
-        <div class="lzk-actions" style="margin-top:6px">
-          <button class="lzk-ghost" id="lzk-gl-copy" type="button">예전 단어 복사</button>
-          <button class="lzk-ghost" id="lzk-gl-clear" type="button">이 PC 목록 비우기</button>
-        </div>
-      </div>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>
@@ -1688,37 +1844,45 @@
     $('#lzk-selection').checked = cfg.selectionTranslate;
     $('#lzk-page-glossary').value = glossaryToText(cfg.pageGlossary);
 
-    // --- GitHub 용어집 ---
-    const showGlossaryState = () => {
-      $('#lzk-gl-status').textContent = `현재: ${glossaryStatus()}`;
-      // 예전 방식으로 이 PC에만 넣어 둔 단어. 다른 PC에는 없으니 GitHub 로 옮기게 한다.
-      const legacy = Object.keys(cfg.glossary || {}).length;
-      $('#lzk-gl-legacy').style.display = legacy ? '' : 'none';
-      $('#lzk-gl-legacy-msg').textContent =
-        `이 PC에만 저장된 예전 단어 ${legacy}개가 있습니다. 다른 PC에는 없습니다. ` +
-        "'예전 단어 복사' → GitHub에서 편집 → 파일 맨 아래에 붙여넣기 → Commit changes 후 " +
-        "'이 PC 목록 비우기'를 누르세요.";
+    // --- 검색 용어집 → GitHub ---
+    // 예전 방식으로 이 PC에만 넣어 둔 단어 중 GitHub 에 없는 것은 칸에 미리 넣어 둔다.
+    // 저장을 누르면 GitHub 로 옮겨지고 이 PC 목록은 비워진다.
+    const remoteNow = remoteGlossary();
+    const legacyNew = Object.entries(cfg.glossary || {})
+      .map(([k, v]) => [normKey(k), v])
+      .filter(([k, v]) => k && v && !(k in remoteNow));
+    $('#lzk-glossary').value = legacyNew.map(([k, v]) => `${k}=${v}`).join('\n');
+    $('#lzk-gl-status').textContent =
+      `현재 용어집: ${Object.keys(remoteNow).length}개` +
+      (glossaryStore ? ` (${new Date(glossaryStore.at).toLocaleString()} 받음)` : ' (아직 받지 못함)') +
+      (legacyNew.length
+        ? `\n이 PC에만 있던 예전 단어 ${legacyNew.length}개를 칸에 넣어 두었습니다. 저장하면 GitHub로 옮겨집니다.`
+        : '');
+
+    const showGhState = () => {
+      $('#lzk-gh-state').textContent = !cfg.githubToken
+        ? '— 연결 안 됨 (저장하려면 처음 한 번)'
+        : cfg.githubUser
+          ? `— 연결됨 (${cfg.githubUser})`
+          : '— 토큰 있음';
     };
-    showGlossaryState();
-    $('#lzk-gl-edit').addEventListener('click', () => {
-      window.open(GLOSSARY_EDIT_URL, '_blank', 'noopener');
-    });
-    $('#lzk-gl-refresh').addEventListener('click', async () => {
-      $('#lzk-gl-status').textContent = 'GitHub에서 받는 중…';
-      const ok = await refreshGlossary();
-      showGlossaryState();
-      toast(ok ? `용어집을 새로 받았습니다.\n${glossaryStatus()}` : '용어집을 받지 못했습니다. 이 PC의 사본을 계속 씁니다.', 5000);
-    });
-    $('#lzk-gl-copy').addEventListener('click', () => {
-      GM_setClipboard(glossaryToText(cfg.glossary));
-      toast('복사했습니다. GitHub 편집 화면의 맨 아래에 붙여 넣으세요.', 5000);
-    });
-    $('#lzk-gl-clear').addEventListener('click', () => {
-      if (!confirm('이 PC에만 저장된 예전 단어를 지울까요? GitHub에 옮긴 뒤에 지우세요.')) return;
-      cfg.glossary = {};
-      saveCfg('glossary');
-      showGlossaryState();
-      toast('이 PC 목록을 비웠습니다.');
+    $('#lzk-gh-token').value = cfg.githubToken || '';
+    showGhState();
+    $('#lzk-gh-create').addEventListener('click', () => window.open(GITHUB_TOKEN_URL, '_blank', 'noopener'));
+    $('#lzk-gh-check').addEventListener('click', async () => {
+      const token = $('#lzk-gh-token').value.trim();
+      if (!token) return toast('만든 토큰을 붙여 넣으세요.');
+      try {
+        const login = await checkGitHubToken(token);
+        cfg.githubToken = token;
+        cfg.githubUser = login;
+        saveCfg('githubToken');
+        saveCfg('githubUser');
+        showGhState();
+        toast(`GitHub 연결됨: ${login}\n이제 용어집 칸에 적고 저장하면 GitHub에 바로 저장됩니다.`, 6000);
+      } catch (e) {
+        toast(`연결 실패: ${githubErrorMessage(e)}`, 7000);
+      }
     });
 
     const modelSelect = $('#lzk-model');
@@ -1784,7 +1948,11 @@
       }
     });
 
-    $('#lzk-save').addEventListener('click', () => {
+    // 위(용어집 칸 옆)와 아래 저장 버튼이 같은 일을 한다. 설정은 이 PC에, 용어집은 GitHub 에.
+    let saving = false;
+    const saveButtons = [$('#lzk-gl-save'), $('#lzk-save')];
+    const saveAll = async () => {
+      if (saving) return;
       cfg.aiProvider = $('#lzk-provider').value;
       const p = provider();
       cfg[p.keyField] = $('#lzk-key').value.trim();
@@ -1795,10 +1963,80 @@
       cfg.confirmSearch = $('#lzk-confirm').checked;
       cfg.selectionTranslate = $('#lzk-selection').checked;
       cfg.pageGlossary = glossaryFromText($('#lzk-page-glossary').value);
+      const token = $('#lzk-gh-token').value.trim();
+      if (token !== cfg.githubToken) {
+        cfg.githubToken = token;
+        cfg.githubUser = '';
+      }
       for (const k of Object.keys(DEFAULTS)) saveCfg(k);
-      toast('저장했습니다.');
-      panel.remove();
-    });
+
+      const { entries, bad } = parseEntries($('#lzk-glossary').value);
+      if (bad.length) {
+        toast("'한국어=태국어' 모양이 아닌 줄이 있습니다. 고친 뒤 다시 저장하세요.\n" + bad.slice(0, 5).join('\n'), 8000);
+        return;
+      }
+      if (!entries.length) {
+        // 미리 넣어 둔 예전 단어를 지우고 저장했다 = 옮기지 않고 버린다.
+        if (legacyNew.length) {
+          cfg.glossary = {};
+          saveCfg('glossary');
+        }
+        toast('저장했습니다.');
+        panel.remove();
+        return;
+      }
+      if (!cfg.githubToken) {
+        $('#lzk-gh-setup').open = true;
+        $('#lzk-gh-setup').scrollIntoView({ block: 'nearest' });
+        toast(
+          '용어집을 GitHub에 저장하려면 이 PC에서 처음 한 번 GitHub 연결이 필요합니다.\n' +
+            "아래 'GitHub 연결' 안내대로 토큰을 넣어 주세요. 적은 단어는 칸에 그대로 있습니다.",
+          9000
+        );
+        return;
+      }
+
+      saving = true;
+      const labels = saveButtons.map((b) => b.textContent);
+      saveButtons.forEach((b) => {
+        b.disabled = true;
+        b.textContent = 'GitHub에 저장 중…';
+      });
+      try {
+        const r = await saveGlossaryToGitHub(entries);
+        cfg.glossary = {}; // 예전 단어는 방금 GitHub 로 옮겼다
+        saveCfg('glossary');
+        $('#lzk-glossary').value = '';
+        if (!cfg.githubUser) {
+          checkGitHubToken(cfg.githubToken)
+            .then((login) => {
+              cfg.githubUser = login;
+              saveCfg('githubUser');
+            })
+            .catch(() => {});
+        }
+        const lines = [];
+        if (r.added.length) lines.push(`새로 ${r.added.length}개: ${r.added.slice(0, 8).join(', ')}`);
+        if (r.changed.length) lines.push(`고침 ${r.changed.length}개: ${r.changed.slice(0, 8).join(', ')}`);
+        toast(
+          'GitHub 용어집에 저장했습니다.\n' +
+            (lines.join('\n') || '(이미 같은 내용이었습니다)') +
+            '\n이 PC는 바로, 다른 PC는 10분 안에 반영됩니다.',
+          7000
+        );
+        panel.remove();
+      } catch (e) {
+        toast(`GitHub 저장 실패: ${githubErrorMessage(e)}\n적은 단어는 칸에 그대로 있습니다.`, 10000);
+        if (/HTTP 40[134]/.test(e.message)) $('#lzk-gh-setup').open = true;
+      } finally {
+        saving = false;
+        saveButtons.forEach((b, i) => {
+          b.disabled = false;
+          b.textContent = labels[i];
+        });
+      }
+    };
+    saveButtons.forEach((b) => b.addEventListener('click', saveAll));
 
     $('#lzk-translate-now').addEventListener('click', () => {
       panel.remove();
@@ -1935,6 +2173,9 @@
     // '업데이트 확인' 을 누르면 Tampermonkey 는 조용히 실패하고 옛 버전이 그대로 돈다.
     const lines = [
       `버전: ${SCRIPT_VERSION} / 용어집 ${glossaryStatus()}`,
+      `용어집 저장(GitHub 연결): ${
+        cfg.githubToken ? (cfg.githubUser ? `연결됨 (${cfg.githubUser})` : '토큰 있음') : '연결 안 됨'
+      }`,
       `사이트: ${SITE.label} (${location.hostname})`,
       `검색창 찾음: ${input ? '예' : '아니오'}`,
     ];

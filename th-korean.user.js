@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.12.1
+// @version      1.13.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -271,15 +271,27 @@
   }
 
   // GitHub 에서 받아 사본을 갈아 끼운다. 실패하면 있던 사본을 그대로 쓴다.
+  // 용어집은 몇 MB 까지 커질 수 있다(수만 개). 10분마다 통째로 받지 않도록 GitHub API 에
+  // '가진 판(ETag)과 같으면 내용 없이 304' 를 요청한다. 304 는 API 사용 한도에도 안 센다.
   function refreshGlossary() {
     if (glossaryLoading) return glossaryLoading;
     glossaryLoading = (async () => {
       for (const src of GLOSSARY_SOURCES) {
         try {
-          const text = await request({ method: 'GET', url: src.url, headers: src.headers, timeout: 8000 });
-          const parsed = parseGlossary(text);
+          const headers = { ...(src.headers || {}) };
+          const conditional = src === GLOSSARY_SOURCES[0] && glossaryStore && glossaryStore.etag;
+          if (conditional) headers['If-None-Match'] = glossaryStore.etag;
+          const res = await requestFull({ method: 'GET', url: src.url, headers, timeout: 8000 });
+          if (res.status === 304 && conditional) {
+            glossaryStore = { ...glossaryStore, at: Date.now(), ver: SCRIPT_VERSION }; // 그대로다
+            GM_setValue(GLOSSARY_STORE, glossaryStore);
+            return true;
+          }
+          if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+          const parsed = parseGlossary(res.text);
           if (!Object.keys(parsed.map).length) throw new Error('내용이 비어 있습니다');
-          glossaryStore = { text, at: Date.now(), ver: SCRIPT_VERSION };
+          const etag = src === GLOSSARY_SOURCES[0] ? res.etag : null;
+          glossaryStore = { text: res.text, at: Date.now(), ver: SCRIPT_VERSION, etag };
           GM_setValue(GLOSSARY_STORE, glossaryStore);
           glossaryParsed = parsed;
           return true;
@@ -419,7 +431,16 @@
     const headers = githubHeaders(token);
     for (let attempt = 0; ; attempt++) {
       const cur = JSON.parse(await request({ method: 'GET', url: `${GITHUB_API_FILE}?ref=main`, headers }));
-      const merged = mergeIntoGlossary(b64ToUtf8(cur.content), entries);
+      // 1MB 가 넘는 파일은 JSON 에 내용이 빠지고 sha 만 온다. 그때는 원문을 따로 받는다.
+      const text =
+        cur.encoding === 'base64' && cur.content
+          ? b64ToUtf8(cur.content)
+          : await request({
+              method: 'GET',
+              url: `${GITHUB_API_FILE}?ref=main`,
+              headers: { ...headers, Accept: 'application/vnd.github.raw' },
+            });
+      const merged = mergeIntoGlossary(text, entries);
       if (merged.added.length || merged.changed.length) {
         const names = [...merged.added, ...merged.changed];
         const message =
@@ -437,7 +458,7 @@
           throw e;
         }
       }
-      glossaryStore = { text: merged.text, at: Date.now(), ver: SCRIPT_VERSION };
+      glossaryStore = { text: merged.text, at: Date.now(), ver: SCRIPT_VERSION, etag: null };
       GM_setValue(GLOSSARY_STORE, glossaryStore);
       glossaryParsed = parseGlossary(merged.text);
       return merged;
@@ -548,6 +569,22 @@
         onload: (r) => {
           if (r.status >= 200 && r.status < 300) resolve(r.responseText);
           else reject(new Error(`HTTP ${r.status}: ${String(r.responseText).slice(0, 200)}`));
+        },
+        onerror: () => reject(new Error('네트워크 오류')),
+        ontimeout: () => reject(new Error('시간 초과')),
+      });
+    });
+  }
+
+  // 상태 코드와 ETag 까지 돌려준다. 304 처럼 2xx 가 아닌 답도 오류로 치지 않는다.
+  function requestFull(opts) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        timeout: 20000,
+        ...opts,
+        onload: (r) => {
+          const m = /^etag:\s*(.+)$/im.exec(r.responseHeaders || '');
+          resolve({ status: r.status, text: r.responseText, etag: m ? m[1].trim() : null });
         },
         onerror: () => reject(new Error('네트워크 오류')),
         ontimeout: () => reject(new Error('시간 초과')),
@@ -1115,12 +1152,20 @@
 
   // 조회용 용어집. GitHub 용어집이 기준이고, 예전에 이 PC에만 넣어 둔 단어는 GitHub 에
   // 없는 말일 때만 쓴다. 거꾸로 두면 GitHub 에서 고쳐도 이 PC에서만 옛 값이 남는다.
+  // 용어집이 수만 개가 되면 검색마다 새로 만드는 비용이 커진다. 용어집(또는 예전 PC 단어)이
+  // 바뀔 때만 다시 만들고, 그 사이에는 만든 것을 그대로 쓴다. 돌려준 객체는 고치지 말 것.
+  let built = { parsed: null, legacy: null, glossary: null, index: null };
+
   function buildGlossary() {
-    const out = { ...remoteGlossary() };
-    for (const [k, v] of Object.entries(cfg.glossary || {})) {
+    const parsed = parsedGlossary();
+    const legacy = cfg.glossary;
+    if (built.glossary && built.parsed === parsed && built.legacy === legacy) return built.glossary;
+    const out = { ...parsed.map };
+    for (const [k, v] of Object.entries(legacy || {})) {
       const key = normKey(k);
       if (key && v && !(key in out)) out[key] = v;
     }
+    built = { parsed, legacy, glossary: out, index: null };
     return out;
   }
 
@@ -1156,8 +1201,11 @@
   }
 
   function buildIndex() {
+    const glossary = buildGlossary();
+    if (built.index) return built.index;
     const idx = new Map();
-    for (const [k, v] of Object.entries(buildGlossary())) idx.set(squash(k), v);
+    for (const [k, v] of Object.entries(glossary)) idx.set(squash(k), v);
+    built.index = idx;
     return idx;
   }
 

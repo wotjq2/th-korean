@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.12.0
+// @version      1.12.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -279,7 +279,7 @@
           const text = await request({ method: 'GET', url: src.url, headers: src.headers, timeout: 8000 });
           const parsed = parseGlossary(text);
           if (!Object.keys(parsed.map).length) throw new Error('내용이 비어 있습니다');
-          glossaryStore = { text, at: Date.now() };
+          glossaryStore = { text, at: Date.now(), ver: SCRIPT_VERSION };
           GM_setValue(GLOSSARY_STORE, glossaryStore);
           glossaryParsed = parsed;
           return true;
@@ -303,7 +303,11 @@
     }
     // 사본이 오래됐으면 새로 받는 것을 잠깐(1.5초까지) 기다린다. 뒤에서만 받게 두면
     // 다른 PC에서 고친 단어가 이번 검색에는 안 들어가고 한 번 더 틀린 채로 나간다.
-    if (Date.now() - glossaryStore.at > GLOSSARY_TTL) {
+    // 스크립트가 업데이트됐으면 사본이 몇 분 전 것이어도 새로 받는다. 새 스크립트가 용어집의
+    // 새 표시(예: @꾸밈말)에 기대는데 옛 사본을 쓰면 업데이트가 안 된 것처럼 보인다
+    // (1.12.0 에서 실제로 그랬다: 돼지막창 냉동 → แช่แข็ง ไส้ใหญ่หมู 가 그대로).
+    const stale = Date.now() - glossaryStore.at > GLOSSARY_TTL || glossaryStore.ver !== SCRIPT_VERSION;
+    if (stale) {
       await Promise.race([refreshGlossary(), new Promise((r) => setTimeout(r, 1500))]);
     }
   }
@@ -433,7 +437,7 @@
           throw e;
         }
       }
-      glossaryStore = { text: merged.text, at: Date.now() };
+      glossaryStore = { text: merged.text, at: Date.now(), ver: SCRIPT_VERSION };
       GM_setValue(GLOSSARY_STORE, glossaryStore);
       glossaryParsed = parseGlossary(merged.text);
       return merged;

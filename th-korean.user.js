@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.11.0
+// @version      1.11.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -283,7 +283,11 @@
       await refreshGlossary();
       return;
     }
-    if (Date.now() - glossaryStore.at > GLOSSARY_TTL) refreshGlossary();
+    // 사본이 오래됐으면 새로 받는 것을 잠깐(1.5초까지) 기다린다. 뒤에서만 받게 두면
+    // 다른 PC에서 고친 단어가 이번 검색에는 안 들어가고 한 번 더 틀린 채로 나간다.
+    if (Date.now() - glossaryStore.at > GLOSSARY_TTL) {
+      await Promise.race([refreshGlossary(), new Promise((r) => setTimeout(r, 1500))]);
+    }
   }
 
   function glossaryStatus() {
@@ -2094,13 +2098,8 @@
   // 가로채기를 놓쳐 한국어가 그대로 주소에 들어간 경우의 안전망.
   // 라자다는 한국어 q 를 못 알아듣고 엉뚱한 결과를 주므로, 태국어로 바꿔 다시 검색한다.
   // 자동완성 클릭, 북마크, 외부 링크 등 어떤 경로로 들어와도 여기서 걸린다.
-  async function rescueKoreanQuery() {
-    if (!SITE.searchUrl) return; // 표에 없는 사이트에서는 주소를 건드리지 않는다
-    const params = new URLSearchParams(location.search);
-    const q = params.get(SITE.queryParam);
-    if (!q || !HANGUL.test(q)) return;
-
-    // 같은 검색어로 오가는 무한 이동을 막는다.
+  // 같은 검색어로 오가는 무한 이동을 막는다. 방금 이 검색어로 바꿔 이동했으면 true.
+  function alreadyRescued(q) {
     let already = null;
     try {
       already = sessionStorage.getItem('lzk-rescued');
@@ -2108,7 +2107,51 @@
     } catch {
       /* 저장소가 막혀 있으면 그냥 진행한다 */
     }
-    if (already === q) return;
+    return already === q;
+  }
+
+  // 예전에 틀리게 옮긴 태국어가 사이트의 '최근 검색어'에 남는다. 크롬 번역은 그 태국어를
+  // 다시 한국어로 보여 주므로(หมูหมากช้าง → '돼지막창'), 사용자는 한국어를 누른 줄 알지만
+  // 실제로는 옛 오역으로 검색된다. 태국어라 위 안전망에도 안 걸린다.
+  // 주소의 태국어가 예전에 우리가 낸 번역(캐시)인데, 지금 용어집은 그 한국어를 다르게
+  // 옮긴다면 옛 오역이다. 용어집 값을 돌려준다.
+  async function findStaleTranslation(q) {
+    const flat = (s) => String(s).replace(/\s+/g, ' ').trim();
+    const target = flat(q);
+    for (const [key, val] of Object.entries(cache)) {
+      if (!key.startsWith('th|') || flat(val) !== target) continue;
+      const ko = key.slice(3);
+      const now = await translateSearchKeyword(ko);
+      // 용어집만으로 옮긴 값일 때만 믿는다. 무료 API 가 섞이면 그것도 틀릴 수 있다.
+      if (now.thai && flat(now.thai) !== target && (now.via === '용어집' || now.via === '용어집 조합')) {
+        return { ko, thai: now.thai };
+      }
+    }
+    return null;
+  }
+
+  async function rescueKoreanQuery() {
+    if (!SITE.searchUrl) return; // 표에 없는 사이트에서는 주소를 건드리지 않는다
+    const params = new URLSearchParams(location.search);
+    const q = params.get(SITE.queryParam);
+    if (!q) return;
+
+    if (!HANGUL.test(q)) {
+      if (!THAI.test(q)) return;
+      const fix = await findStaleTranslation(q);
+      if (!fix || alreadyRescued(fix.thai)) return;
+      toast(
+        `최근 검색어에 남은 옛 번역으로 검색됐습니다.\n"${fix.ko}": ${q} → ${fix.thai}  (용어집)\n` +
+          '용어집 값으로 다시 검색합니다.',
+        5000
+      );
+      params.set(SITE.queryParam, fix.thai);
+      const target = location.pathname + '?' + params.toString();
+      setTimeout(() => location.replace(target), 900);
+      return;
+    }
+
+    if (alreadyRescued(q)) return;
 
     setBadge('검색어 변환 중…');
     try {

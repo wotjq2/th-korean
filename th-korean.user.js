@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.0
+// @version      1.22.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -3701,6 +3701,24 @@
     return translateSearchKeyword(value);
   }
 
+  // 바꾼 뒤 그 사이트의 검색을 실행한다. 폼이 있으면 폼 제출(사이트의 submit 처리가 그대로 돈다),
+  // 없으면 Enter 를 흉내 낸다(keyCode 를 보는 사이트가 많아 13 을 박아 둔다).
+  function submitGeneric(input) {
+    if (input.form) {
+      try {
+        input.form.requestSubmit();
+        return;
+      } catch {
+        /* requestSubmit 을 못 쓰는 폼 — 아래 Enter 로 */
+      }
+    }
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      const ev = new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+      for (const k of ['keyCode', 'which']) Object.defineProperty(ev, k, { get: () => 13 });
+      input.dispatchEvent(ev);
+    }
+  }
+
   async function convertInputToThai(input) {
     const value = input.value.trim();
     if (genericBusy || !value || !HANGUL.test(value)) return;
@@ -3716,11 +3734,14 @@
       } catch {
         /* 선택 범위를 못 쓰는 칸 */
       }
-      toast(
-        `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '') +
-          '\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.',
-        note ? 9000 : 6000
-      );
+      const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
+      // 설정 '검색 전 번역된 태국어 확인 (Enter 한 번 더)' 를 라자다·쇼피와 똑같이 따른다.
+      if (cfg.confirmSearch) {
+        toast(`${msg}\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.`, note ? 9000 : 6000);
+      } else {
+        toast(msg, note ? 8000 : 2500);
+        submitGeneric(input);
+      }
     } catch (e) {
       toast(`한국어를 태국어로 바꾸지 못했습니다: ${e.message || e}`, 4000);
     } finally {

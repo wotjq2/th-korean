@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.19.1
+// @version      1.20.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -188,7 +188,10 @@
     autoTranslatePage: true,
     confirmSearch: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
-    imageTranslate: true,      // 사진에 마우스를 잠깐 올려 두면 그 사진 속 태국어를 한국어로
+    imageTranslate: true,      // 사진에 마우스를 올리면 '사진 번역' 버튼
+    // 마우스를 올려 두기만 해도 번역. 꺼 두면 버튼을 눌러야 읽는다(훑어보기만 해도 Vision 건수가
+    // 쌓이지 않게). 꺼져 있어도 전에 번역한 사진은 저장된 결과로 바로 보인다(다시 읽지 않는다).
+    imageAuto: false,
     visionKey: '',             // Google Cloud Vision API 키(선택, 이 PC에만). 있으면 사진 글자를 Vision 으로 읽는다
     visionMonthlyCap: 900,     // 이 PC에서 한 달에 Vision 을 부를 최대 횟수(무료는 계정 전체 월 1,000건)
     glossary: {},      // 예전 방식의 '내 용어집'(이 PC에만). 이제는 GitHub glossary.txt 를 쓴다
@@ -2728,6 +2731,8 @@
     if (!img || !cfg.imageTranslate || !img.isConnected || ocrBusy.has(img)) return;
     const key = imageSrcKey(img);
     if (isShowingTranslation(img) || ocrKeepOriginal.has(key) || ocrFailed.has(key)) return;
+    // 자동이 꺼져 있으면 전에 번역해 둔 사진만 바로 보여 준다(글자를 다시 읽지 않는다).
+    if (!cfg.imageAuto && !ocrDone.get(key) && !ocrCacheGet(ocrSourceUrl(img))?.lines?.length) return;
     if (ocrRunning && !ocrDone.has(key)) return; // 한 장씩 읽는다. 끝나면 여기로 다시 온다.
     translateImage(img, true);
   }
@@ -2910,9 +2915,12 @@
       </div>
       <div class="lzk-hint">페이지 번역을 끄고 크롬 자동번역을 쓸 때, 뭉개진 상품명만 골라 보는 용도입니다. AI 키가 있으면 AI가 처리합니다.</div>
       <div class="lzk-check">
-        <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올려 두면 사진 속 태국어를 자동 번역</span>
+        <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올리면 '사진 번역' 버튼 표시</span>
       </div>
-      <div class="lzk-hint">0.5초쯤 머문 사진만 읽어 한국어로 덮어 보여 줍니다(한 장에 1~3초). 왼쪽 위 버튼으로 원래 사진을 볼 수 있습니다. 처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다.</div>
+      <div class="lzk-check">
+        <input type="checkbox" id="lzk-image-auto"><span>누르지 않아도, 마우스를 올려 두면 자동 번역</span>
+      </div>
+      <div class="lzk-hint">버튼을 누른 사진만 읽어 한국어로 덮어 보여 줍니다. 한 번 번역한 사진은 다시 올리면 저장된 결과로 바로 보입니다(다시 읽지 않아 Google Vision 건수도 안 듭니다). 자동 번역을 켜면 0.5초 머문 사진을 모두 읽으니 Vision 건수가 빨리 쌓입니다.</div>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>
@@ -2964,6 +2972,7 @@
     $('#lzk-confirm').checked = cfg.confirmSearch;
     $('#lzk-selection').checked = cfg.selectionTranslate;
     $('#lzk-image').checked = cfg.imageTranslate;
+    $('#lzk-image-auto').checked = cfg.imageAuto;
     $('#lzk-vision-key').value = cfg.visionKey;
     $('#lzk-vision-cap').value = cfg.visionMonthlyCap;
     const vu = visionUsage();
@@ -3091,6 +3100,7 @@
       cfg.confirmSearch = $('#lzk-confirm').checked;
       cfg.selectionTranslate = $('#lzk-selection').checked;
       cfg.imageTranslate = $('#lzk-image').checked;
+      cfg.imageAuto = $('#lzk-image-auto').checked;
       if (!cfg.imageTranslate) hideImageButton();
       const vKey = $('#lzk-vision-key').value.trim();
       if (vKey !== cfg.visionKey) visionBlocked = ''; // 키를 바꿨으면 다시 시도해 본다

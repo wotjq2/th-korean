@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.18.1
+// @version      1.19.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -189,6 +189,8 @@
     confirmSearch: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
     imageTranslate: true,      // 사진에 마우스를 잠깐 올려 두면 그 사진 속 태국어를 한국어로
+    visionKey: '',             // Google Cloud Vision API 키(선택, 이 PC에만). 있으면 사진 글자를 Vision 으로 읽는다
+    visionMonthlyCap: 900,     // 이 PC에서 한 달에 Vision 을 부를 최대 횟수(무료는 계정 전체 월 1,000건)
     glossary: {},      // 예전 방식의 '내 용어집'(이 PC에만). 이제는 GitHub glossary.txt 를 쓴다
     githubToken: '',   // 용어집 저장용. th-korean-glossary 쓰기 권한만 있는 토큰 (이 PC에만)
     githubUser: '',    // 토큰 확인 때 받은 GitHub 아이디 (표시용)
@@ -1636,7 +1638,7 @@
     }
     #lzk-panel h3 { margin: 0 0 12px; font-size: 15px; }
     #lzk-panel label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 12px; }
-    #lzk-panel input[type=text], #lzk-panel input[type=password],
+    #lzk-panel input[type=text], #lzk-panel input[type=password], #lzk-panel input[type=number],
     #lzk-panel select, #lzk-panel textarea {
       width: 100%; box-sizing: border-box; padding: 7px 8px;
       border: 1px solid #ccc; border-radius: 5px; font: inherit; font-size: 12px;
@@ -2214,9 +2216,115 @@
     return kept;
   }
 
+  // ---- Google Cloud Vision (선택) ----
+  // 키가 있으면 사진 글자를 Vision 으로 읽는다. 기울임체·테두리 광고 글씨도 정확하고, 여러 줄 문장을
+  // 문단으로 묶어 주어 번역이 자연스럽다. 무료는 계정 전체 월 1,000건이고 Google 은 Vision 에 '여기서
+  // 멈춤' 장치를 두지 않는다(하루 할당량·지출 상한 모두 없음, 2026-09 확인). 그래서 이 PC 에서 이번 달
+  // 부른 횟수를 요청 '보내기 전에' 세어, 한도(기본 900)에 닿으면 Vision 을 아예 부르지 않고 무료 인식으로
+  // 돌아간다. 거절(결제 꺼짐·키 제한 등)되면 이 페이지에서는 다시 부르지 않는다.
+  // 페이지에서 직접 부른다(키에 '웹사이트 제한' 을 걸면 라자다·쇼피 주소로 확인되게).
+  const VISION_URL = 'https://vision.googleapis.com/v1/images:annotate';
+  const VISION_USAGE = 'visionUsage';
+  const VISION_MAX_SIDE = 1600; // 올려 보낼 사진 크기. 이보다 크면 줄여 보낸다(요금은 크기와 무관)
+  let visionBlocked = '';       // 거절 이유. 한 번 거절되면 이 페이지에서는 다시 부르지 않는다
+
+  function visionMonth() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function visionUsage() {
+    const u = GM_getValue(VISION_USAGE, null);
+    return u && u.month === visionMonth() ? u : { month: visionMonth(), count: 0 };
+  }
+
+  function visionUsable() {
+    return !!cfg.visionKey && !visionBlocked && visionUsage().count < (Number(cfg.visionMonthlyCap) || 0);
+  }
+
+  function canvasBase64(canvas) {
+    const long = Math.max(canvas.width, canvas.height);
+    const src = long > VISION_MAX_SIDE ? scaledCopy(canvas, VISION_MAX_SIDE / long, 'rgb') : canvas;
+    return { data: src.toDataURL('image/jpeg', 0.9).split(',')[1], scale: src.width / canvas.width };
+  }
+
+  // Vision 의 문단을 { text, box, lines } 로. 문단 안 줄바꿈은 띄어 붙여 한 문장으로 번역한다.
+  function visionParagraphs(resp, scale) {
+    const segs = [];
+    const page = resp.fullTextAnnotation?.pages?.[0];
+    for (const block of page?.blocks || []) {
+      for (const para of block.paragraphs || []) {
+        let text = '';
+        let lines = 1;
+        const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+        const words = para.words || [];
+        words.forEach((word, i) => {
+          const syms = word.symbols || [];
+          text += syms.map((s) => s.text).join('');
+          const brk = syms[syms.length - 1]?.property?.detectedBreak?.type;
+          if (brk === 'EOL_SURE_SPACE' || brk === 'LINE_BREAK' || brk === 'HYPHEN') {
+            text += ' ';
+            if (i < words.length - 1) lines++;
+          } else if (brk === 'SPACE' || brk === 'SURE_SPACE') text += ' ';
+          for (const v of word.boundingBox?.vertices || []) {
+            box.x0 = Math.min(box.x0, (v.x || 0) / scale);
+            box.y0 = Math.min(box.y0, (v.y || 0) / scale);
+            box.x1 = Math.max(box.x1, (v.x || 0) / scale);
+            box.y1 = Math.max(box.y1, (v.y || 0) / scale);
+          }
+        });
+        text = text.replace(/\s+/g, ' ').trim();
+        // 태국어가 없는 문단(숫자·영어)은 그대로 둔다.
+        if (!THAI.test(text) || !(box.x1 > box.x0)) continue;
+        segs.push({ text, box, lines, conf: 99 });
+      }
+    }
+    return segs;
+  }
+
+  async function visionReadText(canvas) {
+    const u = visionUsage();
+    u.count++;
+    GM_setValue(VISION_USAGE, u); // 보내기 전에 센다(실패한 요청도 센다)
+    const { data, scale } = canvasBase64(canvas);
+    const r = await fetch(`${VISION_URL}?key=${encodeURIComponent(cfg.visionKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{ image: { content: data }, features: [{ type: 'TEXT_DETECTION' }], imageContext: { languageHints: ['th'] } }],
+      }),
+    });
+    const body = await r.json().catch(() => ({}));
+    const resp = body.responses?.[0] || {};
+    const err = body.error || resp.error;
+    if (!r.ok || err) {
+      visionBlocked = err?.message || `HTTP ${r.status}`;
+      throw new Error(visionBlocked);
+    }
+    return visionParagraphs(resp, scale);
+  }
+
   // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다(box 는 canvas 좌표). 태국어가 없는
-  // 줄(숫자·영어)은 그대로 둬도 읽히니 건드리지 않는다.
+  // 줄(숫자·영어)은 그대로 둬도 읽히니 건드리지 않는다. Vision 을 쓸 수 있으면 Vision, 아니면 무료 인식.
+  let visionCapNoticed = false;
+
   async function readImageText(canvas) {
+    if (cfg.visionKey && !visionBlocked && !visionUsable() && !visionCapNoticed) {
+      visionCapNoticed = true;
+      toast(`이 PC의 이번 달 Google Vision 한도(${cfg.visionMonthlyCap}건)를 다 써서 무료 인식으로 읽습니다. 다음 달 1일에 다시 채워집니다.`, 6000);
+    }
+    if (visionUsable()) {
+      try {
+        return await visionReadText(canvas);
+      } catch (e) {
+        console.warn(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
+        toast(`Google Vision 을 쓸 수 없어 무료 인식으로 읽습니다.\n(${e.message || e})`, 6000);
+      }
+    }
+    return readImageTextLocal(canvas);
+  }
+
+  async function readImageTextLocal(canvas) {
     const [workers, dict] = await Promise.all([ocrPool(), loadThaiWords()]);
     try {
       const long = Math.max(canvas.width, canvas.height);
@@ -2318,9 +2426,10 @@
     const items = segs
       .map((s, i) => {
         const h = s.box.y1 - s.box.y0;
-        const pad = Math.max(2, Math.round(h * 0.12));
+        const lines = s.lines || 1;
+        const pad = Math.max(2, Math.round((h / lines) * 0.12));
         const rect = { x: s.box.x0 - pad, y: s.box.y0 - pad, w: s.box.x1 - s.box.x0 + pad * 2, h: h + pad * 2 };
-        return { box: s.box, ko: kos[i], rect };
+        return { box: s.box, ko: kos[i], rect, lines };
       })
       .filter((it) => it.ko);
     // 색은 칠하기 전에 모두 재 둔다(먼저 칠한 칸이 옆 칸의 색을 바꾸지 않게).
@@ -2332,7 +2441,31 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    for (const g of groupLines(items)) {
+    const outlined = (it, text, x, y, size, maxW) => {
+      // 바탕색 테두리: 칸 둘레가 사진이라 바탕색이 고르지 않아도 글씨가 또렷하다.
+      ctx.strokeStyle = `rgb(${it.bg.join(',')})`;
+      ctx.lineWidth = Math.max(2, size * 0.18);
+      ctx.strokeText(text, x, y, maxW);
+      ctx.fillStyle = `rgb(${it.fg.join(',')})`;
+      ctx.fillText(text, x, y, maxW);
+    };
+    // 여러 줄 문단(Vision): 번역문을 칸 폭에 맞춰 줄바꿈해 칸 높이 안에 채운다.
+    for (const it of items.filter((x) => x.lines > 1)) {
+      const maxW = it.rect.w - 4;
+      let size = Math.max(9, Math.floor(((it.box.y1 - it.box.y0) / it.lines) * 0.8));
+      const floor = Math.max(9, Math.floor(size * 0.5));
+      let rows;
+      for (;;) {
+        ctx.font = `700 ${size}px ${OCR_FONT}`;
+        rows = wrapText(ctx, it.ko, maxW);
+        if (size <= floor || rows.length * size * 1.25 <= it.rect.h) break;
+        size -= 1;
+      }
+      const x = it.rect.x + it.rect.w / 2;
+      const top = it.rect.y + (it.rect.h - rows.length * size * 1.25) / 2 + size * 0.625;
+      rows.forEach((row, k) => outlined(it, row, x, top + k * size * 1.25, size, maxW));
+    }
+    for (const g of groupLines(items.filter((x) => x.lines === 1))) {
       // 무리 안에서는 같은 글씨 크기. 보통 줄 높이의 85%에서 시작해 번역이 모두 제 칸에 들 때까지 줄인다.
       // 절반 아래로는 줄이지 않고, 그래도 넘치는 줄은 fillText 의 최대 폭으로 가로를 눌러 담는다.
       // (가장 작은 줄에 맞추면 잘못 읽은 작은 조각 하나 때문에 무리 전체 글씨가 깨알만 해졌다.)
@@ -2347,15 +2480,25 @@
       for (const it of g.items) {
         const x = it.rect.x + it.rect.w / 2;
         const y = (it.box.y0 + it.box.y1) / 2;
-        const maxW = Math.max(it.rect.w - 2, size * 2);
-        // 바탕색 테두리: 칸 둘레가 사진이라 바탕색이 고르지 않아도 글씨가 또렷하다.
-        ctx.strokeStyle = `rgb(${it.bg.join(',')})`;
-        ctx.lineWidth = Math.max(2, size * 0.18);
-        ctx.strokeText(it.ko, x, y, maxW);
-        ctx.fillStyle = `rgb(${it.fg.join(',')})`;
-        ctx.fillText(it.ko, x, y, maxW);
+        outlined(it, it.ko, x, y, size, Math.max(it.rect.w - 2, size * 2));
       }
     }
+  }
+
+  // 띄어쓰기 단위로 폭에 맞춰 나눈다. 한 낱말이 폭보다 길면 그 줄은 fillText 가 가로를 눌러 담는다.
+  function wrapText(ctx, text, maxW) {
+    const rows = [];
+    let cur = '';
+    for (const w of text.split(/\s+/)) {
+      const t = cur ? `${cur} ${w}` : w;
+      if (!cur || ctx.measureText(t).width <= maxW) cur = t;
+      else {
+        rows.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) rows.push(cur);
+    return rows;
   }
 
   // 읽은 결과(줄 위치 + 번역)를 사진 주소별로 보관한다. 다른 날 같은 상품을 다시 봐도 글자를 다시
@@ -2402,13 +2545,13 @@
       const lines = [];
       segs.forEach((s, i) => {
         const k = out[i];
-        if (k && HANGUL.test(k) && k !== s.text) lines.push([s.box.x0 / W, s.box.y0 / H, s.box.x1 / W, s.box.y1 / H, k.trim()]);
+        if (k && HANGUL.test(k) && k !== s.text) lines.push([s.box.x0 / W, s.box.y0 / H, s.box.x1 / W, s.box.y1 / H, k.trim(), s.lines || 1]);
       });
       ocrCachePut(src, lines);
       cached = { lines };
     }
     if (!cached.lines.length) return null;
-    const segs = cached.lines.map(([x0, y0, x1, y1]) => ({ box: { x0: x0 * W, y0: y0 * H, x1: x1 * W, y1: y1 * H } }));
+    const segs = cached.lines.map(([x0, y0, x1, y1, , n]) => ({ box: { x0: x0 * W, y0: y0 * H, x1: x1 * W, y1: y1 * H }, lines: n || 1 }));
     const kos = cached.lines.map((l) => l[4]);
     paintTranslations(canvas, segs, kos);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
@@ -2597,7 +2740,7 @@
     clearTimeout(hoverTimer);
     if (!img) return;
     hoverTimer = setTimeout(autoTranslateHovered, OCR_HOVER_MS);
-    if (!ocrDone.has(key) && !ocrCacheGet(ocrSourceUrl(img))) warmOcr();
+    if (!ocrDone.has(key) && !ocrCacheGet(ocrSourceUrl(img)) && !visionUsable()) warmOcr();
   }
 
   function refreshImageButton() {
@@ -2769,7 +2912,17 @@
       <div class="lzk-check">
         <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올려 두면 사진 속 태국어를 자동 번역</span>
       </div>
-      <div class="lzk-hint">0.5초쯤 머문 사진만 읽어 한국어로 덮어 보여 줍니다(한 장에 3~5초). 왼쪽 위 버튼으로 원래 사진을 볼 수 있습니다. 처음 한 번은 인식 자료(4MB 남짓)를 받느라 10초쯤 걸립니다.</div>
+      <div class="lzk-hint">0.5초쯤 머문 사진만 읽어 한국어로 덮어 보여 줍니다(한 장에 1~3초). 왼쪽 위 버튼으로 원래 사진을 볼 수 있습니다. 처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다.</div>
+
+      <details id="lzk-vision-setup">
+        <summary>Google Vision (선택) — 사진 글자를 더 정확히</summary>
+        <label>Vision API 키</label>
+        <input type="password" id="lzk-vision-key" autocomplete="off" placeholder="AIza...">
+        <label>이 PC 월 한도 (건)</label>
+        <input type="number" id="lzk-vision-cap" min="0" max="1000" step="10">
+        <div class="lzk-hint" id="lzk-vision-usage"></div>
+        <div class="lzk-hint">무료는 Google 계정 전체 월 1,000건입니다. 이 PC에서 이번 달 한도에 닿으면 Vision 을 부르지 않고 무료 인식으로 읽습니다. PC가 여러 대면 한도를 나눠 적으세요(2대면 450씩). 키는 이 브라우저에만 저장됩니다. 콘솔에서 키를 'Cloud Vision API' 전용으로 제한해 두세요.</div>
+      </details>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>
@@ -2814,6 +2967,12 @@
     $('#lzk-confirm').checked = cfg.confirmSearch;
     $('#lzk-selection').checked = cfg.selectionTranslate;
     $('#lzk-image').checked = cfg.imageTranslate;
+    $('#lzk-vision-key').value = cfg.visionKey;
+    $('#lzk-vision-cap').value = cfg.visionMonthlyCap;
+    const vu = visionUsage();
+    $('#lzk-vision-usage').textContent =
+      `이 PC 이번 달(${vu.month}) 사용: ${vu.count} / ${cfg.visionMonthlyCap}건` +
+      (visionBlocked ? ` — 지금은 쓸 수 없음: ${visionBlocked}` : '');
     $('#lzk-page-glossary').value = glossaryToText(cfg.pageGlossary);
 
     // --- 검색 용어집 → GitHub ---
@@ -2936,6 +3095,10 @@
       cfg.selectionTranslate = $('#lzk-selection').checked;
       cfg.imageTranslate = $('#lzk-image').checked;
       if (!cfg.imageTranslate) hideImageButton();
+      const vKey = $('#lzk-vision-key').value.trim();
+      if (vKey !== cfg.visionKey) visionBlocked = ''; // 키를 바꿨으면 다시 시도해 본다
+      cfg.visionKey = vKey;
+      cfg.visionMonthlyCap = Math.max(0, Math.min(1000, Math.floor(Number($('#lzk-vision-cap').value) || 0)));
       cfg.pageGlossary = glossaryFromText($('#lzk-page-glossary').value);
       const token = $('#lzk-gh-token').value.trim();
       if (token !== cfg.githubToken) {

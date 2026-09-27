@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.14.0
+// @version      1.14.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1846,8 +1846,16 @@
   const OCR_MIN_SIDE = 160;     // 이보다 작게 보이는 사진(아이콘·작은 썸네일)엔 버튼을 안 띄운다
   const OCR_MIN_CONF = 35;      // 이보다 확신이 낮은 조각에서 줄을 끊는다(무늬·물건을 글자로 읽은 것)
   const OCR_MIN_LINE_CONF = 72; // 줄 전체 확신도. 시험 사진에서 진짜 줄은 74 이상, 가짜 줄은 대개 43~70
-  const OCR_TARGET_SIDE = 1600; // 작은 사진은 이 크기까지 키워서 읽는다(글자가 클수록 잘 읽는다)
+  const OCR_TARGET_SIDE = 1000; // 번역을 그려 넣을 사진 크기. 작은 사진은 이만큼 키워야 한국어가 뭉개지지 않는다
   const OCR_MAX_SIDE = 2000;
+  // 한 사진을 크기·색을 바꿔 여러 번 읽는다. 알맞은 글자 크기가 사진마다 달랐다(2026-09-27 시험):
+  // 표처럼 글자가 촘촘한 사진은 긴 변 800px 에서 14줄을 읽고 1000px 이상에서는 0~1줄,
+  // 큰 제목은 1300px 에서 더 잘 읽혔다. 색 바탕의 흰 글씨·빨간 제목은 색을 뒤집은 흑백본에서만 읽혔다.
+  const OCR_PASSES = [
+    { side: 800, invert: false },
+    { side: 800, invert: true },
+    { side: 1300, invert: true },
+  ];
   const OCR_IDLE_MS = 120000;   // 이만큼 안 쓰면 인식기를 내려 메모리를 돌려준다
   const OCR_FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif';
 
@@ -1981,13 +1989,14 @@
   // 한 줄을 태국어 토막으로 나눈다. Tesseract 의 태국어 '낱말'은 사실 글자 한두 개라, 확신 낮은
   // 글자를 하나씩 버리면 낱말이 부서진다(ส่ง 에서 ส 만 빠져 성조 부호가 홀로 남고, 줄 전체가 가짜로
   // 판정됐다). 그래서 줄 가운데서는 버리지 않고 끊는다: 태국 숫자(영어 로고 'DC-DC' 를 ๒๐-ว๐ 로
-  // 읽은 것)나 아주 낮은 확신도의 조각에서 끊고, 토막 양 끝의 태국 자음 없는 조각만 떼어 낸다.
+  // 읽은 것)나 아주 낮은 확신도의 조각에서 끊고, 토막 양 끝의 태국 글자 없는 조각과 맨 앞의
+  // 홀로 남은 윗·아랫 모음·성조(앞 자음이 끊겨 나간 것)만 떼어 낸다. 끝의 모음·성조는 남긴다(สินค้า 의 ้า).
   function thaiRuns(words) {
     const runs = [];
     let cur = [];
     const flush = () => {
-      while (cur.length && !/[ก-ฮ]/.test(cur[0].text)) cur.shift();
-      while (cur.length && !/[ก-ฮ]/.test(cur[cur.length - 1].text)) cur.pop();
+      while (cur.length && (!/[ก-๛]/.test(cur[0].text) || /^[ะ-ฺ็-๎]/.test(cur[0].text))) cur.shift();
+      while (cur.length && !/[ก-๛]/.test(cur[cur.length - 1].text)) cur.pop();
       if (cur.length) runs.push(cur);
       cur = [];
     };
@@ -2000,34 +2009,84 @@
     return runs;
   }
 
-  // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다. 태국어가 없는 줄(숫자·영어)은
-  // 그대로 둬도 읽히니 건드리지 않는다.
-  async function readImageText(canvas) {
-    const worker = await ocrWorker();
-    try {
-      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
-      const segs = [];
-      for (const block of data.blocks || []) {
-        for (const para of block.paragraphs) {
-          for (const line of para.lines) {
-            if (line.confidence < OCR_MIN_LINE_CONF) continue;
-            for (const words of thaiRuns(line.words)) {
-              const text = joinThai(words.map((w) => w.text).join(' ')).replace(/[เแโใไ]+$/, '');
-              if (!looksLikeThai(text)) continue;
-              const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-              for (const w of words) {
-                box.x0 = Math.min(box.x0, w.bbox.x0);
-                box.y0 = Math.min(box.y0, w.bbox.y0);
-                box.x1 = Math.max(box.x1, w.bbox.x1);
-                box.y1 = Math.max(box.y1, w.bbox.y1);
-              }
-              if (box.y1 - box.y0 < 6) continue;
-              segs.push({ text, box, conf: line.confidence });
+  function scaledCopy(src, scale, invert) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(src.width * scale));
+    c.height = Math.max(1, Math.round(src.height * scale));
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, c.width, c.height);
+    if (invert) {
+      const img = ctx.getImageData(0, 0, c.width, c.height);
+      const p = img.data;
+      for (let i = 0; i < p.length; i += 4) {
+        p[i] = p[i + 1] = p[i + 2] = 255 - (0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]);
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+    return c;
+  }
+
+  async function readLines(worker, canvas) {
+    const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
+    const segs = [];
+    for (const block of data.blocks || []) {
+      for (const para of block.paragraphs) {
+        for (const line of para.lines) {
+          if (line.confidence < OCR_MIN_LINE_CONF) continue;
+          for (const words of thaiRuns(line.words)) {
+            const text = joinThai(words.map((w) => w.text).join(' ')).replace(/[เแโใไ]+$/, '');
+            if (!looksLikeThai(text)) continue;
+            const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+            for (const w of words) {
+              box.x0 = Math.min(box.x0, w.bbox.x0);
+              box.y0 = Math.min(box.y0, w.bbox.y0);
+              box.x1 = Math.max(box.x1, w.bbox.x1);
+              box.y1 = Math.max(box.y1, w.bbox.y1);
             }
+            if (box.y1 - box.y0 < 6) continue;
+            segs.push({ text, box, conf: line.confidence });
           }
         }
       }
-      return segs;
+    }
+    return segs;
+  }
+
+  function overlapRatio(a, b) {
+    const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+    const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+    if (w <= 0 || h <= 0) return 0;
+    const area = (r) => (r.x1 - r.x0) * (r.y1 - r.y0);
+    return (w * h) / Math.min(area(a), area(b));
+  }
+
+  // 여러 번 읽은 결과에서 같은 자리의 줄은 하나만 남긴다: 확신도가 높고 글자가 온전한(긴) 쪽.
+  // 한 번은 'ว 2 เมตร…' 로 앞이 잘리고 다른 번엔 'ความยาว 2 เมตร…' 로 온전히 읽히는 일이 흔하다.
+  function pickBestLines(found) {
+    const score = (s) => s.conf + Math.min(s.text.length, 40) * 0.3;
+    const kept = [];
+    for (const s of [...found].sort((a, b) => score(b) - score(a))) {
+      if (!kept.some((k) => overlapRatio(k.box, s.box) > 0.5)) kept.push(s);
+    }
+    return kept;
+  }
+
+  // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다(box 는 canvas 좌표). 태국어가 없는
+  // 줄(숫자·영어)은 그대로 둬도 읽히니 건드리지 않는다.
+  async function readImageText(canvas) {
+    const worker = await ocrWorker();
+    try {
+      const long = Math.max(canvas.width, canvas.height);
+      const found = [];
+      for (const pass of OCR_PASSES) {
+        const scale = pass.side / long;
+        for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.invert))) {
+          const b = seg.box;
+          found.push({ ...seg, box: { x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale } });
+        }
+      }
+      return pickBestLines(found);
     } finally {
       releaseOcrLater();
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.19.0
+// @version      1.19.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -2914,16 +2914,6 @@
       </div>
       <div class="lzk-hint">0.5초쯤 머문 사진만 읽어 한국어로 덮어 보여 줍니다(한 장에 1~3초). 왼쪽 위 버튼으로 원래 사진을 볼 수 있습니다. 처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다.</div>
 
-      <details id="lzk-vision-setup">
-        <summary>Google Vision (선택) — 사진 글자를 더 정확히</summary>
-        <label>Vision API 키</label>
-        <input type="password" id="lzk-vision-key" autocomplete="off" placeholder="AIza...">
-        <label>이 PC 월 한도 (건)</label>
-        <input type="number" id="lzk-vision-cap" min="0" max="1000" step="10">
-        <div class="lzk-hint" id="lzk-vision-usage"></div>
-        <div class="lzk-hint">무료는 Google 계정 전체 월 1,000건입니다. 이 PC에서 이번 달 한도에 닿으면 Vision 을 부르지 않고 무료 인식으로 읽습니다. PC가 여러 대면 한도를 나눠 적으세요(2대면 450씩). 키는 이 브라우저에만 저장됩니다. 콘솔에서 키를 'Cloud Vision API' 전용으로 제한해 두세요.</div>
-      </details>
-
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>
       <div class="lzk-hint">브랜드명이 일반 단어로 번역될 때 씁니다. 원문 그대로 두려면 양쪽을 같게 적으세요.</div>
@@ -2947,6 +2937,13 @@
           <button class="lzk-ghost" id="lzk-load-models" type="button">불러오기</button>
         </div>
         <div class="lzk-hint">키를 넣고 '불러오기'를 누르면 실제 쓸 수 있는 모델만 나옵니다. 키 확인도 겸합니다.</div>
+
+        <label>Google Vision API 키 (사진 글자 인식)</label>
+        <input type="password" id="lzk-vision-key" autocomplete="off" placeholder="AIza...">
+        <label>Google Vision 이 PC 월 한도 (건)</label>
+        <input type="number" id="lzk-vision-cap" min="0" max="1000" step="10">
+        <div class="lzk-hint" id="lzk-vision-usage"></div>
+        <div class="lzk-hint">있으면 사진 속 글자를 Google Vision 으로 더 정확히 읽습니다. 무료는 Google 계정 전체 월 1,000건입니다. 이 PC에서 이번 달 한도에 닿으면 Vision 을 부르지 않고 무료 인식으로 읽습니다. PC가 여러 대면 한도를 나눠 적으세요(2대면 450씩). 키는 이 브라우저에만 저장됩니다. 콘솔에서 키를 'Cloud Vision API' 전용으로 제한해 두세요.</div>
       </details>
 
       <div class="lzk-actions">

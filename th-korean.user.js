@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.15.0
+// @version      1.16.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1850,11 +1850,14 @@
   const OCR_MAX_SIDE = 2000;
   // 한 사진을 크기·색을 바꿔 여러 번 읽는다. 알맞은 글자 크기가 사진마다 달랐다(2026-09-27 시험):
   // 표처럼 글자가 촘촘한 사진은 긴 변 800px 에서 14줄을 읽고 1000px 이상에서는 0~1줄,
-  // 큰 제목은 1300px 에서 더 잘 읽혔다. 색 바탕의 흰 글씨·빨간 제목은 색을 뒤집은 흑백본에서만 읽혔다.
+  // 큰 제목은 1300px 에서 더 잘 읽혔다. 색 바탕의 흰 글씨·빨간 제목은 색을 뒤집은 흑백본(inv)에서만
+  // 읽혔다. 타일 바닥 사진 위의 흰 테두리 파란 기울임 글씨는 어떤 흑백본으로도 엉터리였는데, 색이 진할수록
+  // 검게 만든 채도본(sat)에서는 모든 줄이 거의 정확히 읽혔다(광고 글씨는 대개 원색이고 배경은 무채색).
   const OCR_PASSES = [
-    { side: 800, invert: false },
-    { side: 800, invert: true },
-    { side: 1300, invert: true },
+    { side: 800, mode: 'rgb' },
+    { side: 800, mode: 'sat' },
+    { side: 800, mode: 'inv' },
+    { side: 1300, mode: 'inv' },
   ];
   const OCR_IDLE_MS = 120000;   // 이만큼 안 쓰면 인식기를 내려 메모리를 돌려준다
   const OCR_FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif';
@@ -2009,18 +2012,23 @@
     return runs;
   }
 
-  function scaledCopy(src, scale, invert) {
+  // mode: 'rgb' 그대로, 'inv' 밝기를 뒤집은 흑백, 'sat' 색이 진할수록 검은 흑백
+  function scaledCopy(src, scale, mode) {
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(src.width * scale));
     c.height = Math.max(1, Math.round(src.height * scale));
     const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(src, 0, 0, c.width, c.height);
-    if (invert) {
+    if (mode !== 'rgb') {
       const img = ctx.getImageData(0, 0, c.width, c.height);
       const p = img.data;
       for (let i = 0; i < p.length; i += 4) {
-        p[i] = p[i + 1] = p[i + 2] = 255 - (0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]);
+        const r = p[i];
+        const g = p[i + 1];
+        const b = p[i + 2];
+        p[i] = p[i + 1] = p[i + 2] =
+          mode === 'sat' ? 255 - (Math.max(r, g, b) - Math.min(r, g, b)) : 255 - (0.299 * r + 0.587 * g + 0.114 * b);
       }
       ctx.putImageData(img, 0, 0);
     }
@@ -2063,8 +2071,11 @@
 
   // 여러 번 읽은 결과에서 같은 자리의 줄은 하나만 남긴다: 확신도가 높고 글자가 온전한(긴) 쪽.
   // 한 번은 'ว 2 เมตร…' 로 앞이 잘리고 다른 번엔 'ความยาว 2 เมตร…' 로 온전히 읽히는 일이 흔하다.
+  // 다만 숫자·기호 사이에 한두 글자짜리 태국어 조각이 흩어진 줄은 길어도 엉터리다
+  // ('ความยาว 10cm' 을 'คอลมยาว 70 6 ทา 250 6 ทา' 로 읽은 것이 온전한 'ความยาว' 를 이겼다).
   function pickBestLines(found) {
-    const score = (s) => s.conf + Math.min(s.text.length, 40) * 0.3;
+    const crumbs = (t) => t.split(/[^ก-๛]+/).filter((r) => r && r.length <= 2).length;
+    const score = (s) => s.conf + Math.min(s.text.length, 40) * 0.3 - crumbs(s.text) * 5;
     const kept = [];
     for (const s of [...found].sort((a, b) => score(b) - score(a))) {
       if (!kept.some((k) => overlapRatio(k.box, s.box) > 0.5)) kept.push(s);
@@ -2081,7 +2092,7 @@
       const found = [];
       for (const pass of OCR_PASSES) {
         const scale = pass.side / long;
-        for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.invert))) {
+        for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.mode))) {
           const b = seg.box;
           found.push({ ...seg, box: { x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale } });
         }
@@ -2138,8 +2149,7 @@
     return { bg, fg };
   }
 
-  // 위아래로 붙은 줄(라벨·표의 여러 줄)을 한 무리로 묶는다. 무리 전체를 바탕색으로 한 번 칠하고
-  // 각 줄은 제자리에 같은 크기 글씨로 쓴다. 줄마다 따로 칠하면 칸이 겹쳐 글씨가 서로 덮였다.
+  // 위아래로 붙은 줄(라벨·표의 여러 줄)을 한 무리로 묶는다. 무리 안에서는 같은 크기 글씨로 쓴다.
   function groupLines(items) {
     const groups = [];
     for (const it of [...items].sort((a, b) => a.box.y0 - b.box.y0)) {
@@ -2164,32 +2174,50 @@
     return groups;
   }
 
+  // 줄마다 제 칸만 바탕색으로 지우고, 모든 칸을 지운 뒤에 글씨를 쓴다(칸이 겹쳐도 글씨는 안 덮인다).
+  // 전에는 여러 줄을 큰 상자 하나로 덮어, 사진 위 글씨가 커다란 흰 판으로 바뀌어 보였다.
   function paintTranslations(canvas, segs, kos) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const items = segs.map((s, i) => ({ box: s.box, ko: kos[i] })).filter((it) => it.ko);
-    const plans = groupLines(items).map((g) => {
-      const lineH = g.items.reduce((a, it) => a + (it.box.y1 - it.box.y0), 0) / g.items.length;
-      const pad = Math.max(3, Math.round(lineH * 0.2));
-      const rect = { x: g.box.x0 - pad, y: g.box.y0 - pad, w: g.box.x1 - g.box.x0 + pad * 2, h: g.box.y1 - g.box.y0 + pad * 2 };
-      return { g, rect, ...boxColors(ctx, rect) }; // 색은 칠하기 전에 모두 재 둔다(먼저 칠한 무리가 옆 색을 바꾸지 않게)
-    });
+    const items = segs
+      .map((s, i) => {
+        const h = s.box.y1 - s.box.y0;
+        const pad = Math.max(2, Math.round(h * 0.12));
+        const rect = { x: s.box.x0 - pad, y: s.box.y0 - pad, w: s.box.x1 - s.box.x0 + pad * 2, h: h + pad * 2 };
+        return { box: s.box, ko: kos[i], rect };
+      })
+      .filter((it) => it.ko);
+    // 색은 칠하기 전에 모두 재 둔다(먼저 칠한 칸이 옆 칸의 색을 바꾸지 않게).
+    for (const it of items) Object.assign(it, boxColors(ctx, it.rect));
+    for (const it of items) {
+      ctx.fillStyle = `rgb(${it.bg.join(',')})`;
+      ctx.fillRect(it.rect.x, it.rect.y, it.rect.w, it.rect.h);
+    }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const { g, rect, bg, fg } of plans) {
-      ctx.fillStyle = `rgb(${bg.join(',')})`;
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      // 무리 안에서는 같은 글씨 크기. 줄 높이의 90%에서 시작해 가장 긴 번역이 폭에 들 때까지 줄인다.
-      // 절반 크기 아래로는 줄이지 않고, 그래도 넘치는 줄은 fillText 의 최대 폭으로 가로를 눌러 담는다.
-      const maxW = rect.w - 2;
-      let size = Math.max(9, Math.floor(Math.min(...g.items.map((it) => it.box.y1 - it.box.y0)) * 0.9));
+    ctx.lineJoin = 'round';
+    for (const g of groupLines(items)) {
+      // 무리 안에서는 같은 글씨 크기. 보통 줄 높이의 85%에서 시작해 번역이 모두 제 칸에 들 때까지 줄인다.
+      // 절반 아래로는 줄이지 않고, 그래도 넘치는 줄은 fillText 의 최대 폭으로 가로를 눌러 담는다.
+      // (가장 작은 줄에 맞추면 잘못 읽은 작은 조각 하나 때문에 무리 전체 글씨가 깨알만 해졌다.)
+      const hs = g.items.map((it) => it.box.y1 - it.box.y0).sort((a, b) => a - b);
+      let size = Math.max(9, Math.floor(hs[hs.length >> 1] * 0.85));
       const floor = Math.max(9, Math.floor(size * 0.5));
       for (;;) {
-        ctx.font = `600 ${size}px ${OCR_FONT}`;
-        if (size <= floor || g.items.every((it) => ctx.measureText(it.ko).width <= maxW)) break;
+        ctx.font = `700 ${size}px ${OCR_FONT}`;
+        if (size <= floor || g.items.every((it) => ctx.measureText(it.ko).width <= it.rect.w - 2)) break;
         size -= 1;
       }
-      ctx.fillStyle = `rgb(${fg.join(',')})`;
-      for (const it of g.items) ctx.fillText(it.ko, rect.x + rect.w / 2, (it.box.y0 + it.box.y1) / 2, maxW);
+      for (const it of g.items) {
+        const x = it.rect.x + it.rect.w / 2;
+        const y = (it.box.y0 + it.box.y1) / 2;
+        const maxW = Math.max(it.rect.w - 2, size * 2);
+        // 바탕색 테두리: 칸 둘레가 사진이라 바탕색이 고르지 않아도 글씨가 또렷하다.
+        ctx.strokeStyle = `rgb(${it.bg.join(',')})`;
+        ctx.lineWidth = Math.max(2, size * 0.18);
+        ctx.strokeText(it.ko, x, y, maxW);
+        ctx.fillStyle = `rgb(${it.fg.join(',')})`;
+        ctx.fillText(it.ko, x, y, maxW);
+      }
     }
   }
 

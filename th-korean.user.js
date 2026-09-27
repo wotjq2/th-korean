@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.13.0
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 지원: 라자다, 쇼피 (사이트 추가 예정)
+// @version      1.14.0
+// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
@@ -15,6 +15,10 @@
 // @connect      translate.googleapis.com
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
+// @connect      lazcdn.com
+// @connect      slatic.net
+// @connect      susercontent.com
+// @require      https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js#sha256=a8e29918d098b2b06e1012bdaeffb4aec0445c5d5654709023e0bd1f442a80e8
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -30,7 +34,7 @@
 // (실제로 이름을 '라자다 …' → '태국 쇼핑 …' 으로 고쳤다가 업데이트 고리가 끊긴 적 있다.)
 // 사이트를 추가할 때 손대는 곳은 @match, @description, 그리고 아래 SITES 뿐이다.
 
-/* global GM_xmlhttpRequest, GM_setValue, GM_getValue, GM_addStyle, GM_registerMenuCommand */
+/* global GM_xmlhttpRequest, GM_setValue, GM_getValue, GM_addStyle, GM_registerMenuCommand, Tesseract */
 
 (function () {
   'use strict';
@@ -184,6 +188,7 @@
     autoTranslatePage: true,
     confirmSearch: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
+    imageTranslate: true,      // 사진에 마우스를 올리면 '사진 번역' 버튼
     glossary: {},      // 예전 방식의 '내 용어집'(이 PC에만). 이제는 GitHub glossary.txt 를 쓴다
     githubToken: '',   // 용어집 저장용. th-korean-glossary 쓰기 권한만 있는 토큰 (이 PC에만)
     githubUser: '',    // 토큰 확인 때 받은 GitHub 아이디 (표시용)
@@ -1671,6 +1676,13 @@
       float: right; border: none; background: none; cursor: pointer;
       font-size: 17px; color: #888; line-height: 1; padding: 0 0 0 8px;
     }
+    #lzk-imgbtn {
+      position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
+      background: rgba(15, 20, 110, .92); color: #fff; padding: 7px 11px; cursor: pointer;
+      font: 600 12px/1 system-ui, sans-serif; box-shadow: 0 3px 10px rgba(0,0,0,.3);
+    }
+    #lzk-imgbtn:hover { background: #1a22a0; }
+    #lzk-imgbtn[data-busy] { cursor: progress; background: rgba(60, 60, 70, .9); }
   `;
 
   // 우리가 만든 UI 는 이미 한국어다. 크롬 자동번역이 이걸 태국어로 착각해
@@ -1817,6 +1829,460 @@
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // 사진 속 글자 번역 — 상품 사진의 태국어를 읽어(OCR) 그 자리에 한국어를 덮어 그린다.
+  //
+  // 사진에 마우스를 올리면 '사진 번역' 버튼이 뜨고, 누른 사진만 처리한다. 목록 페이지의 사진을
+  // 모두 자동으로 읽으면 한 장에 1~3초라 브라우저가 무거워진다.
+  // 글자 인식은 브라우저 안에서 Tesseract.js(무료, 태국어 지원)로 한다. 처음 한 번 인식 엔진과
+  // 태국어 자료(합쳐 4MB 남짓)를 받고, 그 뒤로는 브라우저가 보관한다. 번역은 페이지 번역과 같은 길.
+  // 확인한 것(2026-09-27): 라자다는 CSP 가 없어 워커를 띄울 수 있고, img.lazcdn.com 사진은 CORS 를
+  // 열어 둬 픽셀을 읽을 수 있다. 흩어진 글자 모드(PSM 11)가 상품 사진의 라벨·표 글자를 자동 모드
+  // (PSM 3)보다 훨씬 많이 찾았고, 무늬를 글자로 잘못 읽은 조각은 확신도가 낮아 걸러진다.
+  // ---------------------------------------------------------------------------
+
+  const OCR_LIB = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist';
+  const OCR_CORE = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1';
+  const OCR_MIN_SIDE = 160;     // 이보다 작게 보이는 사진(아이콘·작은 썸네일)엔 버튼을 안 띄운다
+  const OCR_MIN_CONF = 35;      // 이보다 확신이 낮은 조각에서 줄을 끊는다(무늬·물건을 글자로 읽은 것)
+  const OCR_MIN_LINE_CONF = 72; // 줄 전체 확신도. 시험 사진에서 진짜 줄은 74 이상, 가짜 줄은 대개 43~70
+  const OCR_TARGET_SIDE = 1600; // 작은 사진은 이 크기까지 키워서 읽는다(글자가 클수록 잘 읽는다)
+  const OCR_MAX_SIDE = 2000;
+  const OCR_IDLE_MS = 120000;   // 이만큼 안 쓰면 인식기를 내려 메모리를 돌려준다
+  const OCR_FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif';
+
+  let ocrWorkerP = null;
+  let ocrIdleTimer = null;
+
+  function ocrWorker() {
+    clearTimeout(ocrIdleTimer);
+    if (!ocrWorkerP) {
+      ocrWorkerP = (async () => {
+        const w = await Tesseract.createWorker('tha', 1, {
+          workerPath: `${OCR_LIB}/worker.min.js`,
+          corePath: OCR_CORE,
+        });
+        // 태국어 모델은 숫자·영어도 읽는다. 영어 자료(5MB)는 받지 않는다.
+        await w.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' });
+        return w;
+      })().catch((e) => {
+        ocrWorkerP = null;
+        throw e;
+      });
+    }
+    return ocrWorkerP;
+  }
+
+  function releaseOcrLater() {
+    clearTimeout(ocrIdleTimer);
+    ocrIdleTimer = setTimeout(async () => {
+      const p = ocrWorkerP;
+      ocrWorkerP = null;
+      try {
+        (await p)?.terminate();
+      } catch {
+        /* 이미 내려갔다 */
+      }
+    }, OCR_IDLE_MS);
+  }
+
+  // 화면의 사진은 축소판이다. 원본을 받아야 작은 글자까지 읽힌다.
+  //   라자다: …/abc.jpg_720x720q80.jpg_.webp → …/abc.jpg
+  //   쇼피:   …/file/th-11134207-…_tn        → …/file/th-11134207-…
+  function ocrSourceUrl(img) {
+    return (img.currentSrc || img.src)
+      .replace(/(\.(?:jpe?g|png|webp))_\d+x\d+[^/?#]*$/i, '$1')
+      .replace(/(\/file\/[^/?#]+)_tn$/, '$1');
+  }
+
+  async function fetchImageBlob(url) {
+    try {
+      const r = await fetch(url, { mode: 'cors', credentials: 'omit' });
+      if (r.ok) return await r.blob();
+    } catch {
+      /* CORS 를 안 연 서버 — 아래에서 확장 권한으로 받는다 */
+    }
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        responseType: 'blob',
+        timeout: 20000,
+        onload: (r) =>
+          r.status >= 200 && r.status < 300 ? resolve(r.response) : reject(new Error(`사진 받기 실패 (HTTP ${r.status})`)),
+        onerror: () => reject(new Error('사진을 받지 못했습니다')),
+        ontimeout: () => reject(new Error('사진 받기 시간 초과')),
+      });
+    });
+  }
+
+  async function imageToCanvas(img) {
+    const urls = [...new Set([ocrSourceUrl(img), img.currentSrc || img.src])];
+    let bmp = null;
+    let lastErr = null;
+    for (const u of urls) {
+      try {
+        bmp = await createImageBitmap(await fetchImageBlob(u));
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!bmp) throw lastErr || new Error('사진을 읽지 못했습니다');
+    const long = Math.max(bmp.width, bmp.height);
+    const scale = Math.min(OCR_MAX_SIDE / long, Math.max(1, OCR_TARGET_SIDE / long));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; // 투명한 PNG 가 JPEG 로 나갈 때 검게 되지 않게
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close?.();
+    return canvas;
+  }
+
+  // Tesseract 는 태국어를 글자마다 띄어 쓴 것처럼 돌려준다. 태국어는 원래 붙여 쓰므로 붙인다.
+  // 자주 틀리는 것도 바로잡는다: 'ำ' 을 'ํ'+'า' 두 글자로 내거나 아예 'า' 로 읽는다
+  // (น้ำกระด้าง 센물 → น้ากระด้าง, 번역이 "나는 가혹하다" 가 됐다). 상품 사진의 น้า 는 거의 น้ำ 다.
+  function joinThai(s) {
+    return s
+      .replace(/\s+/g, ' ')
+      .replace(/([฀-๿])\s+(?=[฀-๿])/g, '$1')
+      .replace(/ํา/g, 'ำ')
+      .replace(/น้า(?=[ก-ฮ]|$)/g, 'น้ำ')
+      .trim();
+  }
+
+  // 태국어답게 생겼나. 태국어 모델은 한국어·영어 글자나 무늬도 억지로 태국어로 읽는데, 그러면
+  // 맞춤법이 무너진 글자열이 나온다("ขฆญว ขอขมย"). 그런 줄을 덮어 그리면 사진만 망가지므로 버린다.
+  // 상품 사진 스크린숏으로 맞춰 봤다: 진짜 태국어 40줄은 모두 남고, 가짜 34줄 중 30줄이 걸러졌다.
+  function looksLikeThai(text) {
+    const t = text.replace(/[^฀-๿]/g, '');
+    if (t.length < 4) return false;
+    if (/[๐-๙]/.test(t)) return false; // 상품 사진에 태국 숫자는 거의 안 쓴다
+    const rare = (t.match(/[ฃฅฆฌญฎฏฐฑฒธฬฮ]/g) || []).length;
+    if (rare / t.length > 0.12) return false;
+    // 모음·성조가 너무 적으면 자음만 늘어놓은 가짜다. อ ว ย 도 모음 노릇을 자주 한다(ของ, กลัว, เลย).
+    const vowels = (t.match(/[ะาำิีึืุูเแโใไั็ๅอวย่้๊๋์]/g) || []).length;
+    if (vowels / t.length < 0.2) return false;
+    if (/([ก-ฮ])\1\1/.test(t)) return false;
+    if (/[กขคฆงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมศษสหฬฮ]{5,}/.test(t)) return false;
+    if (/(^|[^ก-ฮ])[ัิีึืุู็]/.test(t)) return false; // 윗·아랫 모음은 자음 뒤에만 온다
+    if (/(^|[^ก-ฮัิีึืุู็])[่้๊๋์]/.test(t)) return false; // 성조는 자음이나 윗·아랫 모음 뒤에만 온다
+    if (/[เแโใไ]($|[^ก-ฮ])/.test(t.replace(/เเ/g, 'แ'))) return false; // 앞 모음 뒤엔 자음이 온다
+    if (/[ะาำ][ัิีึืุู]/.test(t) || /[ัิีึืุู]{2}/.test(t)) return false;
+    if (/[^ก-ฮา]ะ/.test(t)) return false;
+    const runs = text.split(/[^฀-๿]+/).filter(Boolean);
+    return t.length / runs.length >= 3; // 기호 사이사이 한두 글자씩이면 가짜
+  }
+
+  // 한 줄을 태국어 토막으로 나눈다. Tesseract 의 태국어 '낱말'은 사실 글자 한두 개라, 확신 낮은
+  // 글자를 하나씩 버리면 낱말이 부서진다(ส่ง 에서 ส 만 빠져 성조 부호가 홀로 남고, 줄 전체가 가짜로
+  // 판정됐다). 그래서 줄 가운데서는 버리지 않고 끊는다: 태국 숫자(영어 로고 'DC-DC' 를 ๒๐-ว๐ 로
+  // 읽은 것)나 아주 낮은 확신도의 조각에서 끊고, 토막 양 끝의 태국 자음 없는 조각만 떼어 낸다.
+  function thaiRuns(words) {
+    const runs = [];
+    let cur = [];
+    const flush = () => {
+      while (cur.length && !/[ก-ฮ]/.test(cur[0].text)) cur.shift();
+      while (cur.length && !/[ก-ฮ]/.test(cur[cur.length - 1].text)) cur.pop();
+      if (cur.length) runs.push(cur);
+      cur = [];
+    };
+    for (const w of words) {
+      if (!/\S/.test(w.text)) continue;
+      if (w.confidence < OCR_MIN_CONF || /[๐-๙]/.test(w.text)) flush();
+      else cur.push(w);
+    }
+    flush();
+    return runs;
+  }
+
+  // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다. 태국어가 없는 줄(숫자·영어)은
+  // 그대로 둬도 읽히니 건드리지 않는다.
+  async function readImageText(canvas) {
+    const worker = await ocrWorker();
+    try {
+      const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
+      const segs = [];
+      for (const block of data.blocks || []) {
+        for (const para of block.paragraphs) {
+          for (const line of para.lines) {
+            if (line.confidence < OCR_MIN_LINE_CONF) continue;
+            for (const words of thaiRuns(line.words)) {
+              const text = joinThai(words.map((w) => w.text).join(' ')).replace(/[เแโใไ]+$/, '');
+              if (!looksLikeThai(text)) continue;
+              const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+              for (const w of words) {
+                box.x0 = Math.min(box.x0, w.bbox.x0);
+                box.y0 = Math.min(box.y0, w.bbox.y0);
+                box.x1 = Math.max(box.x1, w.bbox.x1);
+                box.y1 = Math.max(box.y1, w.bbox.y1);
+              }
+              if (box.y1 - box.y0 < 6) continue;
+              segs.push({ text, box, conf: line.confidence });
+            }
+          }
+        }
+      }
+      return segs;
+    } finally {
+      releaseOcrLater();
+    }
+  }
+
+  function medianColor(px) {
+    const ch = (i) => px.map((p) => p[i]).sort((a, b) => a - b)[px.length >> 1];
+    return [ch(0), ch(1), ch(2)];
+  }
+  function colorDist(a, b) {
+    return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+  }
+  function luminance(c) {
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+  }
+
+  // 칸 안에서 가장 많은 색 = 바탕색(글자는 칸의 일부만 차지한다), 바탕과 많이 다른 색 = 글자색.
+  // 둘레만 재면 라벨 가장자리에 걸친 칸이 라벨 밖 배경색을 집어 회색 띠가 생겼다.
+  function boxColors(ctx, rect) {
+    const W = ctx.canvas.width;
+    const H = ctx.canvas.height;
+    const x0 = Math.max(0, Math.floor(rect.x));
+    const y0 = Math.max(0, Math.floor(rect.y));
+    const x1 = Math.min(W, Math.ceil(rect.x + rect.w));
+    const y1 = Math.min(H, Math.ceil(rect.y + rect.h));
+    if (x1 - x0 < 3 || y1 - y0 < 3) return { bg: [255, 255, 255], fg: [17, 17, 17] };
+    const d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+    const bins = new Map(); // 채널마다 16단계로 뭉뚱그린 색 → [개수, R합, G합, B합]
+    for (let i = 0; i < d.length; i += 4) {
+      const key = ((d[i] >> 4) << 8) | ((d[i + 1] >> 4) << 4) | (d[i + 2] >> 4);
+      const b = bins.get(key);
+      if (b) {
+        b[0]++;
+        b[1] += d[i];
+        b[2] += d[i + 1];
+        b[3] += d[i + 2];
+      } else bins.set(key, [1, d[i], d[i + 1], d[i + 2]]);
+    }
+    let top = null;
+    for (const b of bins.values()) if (!top || b[0] > top[0]) top = b;
+    const bg = [Math.round(top[1] / top[0]), Math.round(top[2] / top[0]), Math.round(top[3] / top[0])];
+    const ink = [];
+    for (let i = 0; i < d.length; i += 4) {
+      const p = [d[i], d[i + 1], d[i + 2]];
+      if (colorDist(p, bg) > 120) ink.push(p);
+    }
+    let fg = ink.length > (d.length / 4) * 0.02 ? medianColor(ink) : null;
+    if (!fg || colorDist(fg, bg) < 150) fg = luminance(bg) > 140 ? [17, 17, 17] : [255, 255, 255];
+    return { bg, fg };
+  }
+
+  // 위아래로 붙은 줄(라벨·표의 여러 줄)을 한 무리로 묶는다. 무리 전체를 바탕색으로 한 번 칠하고
+  // 각 줄은 제자리에 같은 크기 글씨로 쓴다. 줄마다 따로 칠하면 칸이 겹쳐 글씨가 서로 덮였다.
+  function groupLines(items) {
+    const groups = [];
+    for (const it of [...items].sort((a, b) => a.box.y0 - b.box.y0)) {
+      const h = it.box.y1 - it.box.y0;
+      const g = groups.find((gr) => {
+        const last = gr.items[gr.items.length - 1].box;
+        const gap = it.box.y0 - last.y1;
+        const overlap = Math.min(it.box.x1, gr.box.x1) - Math.max(it.box.x0, gr.box.x0);
+        const narrow = Math.min(it.box.x1 - it.box.x0, gr.box.x1 - gr.box.x0);
+        return gap <= h * 0.9 && gap >= -h * 0.6 && overlap > narrow * 0.3;
+      });
+      if (g) {
+        g.items.push(it);
+        g.box = {
+          x0: Math.min(g.box.x0, it.box.x0),
+          y0: Math.min(g.box.y0, it.box.y0),
+          x1: Math.max(g.box.x1, it.box.x1),
+          y1: Math.max(g.box.y1, it.box.y1),
+        };
+      } else groups.push({ items: [it], box: { ...it.box } });
+    }
+    return groups;
+  }
+
+  function paintTranslations(canvas, segs, kos) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const items = segs.map((s, i) => ({ box: s.box, ko: kos[i] })).filter((it) => it.ko);
+    const plans = groupLines(items).map((g) => {
+      const lineH = g.items.reduce((a, it) => a + (it.box.y1 - it.box.y0), 0) / g.items.length;
+      const pad = Math.max(3, Math.round(lineH * 0.2));
+      const rect = { x: g.box.x0 - pad, y: g.box.y0 - pad, w: g.box.x1 - g.box.x0 + pad * 2, h: g.box.y1 - g.box.y0 + pad * 2 };
+      return { g, rect, ...boxColors(ctx, rect) }; // 색은 칠하기 전에 모두 재 둔다(먼저 칠한 무리가 옆 색을 바꾸지 않게)
+    });
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const { g, rect, bg, fg } of plans) {
+      ctx.fillStyle = `rgb(${bg.join(',')})`;
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      // 무리 안에서는 같은 글씨 크기. 줄 높이의 90%에서 시작해 가장 긴 번역이 폭에 들 때까지 줄인다.
+      // 절반 크기 아래로는 줄이지 않고, 그래도 넘치는 줄은 fillText 의 최대 폭으로 가로를 눌러 담는다.
+      const maxW = rect.w - 2;
+      let size = Math.max(9, Math.floor(Math.min(...g.items.map((it) => it.box.y1 - it.box.y0)) * 0.9));
+      const floor = Math.max(9, Math.floor(size * 0.5));
+      for (;;) {
+        ctx.font = `600 ${size}px ${OCR_FONT}`;
+        if (size <= floor || g.items.every((it) => ctx.measureText(it.ko).width <= maxW)) break;
+        size -= 1;
+      }
+      ctx.fillStyle = `rgb(${fg.join(',')})`;
+      for (const it of g.items) ctx.fillText(it.ko, rect.x + rect.w / 2, (it.box.y0 + it.box.y1) / 2, maxW);
+    }
+  }
+
+  // 번역해 그린 사진의 blob 주소. 찾을 태국어가 없으면 null.
+  async function renderTranslatedImage(img) {
+    const canvas = await imageToCanvas(img);
+    const segs = await readImageText(canvas);
+    if (!segs.length) return null;
+    const out = await translateToKorean(segs.map((s) => s.text));
+    const kos = out.map((k, i) => (k && HANGUL.test(k) && k !== segs[i].text ? k.trim() : null));
+    if (!kos.some(Boolean)) return null;
+    paintTranslations(canvas, segs, kos);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('번역한 사진을 만들지 못했습니다');
+    return URL.createObjectURL(blob);
+  }
+
+  const ocrDone = new Map(); // 원래 사진 주소 → 번역한 사진. 사진을 넘겼다 돌아와도 다시 읽지 않는다.
+  const ocrBusy = new WeakSet();
+  let imgBtn = null;
+  let imgBtnTarget = null;
+
+  function imageSrcKey(img) {
+    return img.dataset.lzkOrigSrc || img.currentSrc || img.src;
+  }
+
+  function showOriginalImage(img) {
+    img.src = img.dataset.lzkOrigSrc;
+    if (img.dataset.lzkOrigSrcset) img.setAttribute('srcset', img.dataset.lzkOrigSrcset);
+    delete img.dataset.lzkOrigSrc;
+    delete img.dataset.lzkOrigSrcset;
+  }
+
+  function showTranslatedImage(img, url) {
+    img.dataset.lzkOrigSrc = img.currentSrc || img.src;
+    img.dataset.lzkOrigSrcset = img.getAttribute('srcset') || '';
+    img.removeAttribute('srcset');
+    img.src = url;
+  }
+
+  async function toggleImageTranslation(img) {
+    if (ocrBusy.has(img)) return;
+    if (img.dataset.lzkOrigSrc) {
+      showOriginalImage(img);
+      refreshImageButton();
+      return;
+    }
+    const key = imageSrcKey(img);
+    let url = ocrDone.get(key);
+    if (!url) {
+      ocrBusy.add(img);
+      refreshImageButton();
+      setBadge(ocrWorkerP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
+      try {
+        url = await renderTranslatedImage(img);
+        if (!url) {
+          toast('이 사진에서는 번역할 태국어 글자를 찾지 못했습니다.');
+          return;
+        }
+        ocrDone.set(key, url);
+      } catch (e) {
+        console.warn(`[${APP_NAME}] 사진 번역 실패:`, e);
+        toast(`사진 번역 실패: ${e.message || e}`, 5000);
+        return;
+      } finally {
+        ocrBusy.delete(img);
+        setBadge(null);
+        refreshImageButton();
+      }
+    }
+    // 읽는 사이에 갤러리가 다른 사진으로 넘어갔으면 바꾸지 않는다(다음에 누르면 바로 보인다).
+    if (imageSrcKey(img) !== key) return;
+    showTranslatedImage(img, url);
+    refreshImageButton();
+  }
+
+  function refreshImageButton() {
+    if (!imgBtn || !imgBtnTarget) return;
+    const busy = ocrBusy.has(imgBtnTarget);
+    imgBtn.textContent = busy ? '사진 읽는 중…' : imgBtnTarget.dataset.lzkOrigSrc ? '원래 사진' : '사진 번역';
+    imgBtn.toggleAttribute('data-busy', busy);
+  }
+
+  // 커서 아래의 큰 사진. 라자다 갤러리처럼 사진 위에 투명한 층(확대경 등)이 덮여 있어도
+  // 찾도록 이벤트 대상이 아니라 그 자리의 요소들을 훑는다.
+  function imageUnder(x, y) {
+    for (const el of document.elementsFromPoint(x, y)) {
+      if (el === imgBtn) return imgBtnTarget;
+      if (!(el instanceof HTMLImageElement)) continue;
+      const src = el.currentSrc || el.src;
+      if (!src || src.startsWith('data:')) return null;
+      const r = el.getBoundingClientRect();
+      if (r.width < OCR_MIN_SIDE || r.height < OCR_MIN_SIDE) return null;
+      if (el.naturalWidth && el.naturalWidth < OCR_MIN_SIDE) return null;
+      return el;
+    }
+    return null;
+  }
+
+  function hideImageButton() {
+    if (imgBtn) imgBtn.style.display = 'none';
+  }
+
+  function showImageButton(img) {
+    if (!imgBtn) {
+      imgBtn = document.createElement('button');
+      imgBtn.id = 'lzk-imgbtn';
+      imgBtn.type = 'button';
+      markNoTranslate(imgBtn);
+      // 사진을 누르면 확대 창을 여는 사이트가 많다. 버튼 누름이 사진까지 내려가지 않게 막는다.
+      for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
+        imgBtn.addEventListener(type, (e) => e.stopPropagation());
+      }
+      imgBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (imgBtnTarget) toggleImageTranslation(imgBtnTarget);
+      });
+      document.body.appendChild(imgBtn);
+    }
+    imgBtnTarget = img;
+    const r = img.getBoundingClientRect();
+    imgBtn.style.left = `${Math.max(4, r.left + 8)}px`;
+    imgBtn.style.top = `${Math.max(4, r.top + 8)}px`;
+    imgBtn.style.display = '';
+    refreshImageButton();
+  }
+
+  function installImageUI() {
+    let pending = false;
+    let lastX = 0;
+    let lastY = 0;
+    document.addEventListener(
+      'mousemove',
+      (e) => {
+        lastX = e.clientX;
+        lastY = e.clientY;
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => {
+          pending = false;
+          if (!cfg.imageTranslate) return hideImageButton();
+          const img = imageUnder(lastX, lastY);
+          if (img) showImageButton(img);
+          else hideImageButton();
+        });
+      },
+      { passive: true }
+    );
+    window.addEventListener('scroll', hideImageButton, { passive: true });
+  }
+
   function glossaryToText(obj) {
     return Object.entries(obj).map(([k, v]) => `${k}=${v}`).join('\n');
   }
@@ -1895,6 +2361,10 @@
         <input type="checkbox" id="lzk-selection"><span>글자를 드래그하면 '한국어로' 버튼 표시</span>
       </div>
       <div class="lzk-hint">페이지 번역을 끄고 크롬 자동번역을 쓸 때, 뭉개진 상품명만 골라 보는 용도입니다. AI 키가 있으면 AI가 처리합니다.</div>
+      <div class="lzk-check">
+        <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올리면 '사진 번역' 버튼 표시</span>
+      </div>
+      <div class="lzk-hint">누른 사진 속 태국어를 읽어 한국어로 덮어 보여 줍니다. 처음 한 번은 인식 자료(4MB 남짓)를 받느라 10초쯤 걸립니다.</div>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>
@@ -1938,6 +2408,7 @@
     $('#lzk-auto').checked = cfg.autoTranslatePage;
     $('#lzk-confirm').checked = cfg.confirmSearch;
     $('#lzk-selection').checked = cfg.selectionTranslate;
+    $('#lzk-image').checked = cfg.imageTranslate;
     $('#lzk-page-glossary').value = glossaryToText(cfg.pageGlossary);
 
     // --- 검색 용어집 → GitHub ---
@@ -2058,6 +2529,8 @@
       cfg.autoTranslatePage = $('#lzk-auto').checked;
       cfg.confirmSearch = $('#lzk-confirm').checked;
       cfg.selectionTranslate = $('#lzk-selection').checked;
+      cfg.imageTranslate = $('#lzk-image').checked;
+      if (!cfg.imageTranslate) hideImageButton();
       cfg.pageGlossary = glossaryFromText($('#lzk-page-glossary').value);
       const token = $('#lzk-gh-token').value.trim();
       if (token !== cfg.githubToken) {
@@ -2269,6 +2742,7 @@
     setTimeout(warnIfOldScript, 3000); // 옛것이 우리보다 늦게 뜨는 경우
     hookSearch();
     installSelectionUI();
+    installImageUI();
     showCarriedToast();
     rescueKoreanQuery();
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });

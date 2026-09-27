@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.18.0
+// @version      1.18.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -201,6 +201,8 @@
     'LazMall': 'LazMall', 'Lazada': 'Lazada', 'LazLive': 'LazLive',
     'Flash Sale': '플래시 세일', 'Free Shipping': '무료배송',
     'Voucher': '바우처', 'Vouchers': '바우처',
+    // 라자다 상품 설명의 펼치기/접기 버튼. 구글은 'ย่อรายละเอียด' 를 '세부 정보를 요약합니다' 로 옮겼다.
+    'ดูเพิ่ม': '더 보기', 'ดูเพิ่มเติม': '더 보기', 'ย่อรายละเอียด': '접기',
   };
 
   // ---------------------------------------------------------------------------
@@ -1682,6 +1684,11 @@
       font: 600 12px/1 system-ui, sans-serif; box-shadow: 0 3px 10px rgba(0,0,0,.3);
     }
     #lzk-imgbtn:hover { background: #1a22a0; }
+    #lzk-overlays { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 2147483000; pointer-events: none; }
+    .lzk-overlay {
+      position: fixed; display: none; margin: 0; padding: 0; border: 0;
+      max-width: none; max-height: none; pointer-events: none;
+    }
     #lzk-imgbtn[data-busy] { cursor: progress; background: rgba(60, 60, 70, .9); }
   `;
 
@@ -2423,34 +2430,109 @@
   let hoverKey = null;
   let hoverTimer = null;
 
-  // 번역본을 띄운 뒤 사이트가 사진을 바꿨으면(갤러리 넘기기) 우리 표시는 버린다.
-  function syncImageState(img) {
-    if (img.dataset.lzkOrigSrc && img.src !== img.dataset.lzkShownSrc) {
-      delete img.dataset.lzkOrigSrc;
-      delete img.dataset.lzkOrigSrcset;
-      delete img.dataset.lzkShownSrc;
-    }
-  }
+  // 번역본은 사이트의 사진(<img>)을 건드리지 않고 그 위에 덮어 보인다. 전에는 사진 주소를 바꿨는데,
+  // 사이트가 '사진이 새로 로드됐다' 고 받아 일을 벌였다: 라자다 상품 설명은 펼친 '더 보기' 를 도로
+  // 접었다(설명 칸에 height-limit 을 다시 붙임). 덮개는 누르기·확대경이 그대로 되도록 마우스를
+  // 통과시키고, 화면마다 사진 자리를 따라간다. 사진이 다른 것으로 바뀌면(갤러리 넘기기) 숨었다가
+  // 돌아오면 다시 보인다.
+  const overlays = new Map(); // img → { key, el }
+  let overlayLayer = null;
+  let overlayRaf = 0;
 
   function imageSrcKey(img) {
-    syncImageState(img);
-    return img.dataset.lzkOrigSrc || img.currentSrc || img.src;
+    return img.currentSrc || img.src;
   }
 
-  function showOriginalImage(img) {
-    img.src = img.dataset.lzkOrigSrc;
-    if (img.dataset.lzkOrigSrcset) img.setAttribute('srcset', img.dataset.lzkOrigSrcset);
-    delete img.dataset.lzkOrigSrc;
-    delete img.dataset.lzkOrigSrcset;
-    delete img.dataset.lzkShownSrc;
+  function isShowingTranslation(img) {
+    const o = overlays.get(img);
+    return !!o && o.key === imageSrcKey(img);
+  }
+
+  // 사진을 잘라 보이는 조상(가로로 넘기는 갤러리, 높이를 제한한 설명 칸). 덮개도 그만큼만 보인다.
+  function clippingAncestors(img) {
+    const list = [];
+    for (let el = img.parentElement; el && el !== document.body; el = el.parentElement) {
+      const s = getComputedStyle(el);
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') list.push(el);
+    }
+    return list;
+  }
+
+  // 사진이 그 자리에서 맨 위에 보이나(팝업·고정 메뉴에 가려지지 않았나). 사진 위의 투명한 층(확대경
+  // 등)은 사진 가까운 조상 안에 있으니 봐준다.
+  function imageOnTop(img, x, y) {
+    const el = document.elementsFromPoint(x, y).find((e) => !e.closest('[id^="lzk-"]'));
+    if (!el) return false;
+    const near = img.parentElement?.parentElement || img.parentElement;
+    return el === img || el.contains(img) || !!near?.contains(el);
+  }
+
+  function placeOverlays() {
+    overlayRaf = 0;
+    const vw = innerWidth;
+    const vh = innerHeight;
+    for (const [img, o] of overlays) {
+      if (!img.isConnected) {
+        o.el.remove();
+        overlays.delete(img);
+        continue;
+      }
+      const r = img.getBoundingClientRect();
+      let c = { l: Math.max(r.left, 0), t: Math.max(r.top, 0), r: Math.min(r.right, vw), b: Math.min(r.bottom, vh) };
+      // 화면 밖이거나 다른 사진으로 바뀌었으면 가볍게 숨기고, 보이는 것만 잘림·가림을 따진다.
+      let show = o.key === imageSrcKey(img) && c.r - c.l > 1 && c.b - c.t > 1;
+      if (show) {
+        // 잘라 보이는 조상은 매번 다시 찾는다(설명 칸의 '더 보기' 처럼 나중에 바뀐다).
+        for (const a of clippingAncestors(img)) {
+          const ar = a.getBoundingClientRect();
+          c = { l: Math.max(c.l, ar.left), t: Math.max(c.t, ar.top), r: Math.min(c.r, ar.right), b: Math.min(c.b, ar.bottom) };
+        }
+        show = c.r - c.l > 1 && c.b - c.t > 1 && imageOnTop(img, (c.l + c.r) / 2, (c.t + c.b) / 2);
+        // 위·아래 가장자리가 고정 메뉴(라자다 상단 검색줄, 하단 구매 막대)에 가려 있으면 그만큼 잘라 낸다.
+        const cx = (c.l + c.r) / 2;
+        for (let i = 0; show && i < 30 && c.b - c.t > 16 && !imageOnTop(img, cx, c.t + 1); i++) c.t += 8;
+        for (let i = 0; show && i < 30 && c.b - c.t > 16 && !imageOnTop(img, cx, c.b - 1); i++) c.b -= 8;
+      }
+      if (!show) {
+        o.el.style.display = 'none';
+        continue;
+      }
+      const s = getComputedStyle(img);
+      Object.assign(o.el.style, {
+        display: 'block',
+        left: `${r.left}px`,
+        top: `${r.top}px`,
+        width: `${r.width}px`,
+        height: `${r.height}px`,
+        objectFit: s.objectFit,
+        objectPosition: s.objectPosition,
+        borderRadius: s.borderRadius,
+        clipPath: `inset(${c.t - r.top}px ${r.right - c.r}px ${r.bottom - c.b}px ${c.l - r.left}px)`,
+      });
+    }
+    if (overlays.size) overlayRaf = requestAnimationFrame(placeOverlays);
   }
 
   function showTranslatedImage(img, url) {
-    img.dataset.lzkOrigSrc = img.currentSrc || img.src;
-    img.dataset.lzkOrigSrcset = img.getAttribute('srcset') || '';
-    img.removeAttribute('srcset');
-    img.src = url;
-    img.dataset.lzkShownSrc = img.src;
+    if (!overlayLayer) {
+      overlayLayer = document.createElement('div');
+      overlayLayer.id = 'lzk-overlays';
+      markNoTranslate(overlayLayer);
+      document.body.appendChild(overlayLayer);
+    }
+    overlays.get(img)?.el.remove();
+    const el = document.createElement('img');
+    el.className = 'lzk-overlay';
+    el.alt = '';
+    el.src = url;
+    overlayLayer.appendChild(el);
+    overlays.set(img, { key: imageSrcKey(img), el });
+    if (!overlayRaf) placeOverlays();
+  }
+
+  function showOriginalImage(img) {
+    overlays.get(img)?.el.remove();
+    overlays.delete(img);
   }
 
   async function translateImage(img, auto) {
@@ -2487,7 +2569,7 @@
   function onImageButton(img) {
     if (ocrBusy.has(img)) return;
     const key = imageSrcKey(img);
-    if (img.dataset.lzkOrigSrc) {
+    if (isShowingTranslation(img)) {
       showOriginalImage(img);
       ocrKeepOriginal.add(key);
       refreshImageButton();
@@ -2502,7 +2584,7 @@
     const img = hoverImg;
     if (!img || !cfg.imageTranslate || !img.isConnected || ocrBusy.has(img)) return;
     const key = imageSrcKey(img);
-    if (img.dataset.lzkOrigSrc || ocrKeepOriginal.has(key) || ocrFailed.has(key)) return;
+    if (isShowingTranslation(img) || ocrKeepOriginal.has(key) || ocrFailed.has(key)) return;
     if (ocrRunning && !ocrDone.has(key)) return; // 한 장씩 읽는다. 끝나면 여기로 다시 온다.
     translateImage(img, true);
   }
@@ -2524,7 +2606,7 @@
     const key = imageSrcKey(imgBtnTarget);
     imgBtn.textContent = busy
       ? '사진 읽는 중…'
-      : imgBtnTarget.dataset.lzkOrigSrc
+      : isShowingTranslation(imgBtnTarget)
         ? '원래 사진'
         : ocrDone.get(key) === ''
           ? '태국어 글자 없음'
@@ -2571,8 +2653,12 @@
     }
     imgBtnTarget = img;
     const r = img.getBoundingClientRect();
-    imgBtn.style.left = `${Math.max(4, r.left + 8)}px`;
-    imgBtn.style.top = `${Math.max(4, r.top + 8)}px`;
+    // 사진의 보이는 왼쪽 위. 위가 고정 메뉴(라자다 상단 검색줄 등)에 가려 있으면 보이는 곳까지 내린다.
+    const left = Math.max(4, r.left + 8);
+    let top = Math.max(4, r.top + 8);
+    for (let i = 0; i < 15 && top < r.bottom - 40 && !imageOnTop(img, left + 12, top + 10); i++) top += 20;
+    imgBtn.style.left = `${left}px`;
+    imgBtn.style.top = `${top}px`;
     imgBtn.style.display = '';
     refreshImageButton();
   }

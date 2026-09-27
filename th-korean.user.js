@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.16.0
+// @version      1.17.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1860,37 +1860,53 @@
     { side: 1300, mode: 'inv' },
   ];
   const OCR_IDLE_MS = 120000;   // 이만큼 안 쓰면 인식기를 내려 메모리를 돌려준다
+  // 인식기 여러 개가 여러 번 읽기를 나눠 동시에 한다(하나가 차례로 하면 한 장에 3~4초).
+  // 하나에 수십 MB 라 CPU 코어 수보다 적게, 읽기 횟수보다 많지 않게.
+  const OCR_WORKERS = Math.max(1, Math.min(OCR_PASSES.length, (navigator.hardwareConcurrency || 2) - 1));
   const OCR_FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif';
 
-  let ocrWorkerP = null;
+  let ocrPoolP = null;
   let ocrIdleTimer = null;
 
-  function ocrWorker() {
+  async function makeOcrWorker() {
+    const w = await Tesseract.createWorker('tha', 1, {
+      workerPath: `${OCR_LIB}/worker.min.js`,
+      corePath: OCR_CORE,
+    });
+    // 태국어 모델은 숫자·영어도 읽는다. 영어 자료(5MB)는 받지 않는다.
+    await w.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' });
+    return w;
+  }
+
+  function ocrPool() {
     clearTimeout(ocrIdleTimer);
-    if (!ocrWorkerP) {
-      ocrWorkerP = (async () => {
-        const w = await Tesseract.createWorker('tha', 1, {
-          workerPath: `${OCR_LIB}/worker.min.js`,
-          corePath: OCR_CORE,
-        });
-        // 태국어 모델은 숫자·영어도 읽는다. 영어 자료(5MB)는 받지 않는다.
-        await w.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' });
-        return w;
+    if (!ocrPoolP) {
+      ocrPoolP = (async () => {
+        // 첫 인식기가 태국어 자료를 받아 브라우저에 보관한 뒤에 나머지를 띄운다(여러 번 받지 않게).
+        const first = await makeOcrWorker();
+        const rest = await Promise.all(Array.from({ length: OCR_WORKERS - 1 }, makeOcrWorker));
+        return [first, ...rest];
       })().catch((e) => {
-        ocrWorkerP = null;
+        ocrPoolP = null;
         throw e;
       });
     }
-    return ocrWorkerP;
+    return ocrPoolP;
+  }
+
+  // 사진에 마우스가 닿으면 미리 띄운다. 머무는 0.5초 동안 준비가 끝난다.
+  function warmOcr() {
+    if (typeof Tesseract === 'undefined') return;
+    ocrPool().then(releaseOcrLater, () => {});
   }
 
   function releaseOcrLater() {
     clearTimeout(ocrIdleTimer);
     ocrIdleTimer = setTimeout(async () => {
-      const p = ocrWorkerP;
-      ocrWorkerP = null;
+      const p = ocrPoolP;
+      ocrPoolP = null;
       try {
-        (await p)?.terminate();
+        for (const w of (await p) || []) await w.terminate();
       } catch {
         /* 이미 내려갔다 */
       }
@@ -2086,17 +2102,23 @@
   // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다(box 는 canvas 좌표). 태국어가 없는
   // 줄(숫자·영어)은 그대로 둬도 읽히니 건드리지 않는다.
   async function readImageText(canvas) {
-    const worker = await ocrWorker();
+    const workers = await ocrPool();
     try {
       const long = Math.max(canvas.width, canvas.height);
       const found = [];
-      for (const pass of OCR_PASSES) {
-        const scale = pass.side / long;
-        for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.mode))) {
-          const b = seg.box;
-          found.push({ ...seg, box: { x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale } });
-        }
-      }
+      const queue = [...OCR_PASSES];
+      // 인식기마다 남은 읽기를 하나씩 집어 간다.
+      await Promise.all(
+        workers.map(async (worker) => {
+          for (let pass; (pass = queue.shift()); ) {
+            const scale = pass.side / long;
+            for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.mode))) {
+              const b = seg.box;
+              found.push({ ...seg, box: { x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale } });
+            }
+          }
+        })
+      );
       return pickBestLines(found);
     } finally {
       releaseOcrLater();
@@ -2221,14 +2243,58 @@
     }
   }
 
+  // 읽은 결과(줄 위치 + 번역)를 사진 주소별로 보관한다. 다른 날 같은 상품을 다시 봐도 글자를 다시
+  // 읽지 않고 사진만 받아 바로 그린다. 위치는 사진 크기에 대한 비율이라 크기가 달라도 맞는다.
+  // 스크립트 버전이 바뀌면(읽는 방법이 나아졌을 수 있으니) 통째로 버린다.
+  const OCR_CACHE = 'ocrCache';
+  const OCR_CACHE_MAX = 400;
+  let ocrCache = null;
+
+  function ocrCacheStore() {
+    if (!ocrCache) {
+      const saved = GM_getValue(OCR_CACHE, null);
+      ocrCache = saved && saved.ver === SCRIPT_VERSION ? saved : { ver: SCRIPT_VERSION, e: {} };
+    }
+    return ocrCache;
+  }
+
+  function ocrCacheGet(url) {
+    return ocrCacheStore().e[url] || null;
+  }
+
+  function ocrCachePut(url, lines) {
+    const store = ocrCacheStore();
+    store.e[url] = { at: Date.now(), lines };
+    const keys = Object.keys(store.e);
+    if (keys.length > OCR_CACHE_MAX) {
+      keys.sort((a, b) => store.e[a].at - store.e[b].at);
+      for (const k of keys.slice(0, keys.length - OCR_CACHE_MAX)) delete store.e[k];
+    }
+    GM_setValue(OCR_CACHE, store);
+  }
+
   // 번역해 그린 사진의 blob 주소. 찾을 태국어가 없으면 null.
   async function renderTranslatedImage(img) {
+    const src = ocrSourceUrl(img);
+    let cached = ocrCacheGet(src);
+    if (cached && !cached.lines.length) return null; // 전에 봤는데 태국어가 없던 사진: 받지도 않는다
     const canvas = await imageToCanvas(img);
-    const segs = await readImageText(canvas);
-    if (!segs.length) return null;
-    const out = await translateToKorean(segs.map((s) => s.text));
-    const kos = out.map((k, i) => (k && HANGUL.test(k) && k !== segs[i].text ? k.trim() : null));
-    if (!kos.some(Boolean)) return null;
+    const W = canvas.width;
+    const H = canvas.height;
+    if (!cached) {
+      const segs = await readImageText(canvas);
+      const out = segs.length ? await translateToKorean(segs.map((s) => s.text)) : [];
+      const lines = [];
+      segs.forEach((s, i) => {
+        const k = out[i];
+        if (k && HANGUL.test(k) && k !== s.text) lines.push([s.box.x0 / W, s.box.y0 / H, s.box.x1 / W, s.box.y1 / H, k.trim()]);
+      });
+      ocrCachePut(src, lines);
+      cached = { lines };
+    }
+    if (!cached.lines.length) return null;
+    const segs = cached.lines.map(([x0, y0, x1, y1]) => ({ box: { x0: x0 * W, y0: y0 * H, x1: x1 * W, y1: y1 * H } }));
+    const kos = cached.lines.map((l) => l[4]);
     paintTranslations(canvas, segs, kos);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
     if (!blob) throw new Error('번역한 사진을 만들지 못했습니다');
@@ -2286,7 +2352,7 @@
       ocrBusy.add(img);
       ocrRunning++;
       refreshImageButton();
-      setBadge(ocrWorkerP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
+      setBadge(ocrPoolP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
       try {
         url = (await renderTranslatedImage(img)) || '';
         ocrDone.set(key, url);
@@ -2339,7 +2405,9 @@
     hoverImg = img;
     hoverKey = key;
     clearTimeout(hoverTimer);
-    if (img) hoverTimer = setTimeout(autoTranslateHovered, OCR_HOVER_MS);
+    if (!img) return;
+    hoverTimer = setTimeout(autoTranslateHovered, OCR_HOVER_MS);
+    if (!ocrDone.has(key) && !ocrCacheGet(ocrSourceUrl(img))) warmOcr();
   }
 
   function refreshImageButton() {

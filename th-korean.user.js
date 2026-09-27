@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.14.1
+// @version      1.15.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -188,7 +188,7 @@
     autoTranslatePage: true,
     confirmSearch: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
-    imageTranslate: true,      // 사진에 마우스를 올리면 '사진 번역' 버튼
+    imageTranslate: true,      // 사진에 마우스를 잠깐 올려 두면 그 사진 속 태국어를 한국어로
     glossary: {},      // 예전 방식의 '내 용어집'(이 PC에만). 이제는 GitHub glossary.txt 를 쓴다
     githubToken: '',   // 용어집 저장용. th-korean-glossary 쓰기 권한만 있는 토큰 (이 PC에만)
     githubUser: '',    // 토큰 확인 때 받은 GitHub 아이디 (표시용)
@@ -1832,8 +1832,8 @@
   // ---------------------------------------------------------------------------
   // 사진 속 글자 번역 — 상품 사진의 태국어를 읽어(OCR) 그 자리에 한국어를 덮어 그린다.
   //
-  // 사진에 마우스를 올리면 '사진 번역' 버튼이 뜨고, 누른 사진만 처리한다. 목록 페이지의 사진을
-  // 모두 자동으로 읽으면 한 장에 1~3초라 브라우저가 무거워진다.
+  // 사진에 마우스를 잠깐(0.5초) 올려 두면 그 사진만 읽어 바꾼다. 목록 페이지의 사진을 모두 읽거나
+  // 스쳐 지나간 사진까지 읽으면 한 장에 몇 초라 브라우저가 무거워진다. 버튼으로 원래 사진을 볼 수 있다.
   // 글자 인식은 브라우저 안에서 Tesseract.js(무료, 태국어 지원)로 한다. 처음 한 번 인식 엔진과
   // 태국어 자료(합쳐 4MB 남짓)를 받고, 그 뒤로는 브라우저가 보관한다. 번역은 페이지 번역과 같은 길.
   // 확인한 것(2026-09-27): 라자다는 CSP 가 없어 워커를 띄울 수 있고, img.lazcdn.com 사진은 CORS 를
@@ -2207,12 +2207,31 @@
     return URL.createObjectURL(blob);
   }
 
-  const ocrDone = new Map(); // 원래 사진 주소 → 번역한 사진. 사진을 넘겼다 돌아와도 다시 읽지 않는다.
+  // 사진 위에 이만큼 머물면 번역을 시작한다. 마우스가 스쳐 지나간 사진까지 읽으면 무거워진다.
+  const OCR_HOVER_MS = 500;
+  // 원래 사진 주소 → 번역한 사진('' = 태국어가 없었음). 사진을 넘겼다 돌아와도 다시 읽지 않는다.
+  const ocrDone = new Map();
+  const ocrKeepOriginal = new Set(); // '원래 사진' 을 누른 사진. 다시 올려도 자동으로 바꾸지 않는다.
+  const ocrFailed = new Set();       // 실패한 사진. 자동으로는 다시 시도하지 않는다(버튼으로는 된다).
   const ocrBusy = new WeakSet();
+  let ocrRunning = 0;
   let imgBtn = null;
   let imgBtnTarget = null;
+  let hoverImg = null;
+  let hoverKey = null;
+  let hoverTimer = null;
+
+  // 번역본을 띄운 뒤 사이트가 사진을 바꿨으면(갤러리 넘기기) 우리 표시는 버린다.
+  function syncImageState(img) {
+    if (img.dataset.lzkOrigSrc && img.src !== img.dataset.lzkShownSrc) {
+      delete img.dataset.lzkOrigSrc;
+      delete img.dataset.lzkOrigSrcset;
+      delete img.dataset.lzkShownSrc;
+    }
+  }
 
   function imageSrcKey(img) {
+    syncImageState(img);
     return img.dataset.lzkOrigSrc || img.currentSrc || img.src;
   }
 
@@ -2221,6 +2240,7 @@
     if (img.dataset.lzkOrigSrcset) img.setAttribute('srcset', img.dataset.lzkOrigSrcset);
     delete img.dataset.lzkOrigSrc;
     delete img.dataset.lzkOrigSrcset;
+    delete img.dataset.lzkShownSrc;
   }
 
   function showTranslatedImage(img, url) {
@@ -2228,48 +2248,83 @@
     img.dataset.lzkOrigSrcset = img.getAttribute('srcset') || '';
     img.removeAttribute('srcset');
     img.src = url;
+    img.dataset.lzkShownSrc = img.src;
   }
 
-  async function toggleImageTranslation(img) {
-    if (ocrBusy.has(img)) return;
-    if (img.dataset.lzkOrigSrc) {
-      showOriginalImage(img);
-      refreshImageButton();
-      return;
-    }
+  async function translateImage(img, auto) {
     const key = imageSrcKey(img);
     let url = ocrDone.get(key);
-    if (!url) {
+    if (url === undefined) {
       ocrBusy.add(img);
+      ocrRunning++;
       refreshImageButton();
       setBadge(ocrWorkerP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
       try {
-        url = await renderTranslatedImage(img);
-        if (!url) {
-          toast('이 사진에서는 번역할 태국어 글자를 찾지 못했습니다.');
-          return;
-        }
+        url = (await renderTranslatedImage(img)) || '';
         ocrDone.set(key, url);
+        if (!url && !auto) toast('이 사진에서는 번역할 태국어 글자를 찾지 못했습니다.');
       } catch (e) {
+        ocrFailed.add(key);
         console.warn(`[${APP_NAME}] 사진 번역 실패:`, e);
         toast(`사진 번역 실패: ${e.message || e}`, 5000);
         return;
       } finally {
         ocrBusy.delete(img);
+        ocrRunning--;
         setBadge(null);
         refreshImageButton();
+        setTimeout(autoTranslateHovered, 0); // 읽는 사이 마우스가 옮겨 간 사진이 있으면 이어서
       }
     }
-    // 읽는 사이에 갤러리가 다른 사진으로 넘어갔으면 바꾸지 않는다(다음에 누르면 바로 보인다).
-    if (imageSrcKey(img) !== key) return;
+    // 태국어가 없었거나, 읽는 사이에 갤러리가 다른 사진으로 넘어갔으면 바꾸지 않는다.
+    if (!url || imageSrcKey(img) !== key) return;
     showTranslatedImage(img, url);
     refreshImageButton();
+  }
+
+  function onImageButton(img) {
+    if (ocrBusy.has(img)) return;
+    const key = imageSrcKey(img);
+    if (img.dataset.lzkOrigSrc) {
+      showOriginalImage(img);
+      ocrKeepOriginal.add(key);
+      refreshImageButton();
+      return;
+    }
+    ocrKeepOriginal.delete(key);
+    ocrFailed.delete(key);
+    translateImage(img, false);
+  }
+
+  function autoTranslateHovered() {
+    const img = hoverImg;
+    if (!img || !cfg.imageTranslate || !img.isConnected || ocrBusy.has(img)) return;
+    const key = imageSrcKey(img);
+    if (img.dataset.lzkOrigSrc || ocrKeepOriginal.has(key) || ocrFailed.has(key)) return;
+    if (ocrRunning && !ocrDone.has(key)) return; // 한 장씩 읽는다. 끝나면 여기로 다시 온다.
+    translateImage(img, true);
+  }
+
+  function onHoverImage(img) {
+    const key = img && imageSrcKey(img);
+    if (img === hoverImg && key === hoverKey) return;
+    hoverImg = img;
+    hoverKey = key;
+    clearTimeout(hoverTimer);
+    if (img) hoverTimer = setTimeout(autoTranslateHovered, OCR_HOVER_MS);
   }
 
   function refreshImageButton() {
     if (!imgBtn || !imgBtnTarget) return;
     const busy = ocrBusy.has(imgBtnTarget);
-    imgBtn.textContent = busy ? '사진 읽는 중…' : imgBtnTarget.dataset.lzkOrigSrc ? '원래 사진' : '사진 번역';
+    const key = imageSrcKey(imgBtnTarget);
+    imgBtn.textContent = busy
+      ? '사진 읽는 중…'
+      : imgBtnTarget.dataset.lzkOrigSrc
+        ? '원래 사진'
+        : ocrDone.get(key) === ''
+          ? '태국어 글자 없음'
+          : '사진 번역';
     imgBtn.toggleAttribute('data-busy', busy);
   }
 
@@ -2306,7 +2361,7 @@
       imgBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (imgBtnTarget) toggleImageTranslation(imgBtnTarget);
+        if (imgBtnTarget) onImageButton(imgBtnTarget);
       });
       document.body.appendChild(imgBtn);
     }
@@ -2335,6 +2390,7 @@
           const img = imageUnder(lastX, lastY);
           if (img) showImageButton(img);
           else hideImageButton();
+          onHoverImage(img);
         });
       },
       { passive: true }
@@ -2421,9 +2477,9 @@
       </div>
       <div class="lzk-hint">페이지 번역을 끄고 크롬 자동번역을 쓸 때, 뭉개진 상품명만 골라 보는 용도입니다. AI 키가 있으면 AI가 처리합니다.</div>
       <div class="lzk-check">
-        <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올리면 '사진 번역' 버튼 표시</span>
+        <input type="checkbox" id="lzk-image"><span>사진에 마우스를 올려 두면 사진 속 태국어를 자동 번역</span>
       </div>
-      <div class="lzk-hint">누른 사진 속 태국어를 읽어 한국어로 덮어 보여 줍니다. 처음 한 번은 인식 자료(4MB 남짓)를 받느라 10초쯤 걸립니다.</div>
+      <div class="lzk-hint">0.5초쯤 머문 사진만 읽어 한국어로 덮어 보여 줍니다(한 장에 3~5초). 왼쪽 위 버튼으로 원래 사진을 볼 수 있습니다. 처음 한 번은 인식 자료(4MB 남짓)를 받느라 10초쯤 걸립니다.</div>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>

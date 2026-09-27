@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.21.0
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
+// @version      1.22.0
+// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
 // @match        https://shopee.co.th/*
 // @match        https://*.shopee.co.th/*
+// 다른 태국 사이트: 대기만 하다가 태국어가 보이면 입력칸 한국어→태국어만 켠다(genericInit)
+// @match        *://*/*
 // @updateURL    https://raw.githubusercontent.com/wotjq2/th-korean/main/th-korean.user.js
 // @downloadURL  https://raw.githubusercontent.com/wotjq2/th-korean/main/th-korean.user.js
 // @connect      api.groq.com
@@ -145,12 +147,9 @@
   const SITE =
     Object.values(SITES).find((s) => s.match.test(location.hostname)) || UNKNOWN_SITE;
 
-  if (!SITE.searchUrl) {
-    console.warn(
-      `[${APP_NAME}] ${location.hostname} 은 SITES 표에 없습니다. ` +
-        '한국어 검색은 꺼집니다. 스크립트 상단 SITES 에 항목을 추가하세요.'
-    );
-  }
+  // 표에 없는 사이트(스크립트는 모든 사이트에서 뜬다). 대기만 하다가 태국어가 보이면
+  // 입력칸의 한국어를 태국어로 바꾸는 기능만 켠다(genericInit). 페이지 번역은 크롬에 맡긴다.
+  const GENERIC = SITE === UNKNOWN_SITE;
 
   // AI 공급자. 둘 다 OpenAI 호환이라 같은 코드로 호출한다.
   const PROVIDERS = {
@@ -1665,6 +1664,12 @@
       list-style: revert;
     }
     #lzk-panel details[open] summary { margin-bottom: 4px; }
+    #lzk-thchip {
+      position: fixed; z-index: 2147483002; height: 24px; padding: 0 9px; border: none; border-radius: 12px;
+      background: #0f146e; color: #fff; cursor: pointer; font: 600 12px/24px system-ui, sans-serif;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    #lzk-thchip:hover { background: #1a22a0; }
     #lzk-seltip {
       position: absolute; z-index: 2147483002; border: none; border-radius: 6px;
       background: #0f146e; color: #fff; padding: 6px 10px; cursor: pointer;
@@ -3584,11 +3589,13 @@
   // 검색 가로채기는 window 에만 붙으므로 DOM 을 기다릴 필요가 없다.
   // 페이지가 다 그려지기 전에 사용자가 검색어를 치고 Enter 를 눌러도 놓치지 않으려면
   // document-start 인 지금 바로 장착해야 한다. (이전 버전이 검색을 놓친 원인)
-  installSearchInterceptors();
-
   // 용어집도 지금부터 받아 둔다. 사본이 있으면 바로 끝나고, 오래됐으면 뒤에서 새로 받는다.
   // 처음 설치한 PC라도 사용자가 검색어를 치는 사이에 받아진다.
-  ensureGlossary();
+  // (표에 없는 사이트는 태국어가 보여 켜질 때 받는다 — 모든 사이트에서 GitHub 을 부르지 않게)
+  if (!GENERIC) {
+    installSearchInterceptors();
+    ensureGlossary();
+  }
 
   // 크롬에게 이 페이지가 무슨 언어인지 알려 준다. 크롬은 페이지를 다 읽은 시점에
   // 언어를 한 번 정하고 그 뒤로는 바꾸지 않으므로, 사이트 스크립트보다 먼저 도는
@@ -3636,21 +3643,187 @@
     console.log(`[${APP_NAME}] 용어집 조회\n` + lines.join('\n'));
   }
 
-  GM_registerMenuCommand('검색창 인식 상태 확인', reportSiteInfo);
-  GM_registerMenuCommand('용어집에서 단어 찾아보기', lookupWord);
-  GM_registerMenuCommand('용어집 새로 받기', async () => {
-    toast('GitHub에서 용어집을 받는 중…');
-    const ok = await refreshGlossary();
-    toast(ok ? `용어집을 새로 받았습니다.\n${glossaryStatus()}` : '용어집을 받지 못했습니다. 이 PC의 사본을 계속 씁니다.', 5000);
-  });
-  GM_registerMenuCommand('용어집 편집 (GitHub)', () => window.open(GLOSSARY_EDIT_URL, '_blank', 'noopener'));
-  GM_registerMenuCommand('설정 열기', togglePanel);
-  GM_registerMenuCommand('지금 한국어로 번역', translatePage);
-  GM_registerMenuCommand('원문 보기', restoreOriginal);
+  function registerMenus() {
+    if (!GENERIC) GM_registerMenuCommand('검색창 인식 상태 확인', reportSiteInfo);
+    GM_registerMenuCommand('용어집에서 단어 찾아보기', lookupWord);
+    GM_registerMenuCommand('용어집 새로 받기', async () => {
+      toast('GitHub에서 용어집을 받는 중…');
+      const ok = await refreshGlossary();
+      toast(ok ? `용어집을 새로 받았습니다.\n${glossaryStatus()}` : '용어집을 받지 못했습니다. 이 PC의 사본을 계속 씁니다.', 5000);
+    });
+    GM_registerMenuCommand('용어집 편집 (GitHub)', () => window.open(GLOSSARY_EDIT_URL, '_blank', 'noopener'));
+    GM_registerMenuCommand('설정 열기', togglePanel);
+    GM_registerMenuCommand('지금 한국어로 번역', translatePage);
+    GM_registerMenuCommand('원문 보기', restoreOriginal);
+  }
 
+  // ---------------------------------------------------------------------------
+  // 다른 태국 사이트 — 입력칸의 한국어를 태국어로
+  //
+  // 라자다·쇼피처럼 검색창 구조를 아는 곳이 아니면 검색을 대신 해 줄 수 없다. 대신 입력칸의
+  // 글자만 태국어로 바꾸고 검색은 그 사이트에 맡긴다: 한국어를 치고 Enter → 태국어로 바뀜 →
+  // 확인하고 Enter 한 번 더 → 사이트가 원래대로 검색. 사이트가 검색을 어떻게 처리하든 상관없다.
+  // 태국어가 한글보다 많이 보이는 페이지에서만 켠다(태국어가 조금 섞인 한국 여행 블로그 등에서
+  // 한국어 검색을 태국어로 바꿔 버리지 않게). 페이지 번역은 크롬 자동번역에 맡긴다.
+  // ---------------------------------------------------------------------------
+
+  const GENERIC_MIN_THAI = 30;
+  let genericChip = null;
+  let genericBusy = false;
+
+  // 태국어 페이지인가. 글자 수만 세고 30자에 닿으면 멈춘다(큰 페이지에서도 가볍게).
+  function looksThaiPage() {
+    const lang = (document.documentElement.lang || '').toLowerCase();
+    if (lang === 'th' || lang.startsWith('th-')) return true;
+    const text = (document.body?.textContent || '').slice(0, 300000);
+    let thai = 0;
+    for (const ch of text) {
+      if (ch >= 'ก' && ch <= '๛') thai++;
+    }
+    if (thai < GENERIC_MIN_THAI) return false;
+    let hangul = 0;
+    for (const ch of text) {
+      if (ch >= '가' && ch <= '힣') hangul++;
+    }
+    return thai > hangul;
+  }
+
+  function genericTarget(el) {
+    if (!isTypableText(el) || el.readOnly || el.disabled || el.closest('[id^="lzk-"]')) return null;
+    return el;
+  }
+
+  // 문장(낱말 다섯 개 이상, 물음표·마침표로 끝남)은 용어집 조합 대신 문장째 번역한다.
+  // 용어집은 쇼핑 검색어용이라 문장을 낱말로 쪼개 이으면 뜻이 흐트러진다.
+  async function koreanToThai(value) {
+    const sentence = value.split(/\s+/).length >= 5 || /[?.!？]$|요$|니다$/.test(value);
+    if (sentence) return { thai: await freeTranslateOne(value, 'ko', 'th'), via: '문장 번역' };
+    return translateSearchKeyword(value);
+  }
+
+  async function convertInputToThai(input) {
+    const value = input.value.trim();
+    if (genericBusy || !value || !HANGUL.test(value)) return;
+    genericBusy = true;
+    setBadge('한국어를 태국어로 바꾸는 중…');
+    try {
+      const { thai, via, note } = await koreanToThai(value);
+      if (!thai || HANGUL.test(thai)) throw new Error('번역 결과가 비어 있습니다');
+      setInputValue(input, thai);
+      input.focus();
+      try {
+        input.setSelectionRange(thai.length, thai.length);
+      } catch {
+        /* 선택 범위를 못 쓰는 칸 */
+      }
+      toast(
+        `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '') +
+          '\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.',
+        note ? 9000 : 6000
+      );
+    } catch (e) {
+      toast(`한국어를 태국어로 바꾸지 못했습니다: ${e.message || e}`, 4000);
+    } finally {
+      genericBusy = false;
+      setBadge(null);
+      updateGenericChip();
+    }
+  }
+
+  // 한국어가 든 입력칸 오른쪽에 '→ ไทย'. 누르면 Enter 와 같다(자동완성 목록이 Enter 를
+  // 먼저 가져가는 사이트용).
+  function updateGenericChip() {
+    const input = genericTarget(document.activeElement);
+    if (!input || !HANGUL.test(input.value)) {
+      if (genericChip) genericChip.style.display = 'none';
+      return;
+    }
+    if (!genericChip) {
+      genericChip = document.createElement('button');
+      genericChip.id = 'lzk-thchip';
+      genericChip.type = 'button';
+      genericChip.textContent = '→ ไทย';
+      genericChip.title = '입력한 한국어를 태국어로 바꿉니다 (Enter 와 같음)';
+      markNoTranslate(genericChip);
+      genericChip.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
+      genericChip.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = genericTarget(document.activeElement);
+        if (i) convertInputToThai(i);
+      });
+      document.body.appendChild(genericChip);
+    }
+    const r = input.getBoundingClientRect();
+    const w = 58;
+    const outside = r.right + 6 + w < innerWidth;
+    genericChip.style.left = `${outside ? r.right + 6 : r.right - w - 4}px`;
+    genericChip.style.top = `${Math.max(2, r.top + (r.height - 24) / 2)}px`;
+    genericChip.style.display = '';
+  }
+
+  function installGenericSearch() {
+    document.addEventListener('input', updateGenericChip, true);
+    document.addEventListener('focusin', updateGenericChip, true);
+    document.addEventListener('focusout', () => setTimeout(updateGenericChip, 150), true);
+    window.addEventListener('scroll', () => genericChip?.style.display === '' && updateGenericChip(), {
+      passive: true,
+      capture: true,
+    });
+    // 사이트의 어떤 리스너보다 먼저(window 캡처) 잡는다. 한글 조합 중의 Enter(글자 확정)는 그냥 둔다.
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        const input = genericTarget(e.target);
+        if (!input || !HANGUL.test(input.value)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        convertInputToThai(input);
+      },
+      true
+    );
+    window.addEventListener(
+      'submit',
+      (e) => {
+        const input = [...(e.target?.elements || [])].find((el) => genericTarget(el) && HANGUL.test(el.value));
+        if (!input) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        convertInputToThai(input);
+      },
+      true
+    );
+  }
+
+  let genericOn = false;
+  function activateGeneric() {
+    if (genericOn) return;
+    genericOn = true;
+    GM_addStyle(LZK_CSS);
+    ensureGlossary();
+    mountFab();
+    installGenericSearch();
+    registerMenus();
+  }
+
+  // 태국어가 늦게 그려지는 페이지(SPA)도 있어 15초 동안 몇 번 더 본다.
+  function genericInit() {
+    if (looksThaiPage()) return activateGeneric();
+    let n = 0;
+    const t = setInterval(() => {
+      if (looksThaiPage()) {
+        clearInterval(t);
+        activateGeneric();
+      } else if (++n >= 6) clearInterval(t);
+    }, 2500);
+  }
+
+  if (!GENERIC) registerMenus();
+  const start = GENERIC ? genericInit : init;
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
+    document.addEventListener('DOMContentLoaded', start, { once: true });
   } else {
-    init();
+    start();
   }
 })();

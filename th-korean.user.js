@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.17.0
+// @version      1.18.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1898,6 +1898,7 @@
   function warmOcr() {
     if (typeof Tesseract === 'undefined') return;
     ocrPool().then(releaseOcrLater, () => {});
+    loadThaiWords();
   }
 
   function releaseOcrLater() {
@@ -2051,7 +2052,112 @@
     return c;
   }
 
-  async function readLines(worker, canvas) {
+  // ---- 빠진 윗·아랫 모음·성조 되살리기 ----
+  // 인식기는 'เหล็กกล่อง' 을 'เหลกกลอง'(강철 드럼) 처럼 모음·성조를 자주 빠뜨린다. 태국 쇼핑 검색 태그
+  // 780만 개에서 센 낱말·낱말 묶음(2~3개) 빈도표로, 표시(모음·성조)만 더하면 되는 가장 그럴듯한 낱말들로
+  // 줄을 다시 나눈다. 뼈대 글자는 바꾸지 않는다. 앞뒤 낱말 묶음까지 보므로 'กลอง(북)' 처럼 틀린 글자가
+  // 우연히 낱말이어도 'เหล็กกล่อง' 으로 고쳐진다. 시험(2026-09-27): 멀쩡한 문구 100% 그대로, 일부러 뺀
+  // 표시 90% 복구, 실제 사진 오독 21줄 중 17줄 정답('크롬바 렁 경' → '나이트 영양크림',
+  // '고등학교 졸업/대학원생' → '핸들 / 빨판').
+  // 빈도표(157,000개, 4.7MB)는 처음 쓸 때 한 번 받고 브라우저가 보관한다(태그를 고정한 주소라 바뀌지 않는다).
+  const THAI_WORDS_URL = 'https://cdn.jsdelivr.net/gh/wotjq2/th-korean@thai-words-1/thai-words.tsv';
+  const THAI_MARKS = /[ัิีึืุู็่้๊๋์ํ]/;
+  const FIX_UNKNOWN = 5;  // 사전에 없는 글자 하나의 벌점(낱말 하나는 대개 2~4점)
+  const FIX_ADDED = 1;    // 되살린 표시 하나의 벌점(원문 그대로를 조금 더 믿는다)
+  // 표시를 되살리는 낱말은 뼈대 글자 4개 이상만. 짧으면 'สว่าว' 가 'สี(색)+ว่าว(연)' 처럼
+  // 흔한 짧은 낱말 둘로 쪼개져 뜻이 엉뚱해졌다.
+  const FIX_MIN_SKELETON = 4;
+  let thaiWordsP = null;
+
+  const thaiNorm = (s) => s.replace(/ำ/g, 'ํา'); // 'ำ' 는 'ํ'+'า'. 인식기가 'า' 만 읽는 일이 많다
+  const thaiSkeleton = (s) => [...s].filter((c) => !THAI_MARKS.test(c)).join('');
+
+  function loadThaiWords() {
+    if (!thaiWordsP) {
+      thaiWordsP = (async () => {
+        const r = await fetch(THAI_WORDS_URL);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const freq = new Map();
+        let total = 0;
+        for (const line of (await r.text()).split('\n')) {
+          const tab = line.indexOf('\t');
+          if (tab <= 0) continue;
+          const n = +line.slice(tab + 1);
+          freq.set(line.slice(0, tab), n);
+          total += n;
+        }
+        const bySkel = new Map();
+        let maxSkel = 0;
+        for (const w of freq.keys()) {
+          const k = thaiSkeleton(w);
+          const list = bySkel.get(k);
+          if (list) list.push(w);
+          else bySkel.set(k, [w]);
+          if (k.length > maxSkel) maxSkel = k.length;
+        }
+        return { freq, bySkel, maxSkel, logTotal: Math.log10(total) };
+      })().catch((e) => {
+        console.warn(`[${APP_NAME}] 태국어 낱말표를 받지 못해 철자 고치기를 건너뜁니다:`, e);
+        return null; // 다음 페이지에서 다시 시도한다
+      });
+    }
+    return thaiWordsP;
+  }
+
+  // word 가 span 에 표시만 더한 것이면 더한 개수, 아니면 -1
+  function addedMarks(word, span) {
+    let j = 0;
+    let added = 0;
+    for (const c of word) {
+      if (j < span.length && c === span[j]) j++;
+      else if (THAI_MARKS.test(c)) added++;
+      else return -1;
+    }
+    return j === span.length ? added : -1;
+  }
+
+  // 태국어 덩어리 하나를 가장 그럴듯한 낱말들로 나눈다(낱말 점수 = log 빈도 비율 − 더한 표시 수).
+  function restoreRun(run, dict) {
+    const chars = [...run];
+    const base = []; // [뼈대 글자, 시작, 끝(뒤따르는 표시 포함)]
+    for (let i = 0; i < chars.length; i++) {
+      if (THAI_MARKS.test(chars[i]) && base.length) base[base.length - 1][2] = i + 1;
+      else base.push([chars[i], i, i + 1]);
+    }
+    const n = base.length;
+    const best = new Array(n + 1).fill(null);
+    best[0] = { score: 0, parts: [] };
+    for (let i = 0; i < n; i++) {
+      if (!best[i]) continue;
+      const one = chars.slice(base[i][1], base[i][2]).join('');
+      if (!best[i + 1] || best[i].score - FIX_UNKNOWN > best[i + 1].score) {
+        best[i + 1] = { score: best[i].score - FIX_UNKNOWN, parts: [...best[i].parts, one] };
+      }
+      let k = '';
+      for (let len = 1; len <= Math.min(dict.maxSkel, n - i); len++) {
+        k += base[i + len - 1][0];
+        const cands = dict.bySkel.get(k);
+        if (!cands) continue;
+        const span = chars.slice(base[i][1], base[i + len - 1][2]).join('');
+        for (const w of cands) {
+          const add = addedMarks(w, span);
+          if (add < 0 || (add > 0 && len < FIX_MIN_SKELETON)) continue;
+          const sc = best[i].score + Math.log10(dict.freq.get(w)) - dict.logTotal - add * FIX_ADDED;
+          if (!best[i + len] || sc > best[i + len].score) best[i + len] = { score: sc, parts: [...best[i].parts, w] };
+        }
+      }
+    }
+    return best[n].parts.join('');
+  }
+
+  function restoreThaiMarks(text, dict) {
+    if (!dict) return text;
+    return thaiNorm(text)
+      .replace(/[ก-๛]+/g, (run) => restoreRun(run, dict))
+      .replace(/ํา/g, 'ำ');
+  }
+
+  async function readLines(worker, canvas, dict) {
     const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
     const segs = [];
     for (const block of data.blocks || []) {
@@ -2059,8 +2165,10 @@
         for (const line of para.lines) {
           if (line.confidence < OCR_MIN_LINE_CONF) continue;
           for (const words of thaiRuns(line.words)) {
-            const text = joinThai(words.map((w) => w.text).join(' ')).replace(/[เแโใไ]+$/, '');
-            if (!looksLikeThai(text)) continue;
+            const raw = joinThai(words.map((w) => w.text).join(' ')).replace(/[เแโใไ]+$/, '');
+            // 엉터리 줄 거르기는 고치기 전 글자로 한다(고치고 나면 엉터리도 태국어처럼 보인다).
+            if (!looksLikeThai(raw)) continue;
+            const text = restoreThaiMarks(raw, dict);
             const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
             for (const w of words) {
               box.x0 = Math.min(box.x0, w.bbox.x0);
@@ -2102,7 +2210,7 @@
   // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다(box 는 canvas 좌표). 태국어가 없는
   // 줄(숫자·영어)은 그대로 둬도 읽히니 건드리지 않는다.
   async function readImageText(canvas) {
-    const workers = await ocrPool();
+    const [workers, dict] = await Promise.all([ocrPool(), loadThaiWords()]);
     try {
       const long = Math.max(canvas.width, canvas.height);
       const found = [];
@@ -2112,7 +2220,7 @@
         workers.map(async (worker) => {
           for (let pass; (pass = queue.shift()); ) {
             const scale = pass.side / long;
-            for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.mode))) {
+            for (const seg of await readLines(worker, scaledCopy(canvas, scale, pass.mode), dict)) {
               const b = seg.box;
               found.push({ ...seg, box: { x0: b.x0 / scale, y0: b.y0 / scale, x1: b.x1 / scale, y1: b.y1 / scale } });
             }

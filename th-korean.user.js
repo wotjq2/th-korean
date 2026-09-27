@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.20.0
+// @version      1.21.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1683,18 +1683,20 @@
       float: right; border: none; background: none; cursor: pointer;
       font-size: 17px; color: #888; line-height: 1; padding: 0 0 0 8px;
     }
-    #lzk-imgbtn {
+    #lzk-imgbtn, #lzk-imgall {
       position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
       background: rgba(15, 20, 110, .92); color: #fff; padding: 7px 11px; cursor: pointer;
       font: 600 12px/1 system-ui, sans-serif; box-shadow: 0 3px 10px rgba(0,0,0,.3);
     }
-    #lzk-imgbtn:hover { background: #1a22a0; }
+    #lzk-imgbtn:hover, #lzk-imgall:hover { background: #1a22a0; }
+    #lzk-imgall { background: rgba(0, 110, 90, .92); }
+    #lzk-imgall:hover { background: #008a70; }
     #lzk-overlays { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 2147483000; pointer-events: none; }
     .lzk-overlay {
       position: fixed; display: none; margin: 0; padding: 0; border: 0;
       max-width: none; max-height: none; pointer-events: none;
     }
-    #lzk-imgbtn[data-busy] { cursor: progress; background: rgba(60, 60, 70, .9); }
+    #lzk-imgbtn[data-busy], #lzk-imgall[data-busy] { cursor: progress; background: rgba(60, 60, 70, .9); }
   `;
 
   // 우리가 만든 UI 는 이미 한국어다. 크롬 자동번역이 이걸 태국어로 착각해
@@ -2245,51 +2247,74 @@
     return !!cfg.visionKey && !visionBlocked && visionUsage().count < (Number(cfg.visionMonthlyCap) || 0);
   }
 
-  function canvasBase64(canvas) {
+  // 보낼 JPEG(base64). 요청 한 개는 10MB 까지라 크면 화질·크기를 낮춘다.
+  function canvasBase64(canvas, maxSide) {
     const long = Math.max(canvas.width, canvas.height);
-    const src = long > VISION_MAX_SIDE ? scaledCopy(canvas, VISION_MAX_SIDE / long, 'rgb') : canvas;
-    return { data: src.toDataURL('image/jpeg', 0.9).split(',')[1], scale: src.width / canvas.width };
+    let src = long > maxSide ? scaledCopy(canvas, maxSide / long, 'rgb') : canvas;
+    let data = src.toDataURL('image/jpeg', 0.88).split(',')[1];
+    for (let i = 0; i < 3 && data.length > 7e6; i++) {
+      src = scaledCopy(src, 0.8, 'rgb');
+      data = src.toDataURL('image/jpeg', 0.8).split(',')[1];
+    }
+    return { data, scale: src.width / canvas.width };
   }
 
-  // Vision 의 문단을 { text, box, lines } 로. 문단 안 줄바꿈은 띄어 붙여 한 문장으로 번역한다.
-  function visionParagraphs(resp, scale) {
-    const segs = [];
+  // Vision 의 문단을 사진(part)별 { text, box, lines } 로. 문단 안 줄바꿈은 띄어 붙여 한 문장으로
+  // 번역한다. 여러 사진을 이어 붙인 한 장이면 낱말마다 어느 사진 위에 있는지 보고 나눈다(Vision 이 옆
+  // 사진의 같은 높이 글줄을 한 문단으로 묶어도 사진별로 갈린다). box 는 그 사진 canvas 좌표.
+  // parts: [{ x, y, w, h, s }] — 붙인 한 장에서의 자리와 축소 비율. 사진 한 장이면 하나.
+  function visionSegments(resp, scale, parts) {
+    const out = parts.map(() => []);
     const page = resp.fullTextAnnotation?.pages?.[0];
+    const partAt = (cx, cy) => parts.findIndex((p) => cx >= p.x && cx < p.x + p.w && cy >= p.y && cy < p.y + p.h);
     for (const block of page?.blocks || []) {
       for (const para of block.paragraphs || []) {
-        let text = '';
-        let lines = 1;
-        const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+        const pieces = new Map(); // part 번호 → { text, lines, box }
         const words = para.words || [];
         words.forEach((word, i) => {
+          const vs = (word.boundingBox?.vertices || []).map((v) => [(v.x || 0) / scale, (v.y || 0) / scale]);
+          if (!vs.length) return;
+          const cx = vs.reduce((a, v) => a + v[0], 0) / vs.length;
+          const cy = vs.reduce((a, v) => a + v[1], 0) / vs.length;
+          const pi = partAt(cx, cy);
+          if (pi < 0) return;
+          const p = parts[pi];
+          let pc = pieces.get(pi);
+          if (!pc) pieces.set(pi, (pc = { text: '', lines: 1, box: { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity } }));
           const syms = word.symbols || [];
-          text += syms.map((s) => s.text).join('');
+          pc.text += syms.map((s) => s.text).join('');
           const brk = syms[syms.length - 1]?.property?.detectedBreak?.type;
           if (brk === 'EOL_SURE_SPACE' || brk === 'LINE_BREAK' || brk === 'HYPHEN') {
-            text += ' ';
-            if (i < words.length - 1) lines++;
-          } else if (brk === 'SPACE' || brk === 'SURE_SPACE') text += ' ';
-          for (const v of word.boundingBox?.vertices || []) {
-            box.x0 = Math.min(box.x0, (v.x || 0) / scale);
-            box.y0 = Math.min(box.y0, (v.y || 0) / scale);
-            box.x1 = Math.max(box.x1, (v.x || 0) / scale);
-            box.y1 = Math.max(box.y1, (v.y || 0) / scale);
+            pc.text += ' ';
+            const next = words[i + 1]?.boundingBox?.vertices;
+            if (next && partAt(((next[0]?.x || 0) + (next[2]?.x || 0)) / 2 / scale, ((next[0]?.y || 0) + (next[2]?.y || 0)) / 2 / scale) === pi) pc.lines++;
+          } else if (brk === 'SPACE' || brk === 'SURE_SPACE') pc.text += ' ';
+          for (const [x, y] of vs) {
+            const lx = (x - p.x) / p.s;
+            const ly = (y - p.y) / p.s;
+            pc.box.x0 = Math.min(pc.box.x0, lx);
+            pc.box.y0 = Math.min(pc.box.y0, ly);
+            pc.box.x1 = Math.max(pc.box.x1, lx);
+            pc.box.y1 = Math.max(pc.box.y1, ly);
           }
         });
-        text = text.replace(/\s+/g, ' ').trim();
-        // 태국어가 없는 문단(숫자·영어)은 그대로 둔다.
-        if (!THAI.test(text) || !(box.x1 > box.x0)) continue;
-        segs.push({ text, box, lines, conf: 99 });
+        for (const [pi, pc] of pieces) {
+          const text = pc.text.replace(/\s+/g, ' ').trim();
+          // 태국어가 없는 문단(숫자·영어)은 그대로 둔다.
+          if (!THAI.test(text) || !(pc.box.x1 > pc.box.x0)) continue;
+          out[pi].push({ text, box: pc.box, lines: pc.lines, conf: 99 });
+        }
       }
     }
-    return segs;
+    return out;
   }
 
-  async function visionReadText(canvas) {
+  // Vision 에 사진 한 장을 보낸다(= 1건). 보내기 전에 센다(실패한 요청도 센다).
+  async function visionAnnotate(canvas, maxSide) {
     const u = visionUsage();
     u.count++;
-    GM_setValue(VISION_USAGE, u); // 보내기 전에 센다(실패한 요청도 센다)
-    const { data, scale } = canvasBase64(canvas);
+    GM_setValue(VISION_USAGE, u);
+    const { data, scale } = canvasBase64(canvas, maxSide);
     const r = await fetch(`${VISION_URL}?key=${encodeURIComponent(cfg.visionKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2304,7 +2329,67 @@
       visionBlocked = err?.message || `HTTP ${r.status}`;
       throw new Error(visionBlocked);
     }
-    return visionParagraphs(resp, scale);
+    return { resp, scale };
+  }
+
+  async function visionReadText(canvas) {
+    const { resp, scale } = await visionAnnotate(canvas, VISION_MAX_SIDE);
+    return visionSegments(resp, scale, [{ x: 0, y: 0, w: canvas.width, h: canvas.height, s: 1 }])[0];
+  }
+
+  // ---- 페이지 사진을 한 장으로 이어 붙여 Vision 1건으로 ----
+  // Vision 은 '사진 한 장 = 1건' 이라 한 요청에 여러 장을 담아도 장수만큼 센다. 대신 여러 사진을 큰
+  // 한 장(콜라주)으로 이어 붙여 보내면 1건이다. 사진마다 폭 800px(상품 사진 글씨는 이 크기에서 충분히
+  // 읽힌다)로 맞춰 기둥 3개에 쌓고, 사이를 흰 띠로 띄운다. 기둥이 너무 길어지면 다음 장으로 넘긴다.
+  const COLLAGE_W = 800;
+  const COLLAGE_COLS = 3;
+  const COLLAGE_MAX_H = 4800;
+  const COLLAGE_PART_MAX_H = 2400; // 아주 긴 설명 사진은 이 높이까지 줄여 넣는다
+  const COLLAGE_GAP = 48;
+
+  function packCollages(items) {
+    const collages = [];
+    let cur = null;
+    const fresh = () => ({ cols: new Array(COLLAGE_COLS).fill(0), parts: [] });
+    for (const it of items) {
+      const s = Math.min(COLLAGE_W / it.canvas.width, COLLAGE_PART_MAX_H / it.canvas.height);
+      const w = Math.round(it.canvas.width * s);
+      const h = Math.round(it.canvas.height * s);
+      if (!cur) cur = fresh();
+      let c = cur.cols.indexOf(Math.min(...cur.cols));
+      if (cur.cols[c] && cur.cols[c] + h > COLLAGE_MAX_H) {
+        collages.push(cur);
+        cur = fresh();
+        c = 0;
+      }
+      cur.parts.push({ it, x: c * (COLLAGE_W + COLLAGE_GAP), y: cur.cols[c], w, h, s });
+      cur.cols[c] += h + COLLAGE_GAP;
+    }
+    if (cur) collages.push(cur);
+    return collages;
+  }
+
+  function drawCollage(col) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(...col.parts.map((p) => p.x + p.w));
+    c.height = Math.max(...col.parts.map((p) => p.y + p.h));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.imageSmoothingQuality = 'high';
+    for (const p of col.parts) ctx.drawImage(p.it.canvas, p.x, p.y, p.w, p.h);
+    return c;
+  }
+
+  // 사진들을 붙인 장마다 Vision 1건으로 읽어 [{ img, canvas, segs }] 로 돌려준다.
+  async function visionReadMany(items) {
+    const done = [];
+    for (const col of packCollages(items)) {
+      if (!visionUsable()) break; // 한도에 닿으면 남은 사진은 무료 인식으로
+      const { resp, scale } = await visionAnnotate(drawCollage(col), 5000);
+      visionSegments(resp, scale, col.parts).forEach((segs, i) => done.push({ ...col.parts[i].it, segs }));
+    }
+    return done;
   }
 
   // 사진에서 태국어 줄을 찾아 { text, box } 로 돌려준다(box 는 canvas 좌표). 태국어가 없는
@@ -2535,15 +2620,16 @@
   }
 
   // 번역해 그린 사진의 blob 주소. 찾을 태국어가 없으면 null.
-  async function renderTranslatedImage(img) {
+  // pre: 페이지 전체 번역에서 미리 받아 읽어 둔 { canvas, segs }.
+  async function renderTranslatedImage(img, pre) {
     const src = ocrSourceUrl(img);
     let cached = ocrCacheGet(src);
     if (cached && !cached.lines.length) return null; // 전에 봤는데 태국어가 없던 사진: 받지도 않는다
-    const canvas = await imageToCanvas(img);
+    const canvas = pre?.canvas || (await imageToCanvas(img));
     const W = canvas.width;
     const H = canvas.height;
     if (!cached) {
-      const segs = await readImageText(canvas);
+      const segs = pre?.segs || (await readImageText(canvas));
       const out = segs.length ? await translateToKorean(segs.map((s) => s.text)) : [];
       const lines = [];
       segs.forEach((s, i) => {
@@ -2681,16 +2767,18 @@
     overlays.delete(img);
   }
 
-  async function translateImage(img, auto) {
+  async function translateImage(img, auto, pre) {
     const key = imageSrcKey(img);
     let url = ocrDone.get(key);
     if (url === undefined) {
       ocrBusy.add(img);
       ocrRunning++;
       refreshImageButton();
-      setBadge(ocrPoolP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
+      if (!pageRunning) {
+        setBadge(ocrPoolP ? '사진 글자 읽는 중…' : '사진 글자 읽는 중… (처음 한 번은 인식 자료를 받느라 10초쯤 걸립니다)');
+      }
       try {
-        url = (await renderTranslatedImage(img)) || '';
+        url = (await renderTranslatedImage(img, pre)) || '';
         ocrDone.set(key, url);
         if (!url && !auto) toast('이 사진에서는 번역할 태국어 글자를 찾지 못했습니다.');
       } catch (e) {
@@ -2701,7 +2789,7 @@
       } finally {
         ocrBusy.delete(img);
         ocrRunning--;
-        setBadge(null);
+        if (!pageRunning) setBadge(null);
         refreshImageButton();
         setTimeout(autoTranslateHovered, 0); // 읽는 사이 마우스가 옮겨 간 사진이 있으면 이어서
       }
@@ -2724,6 +2812,85 @@
     ocrKeepOriginal.delete(key);
     ocrFailed.delete(key);
     translateImage(img, false);
+  }
+
+  // ---- 페이지 전체 ----
+  const PAGE_MAX_IMAGES = 36; // 한 번에 다루는 사진 수(콜라주 3~4장 = Vision 3~4건)
+  let pageRunning = false;
+  let imgAllBtn = null;
+
+  // 지금 페이지에 받아진 큰 사진들(같은 사진은 한 번만). 아직 안 받아진 설명 사진은 빠지니, 설명을
+  // 끝까지 내려 본 뒤 누르면 더 많이 잡힌다.
+  function pageImages() {
+    const list = [];
+    const seen = new Set();
+    for (const img of document.images) {
+      if (!img.complete || img.naturalWidth < OCR_MIN_SIDE || img.closest('[id^="lzk-"]')) continue;
+      const src = img.currentSrc || img.src;
+      if (!/^https?:/.test(src)) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width < OCR_MIN_SIDE || r.height < OCR_MIN_SIDE) continue;
+      const k = ocrSourceUrl(img);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (isShowingTranslation(img) || ocrKeepOriginal.has(imageSrcKey(img)) || ocrBusy.has(img)) continue;
+      list.push(img);
+      if (list.length >= PAGE_MAX_IMAGES) break;
+    }
+    return list;
+  }
+
+  async function translatePageImages() {
+    if (pageRunning) return;
+    const imgs = pageImages();
+    if (!imgs.length) {
+      toast('번역할 큰 사진이 없습니다(이미 번역했거나 아직 안 받아진 사진뿐입니다).');
+      return;
+    }
+    pageRunning = true;
+    refreshImageButton();
+    try {
+      // 전에 읽은 사진은 저장된 결과로(건수 없이). 태국어가 없던 사진은 건너뛴다.
+      const known = (img) => ocrDone.has(imageSrcKey(img)) || ocrCacheGet(ocrSourceUrl(img));
+      const fresh = imgs.filter((img) => !known(img));
+      for (const img of imgs.filter(known)) translateImage(img, true);
+      if (!fresh.length) return;
+      setBadge(`사진 ${fresh.length}장 받는 중…`);
+      const items = (
+        await Promise.all(
+          fresh.map((img) =>
+            imageToCanvas(img).then(
+              (canvas) => ({ img, canvas }),
+              (e) => console.warn(`[${APP_NAME}] 사진 받기 실패:`, e)
+            )
+          )
+        )
+      ).filter(Boolean);
+      let read = [];
+      if (visionUsable()) {
+        const before = visionUsage().count;
+        setBadge(`사진 ${items.length}장을 한 장으로 붙여 Google Vision 으로 읽는 중…`);
+        try {
+          read = await visionReadMany(items);
+        } catch (e) {
+          console.warn(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
+          toast(`Google Vision 을 쓸 수 없어 무료 인식으로 읽습니다.\n(${e.message || e})`, 6000);
+        }
+        if (read.length) toast(`사진 ${read.length}장을 Google Vision ${visionUsage().count - before}건으로 읽었습니다.`, 4000);
+      }
+      const done = new Set(read.map((x) => x.img));
+      for (const x of read) await translateImage(x.img, true, x);
+      // Vision 을 못 쓴(한도·거절·키 없음) 사진은 무료 인식으로 한 장씩.
+      const rest = items.filter((x) => !done.has(x.img));
+      for (let i = 0; i < rest.length; i++) {
+        setBadge(`사진 글자 읽는 중… (${i + 1}/${rest.length})`);
+        await translateImage(rest[i].img, true, { canvas: rest[i].canvas });
+      }
+    } finally {
+      pageRunning = false;
+      setBadge(null);
+      refreshImageButton();
+    }
   }
 
   function autoTranslateHovered() {
@@ -2760,13 +2927,20 @@
           ? '태국어 글자 없음'
           : '사진 번역';
     imgBtn.toggleAttribute('data-busy', busy);
+    if (imgAllBtn) {
+      imgAllBtn.textContent = pageRunning ? '페이지 사진 읽는 중…' : '페이지 전체';
+      imgAllBtn.toggleAttribute('data-busy', pageRunning);
+      imgAllBtn.title = visionUsable()
+        ? '이 페이지의 큰 사진들을 한 장으로 붙여 Google Vision 1건(12장 남짓마다 1건)으로 번역합니다'
+        : '이 페이지의 큰 사진들을 모두 번역합니다';
+    }
   }
 
   // 커서 아래의 큰 사진. 라자다 갤러리처럼 사진 위에 투명한 층(확대경 등)이 덮여 있어도
   // 찾도록 이벤트 대상이 아니라 그 자리의 요소들을 훑는다.
   function imageUnder(x, y) {
     for (const el of document.elementsFromPoint(x, y)) {
-      if (el === imgBtn) return imgBtnTarget;
+      if (el === imgBtn || el === imgAllBtn) return imgBtnTarget;
       if (!(el instanceof HTMLImageElement)) continue;
       const src = el.currentSrc || el.src;
       if (!src || src.startsWith('data:')) return null;
@@ -2780,24 +2954,31 @@
 
   function hideImageButton() {
     if (imgBtn) imgBtn.style.display = 'none';
+    if (imgAllBtn) imgAllBtn.style.display = 'none';
+  }
+
+  function makeImageButton(id, onClick) {
+    const b = document.createElement('button');
+    b.id = id;
+    b.type = 'button';
+    markNoTranslate(b);
+    // 사진을 누르면 확대 창을 여는 사이트가 많다. 버튼 누름이 사진까지 내려가지 않게 막는다.
+    for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
+      b.addEventListener(type, (e) => e.stopPropagation());
+    }
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+    });
+    document.body.appendChild(b);
+    return b;
   }
 
   function showImageButton(img) {
     if (!imgBtn) {
-      imgBtn = document.createElement('button');
-      imgBtn.id = 'lzk-imgbtn';
-      imgBtn.type = 'button';
-      markNoTranslate(imgBtn);
-      // 사진을 누르면 확대 창을 여는 사이트가 많다. 버튼 누름이 사진까지 내려가지 않게 막는다.
-      for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
-        imgBtn.addEventListener(type, (e) => e.stopPropagation());
-      }
-      imgBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (imgBtnTarget) onImageButton(imgBtnTarget);
-      });
-      document.body.appendChild(imgBtn);
+      imgBtn = makeImageButton('lzk-imgbtn', () => imgBtnTarget && onImageButton(imgBtnTarget));
+      imgAllBtn = makeImageButton('lzk-imgall', translatePageImages);
     }
     imgBtnTarget = img;
     const r = img.getBoundingClientRect();
@@ -2809,6 +2990,9 @@
     imgBtn.style.top = `${top}px`;
     imgBtn.style.display = '';
     refreshImageButton();
+    imgAllBtn.style.left = `${left + imgBtn.offsetWidth + 6}px`;
+    imgAllBtn.style.top = `${top}px`;
+    imgAllBtn.style.display = '';
   }
 
   function installImageUI() {
@@ -2920,7 +3104,7 @@
       <div class="lzk-check">
         <input type="checkbox" id="lzk-image-auto"><span>누르지 않아도, 마우스를 올려 두면 자동 번역</span>
       </div>
-      <div class="lzk-hint">버튼을 누른 사진만 읽어 한국어로 덮어 보여 줍니다. 한 번 번역한 사진은 다시 올리면 저장된 결과로 바로 보입니다(다시 읽지 않아 Google Vision 건수도 안 듭니다). 자동 번역을 켜면 0.5초 머문 사진을 모두 읽으니 Vision 건수가 빨리 쌓입니다.</div>
+      <div class="lzk-hint">'사진 번역'은 그 사진만, 옆의 '페이지 전체'는 지금 페이지에 받아진 큰 사진을 모두 번역합니다(Google Vision 은 사진들을 한 장으로 붙여 12장 남짓마다 1건). 버튼을 누른 사진만 읽어 한국어로 덮어 보여 줍니다. 한 번 번역한 사진은 다시 올리면 저장된 결과로 바로 보입니다(다시 읽지 않아 Google Vision 건수도 안 듭니다). 자동 번역을 켜면 0.5초 머문 사진을 모두 읽으니 Vision 건수가 빨리 쌓입니다.</div>
 
       <label>표시 고정 (원문=한국어, 한 줄에 하나)</label>
       <textarea id="lzk-page-glossary" placeholder="Quiescent=Quiescent"></textarea>

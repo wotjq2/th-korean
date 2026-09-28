@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.1
+// @version      1.22.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1196,7 +1196,8 @@
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
   //   before  뒤에 다른 말이 올 때. '차' 는 혼자면 마시는 차(ชา)지만 '차 방향제',
-  //           '차 충전기' 처럼 앞에 붙으면 자동차다.
+  //           '차 충전기' 처럼 앞에 붙으면 자동차다. 띄어 쓴 '차' 에만 쓴다. '우엉차 500g'
+  //           처럼 합성어 끝에서 떼어 낸 '차' 는 마시는 차다(ในรถ โกโบ 가 되던 사고).
   //   after   앞에 다른 말이 올 때. '거치대' 는 혼자면 휴대폰 거치대로 좁혀 두었는데,
   //           '모니터 거치대' 에 그대로 쓰면 모니터용 휴대폰 받침이 된다. 무엇을 거는지는
   //           앞말이 말해 주므로 받침대(ขาตั้ง)만 남긴다.
@@ -1339,7 +1340,7 @@
     content.forEach((p, i) => {
       const f = p.kind === 'glossary' && CONTEXT_FORMS[p.ko];
       if (!f) return;
-      if (f.before && i < content.length - 1) p.th = f.before;
+      if (f.before && i < content.length - 1 && squash(words[p.word]) === squash(p.ko)) p.th = f.before;
       else if (f.after && i > 0) p.th = f.after;
     });
 

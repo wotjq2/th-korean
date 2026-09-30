@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.4
+// @version      1.22.5
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -3760,10 +3760,19 @@
 
   // 문장(낱말 다섯 개 이상, 물음표·마침표로 끝남)은 용어집 조합 대신 문장째 번역한다.
   // 용어집은 쇼핑 검색어용이라 문장을 낱말로 쪼개 이으면 뜻이 흐트러진다.
+  // 다만 낱말이 모두 용어집에 있으면('혹시 방콕 한인마트 아시는 분', '콘도 월세 얼마인가요')
+  // 용어집으로 잇는다. 검색창에는 문장보다 핵심 낱말이 잘 걸리고, 태국 지명·기관 이름도
+  // 용어집 쪽이 정확하다.
   async function koreanToThai(value) {
     const sentence = value.split(/\s+/).length >= 5 || /[?.!？]$|요$|니다$/.test(value);
-    if (sentence) return { thai: await freeTranslateOne(value, 'ko', 'th'), via: '문장 번역' };
-    return translateSearchKeyword(value);
+    if (!sentence) return translateSearchKeyword(value);
+    await ensureGlossary();
+    const { pieces, unknown } = composeFromGlossary(value.replace(/[?.!？]+$/, ''));
+    if (!unknown.length) {
+      const thai = assembleThai(pieces);
+      if (thai) return { thai, via: '용어집 조합' };
+    }
+    return { thai: await freeTranslateOne(value, 'ko', 'th'), via: '문장 번역' };
   }
 
   // 바꾼 뒤 그 사이트의 검색을 실행한다. 폼이 있으면 폼 제출(사이트의 submit 처리가 그대로 돈다),

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.16
+// @version      1.22.17
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1199,6 +1199,10 @@
     '너무', '자꾸', '있어요', '있나요', '뭐가', '줘요',
     '거', '것', // '싼 거', '조용한 거'
   ]);
+  // 띄어 친 한 단어일 때만 빼는 말. '인사 하는 법', '운동 하는 곳' 의 '하는' 은 앞 명사가 뜻을
+  // 다 가진다. 합성어 안에서는 빼지 않는다 — '연장하는' 이 연장 + 하는 으로 덮여 버리면
+  // 어미를 떼지 않아 '비자 연장 방법'(วิธีต่อวีซ่า) 통째 항목을 놓친다.
+  const WORD_NOISE = new Set(['하는']);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
   //   before  뒤에 다른 말이 올 때. '차' 는 혼자면 마시는 차(ชา)지만 '차 방향제',
@@ -1460,7 +1464,9 @@
         if (th) relax(i, i + 1, 1, [{ ko: t.text, th, kind: 'glossary', word: t.word, mod: true }]);
       }
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
-      if (NOISE_WORDS.has(t.text)) relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
+      if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {
+        relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
+      }
       const segs = segmentWord(t.text, idx);
       if (segs) relax(i, i + 1, segs.length, segs.map((p) => ({ ...p, word: t.word })));
       relax(i, i + 1, 100, [{ ko: t.text, th: '', kind: 'unknown', word: t.word }]);

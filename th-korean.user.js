@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.17
+// @version      1.22.18
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1212,9 +1212,12 @@
   //           '모니터 거치대' 에 그대로 쓰면 모니터용 휴대폰 받침이 된다. 무엇을 거는지는
   //           앞말이 말해 주므로 받침대(ขาตั้ง)만 남긴다.
   // 이 규칙과 다르게 옮기고 싶은 검색어는 용어집에 통째로 넣는다. 통째가 조합보다 먼저다.
+  //   suffix  같은 단어 안에서 다른 말 뒤에 붙을 때. '국가별·시대별' 의 '별' 은 별(ดาว)이 아니라
+  //           '~에 따라' 다. 띄어 쓴 '밤하늘 별' 은 그대로 ดาว.
   const CONTEXT_FORMS = {
     '차': { before: 'ในรถ' },
     '거치대': { after: 'ขาตั้ง' },
+    '별': { suffix: 'แยกตาม' },
   };
 
   // 공백을 빼고 소문자로. '무선이어폰' 과 '무선 이어폰', 'c타입' 과 'C타입' 을 같게 본다.
@@ -1508,6 +1511,7 @@
       if (!f) return;
       if (f.before && i < content.length - 1 && squash(words[p.word]) === squash(p.ko)) p.th = f.before;
       else if (f.after && i > 0) p.th = f.after;
+      else if (f.suffix && i > 0 && content[i - 1].word === p.word) p.th = f.suffix;
     });
 
     return { pieces: merged, unknown: merged.filter((p) => p.kind === 'unknown') };

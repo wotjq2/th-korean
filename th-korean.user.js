@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.8
+// @version      1.22.9
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1194,6 +1194,8 @@
     '판매', '구매', '구입', '좋은', '괜찮은', '제일', '가장', '최고',
     // 포럼에 묻듯이 치는 말('혹시 방콕 한인마트 아시는 분')
     '혹시', '아시는', '아시는분', '알려주세요', '궁금해요', '궁금합니다', '부탁드립니다', '부탁해요',
+    // 말하듯 묻는 끝말('서류 뭐 필요해요', '우기에 여행 괜찮나요', '어디가 좋아요')
+    '뭐', '좋아요', '괜찮나요', '괜찮아요', '해요', '사야',
   ]);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
@@ -1263,9 +1265,11 @@
   // 없는 말만 있으니, 단어째로도 쪼개서도 용어집에 없는 단어는 끝의 조사·어미를 떼어 본다.
   // 떼고 남은 말이 용어집으로 다 덮일 때만 뗀다 — 모르는 말은 그대로 무료 API 가 문맥째 옮긴다.
   // 긴 것부터 본다('에서' 를 '서' 보다 먼저).
+  // 묻는 말투('추천해주세요', '필요한가요', '얼마인가요', '되나요'). 이 끝말은 단어가 쪼개지더라도
+  // 먼저 뗀다 — '안전한가요' 가 안전한 + 가요(เพลงเกาหลี, 한국 가요)로 쪼개지던 사고.
+  const ASK_ENDINGS = ['해주세요', '해줘요', '해줘', '한가요', '인가요', '하나요', '할까요', '되나요', '될까요', '해요'];
   const ENDINGS = [
-    // 묻는 말투('추천해주세요', '필요한가요', '얼마인가요', '되나요')
-    '해주세요', '해줘요', '해줘', '한가요', '인가요', '하나요', '할까요', '되나요', '될까요',
+    ...ASK_ENDINGS,
     '인데', '인지', '이에요', '예요', '입니다',
     '하려면', '하는데', '하기', '하는', '하면', '하고', '해서', '했다', '합니다', '할때', '한', '할',
     '되는', '되면', '됐다', '된', '받는', '받기', '받으려면',
@@ -1290,13 +1294,25 @@
       // '하는 법' 의 '법' 은 법률이 아니라 방법이다. '아시는 분' 의 '분' 은 사람이라 뺀다.
       // 통째 항목에 든 단어('살 빼는 법' → 살빼는법)는 그대로 둔다.
       if (prevVerb && !keep.has(wi) && w === '법') word = '방법';
-      if (prevVerb && !keep.has(wi) && w === '분') {
+      // '사는 게 좋아요' 의 '게' 는 '것이' 다(먹는 게 = ปู 가 아니다).
+      if (prevVerb && !keep.has(wi) && (w === '분' || w === '게')) {
         prevVerb = false;
         return;
       }
       prevVerb = false;
       const m = word.match(/^(.*?)([가-힣]+)$/);
-      if (m && !keep.has(wi) && !known(m[2])) {
+      const ask =
+        m &&
+        !keep.has(wi) &&
+        !idx.has(squash(m[2])) &&
+        ASK_ENDINGS.find(
+          (e) => m[2].length - e.length >= 2 && m[2].endsWith(e) && known(m[2].slice(0, -e.length))
+        );
+      if (ask) {
+        // '안전한가요' → '안전한'(ปลอดภัย)이 용어집에 있으면 그쪽. '안전'(นิรภัย)은 안전벨트의 안전이다.
+        const stem = m[2].slice(0, -ask.length);
+        word = m[1] + (ask[0] === '한' && idx.has(squash(stem + '한')) ? stem + '한' : stem);
+      } else if (m && !keep.has(wi) && !known(m[2])) {
         for (const e of ENDINGS) {
           const tail = m[2];
           if (tail.length <= e.length || !tail.endsWith(e)) {
@@ -1387,6 +1403,8 @@
         }
         continue;
       }
+      // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
+      if (NOISE_WORDS.has(t.text)) relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
       const segs = segmentWord(t.text, idx);
       if (segs) relax(i, i + 1, segs.length, segs.map((p) => ({ ...p, word: t.word })));
       relax(i, i + 1, 100, [{ ko: t.text, th: '', kind: 'unknown', word: t.word }]);

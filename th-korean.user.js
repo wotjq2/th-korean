@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.2
+// @version      1.22.3
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1250,6 +1250,61 @@
     return out;
   }
 
+  // 뉴스·정부·포럼 검색은 문장처럼 친다('방콕에서 비자 연장하는 방법'). 용어집에는 조사·어미가
+  // 없는 말만 있으니, 단어째로도 쪼개서도 용어집에 없는 단어는 끝의 조사·어미를 떼어 본다.
+  // 떼고 남은 말이 용어집으로 다 덮일 때만 뗀다 — 모르는 말은 그대로 무료 API 가 문맥째 옮긴다.
+  // 긴 것부터 본다('에서' 를 '서' 보다 먼저).
+  const ENDINGS = [
+    '하려면', '하는데', '하기', '하는', '하면', '하고', '해서', '했다', '합니다', '할때', '한', '할',
+    '되는', '되면', '됐다', '된', '받는', '받기', '받으려면',
+    '에서는', '으로는', '에서', '으로', '에게', '한테', '까지', '부터', '처럼', '보다', '이랑',
+    '에는', '에도', '와', '과', '이', '가', '을', '를', '에', '의', '로', '도', '만', '랑',
+  ];
+  // '은·는' 은 넣지 않았다. 검색어에는 드물고, '자라는'(→ ZARA)처럼 동사를 명사로 잘못 뗀다.
+
+  function stripEndings(words, idx) {
+    const known = (s) => idx.has(squash(s)) || !!segmentWord(s, idx);
+    // 여러 단어가 통째로 용어집에 있으면('짱구는 못말려') 그 단어들은 건드리지 않는다.
+    const keep = new Set();
+    for (let i = 0; i < words.length; i++) {
+      for (let j = i + 1; j < words.length && j < i + 4; j++) {
+        if (idx.has(squash(words.slice(i, j + 1).join('')))) for (let k = i; k <= j; k++) keep.add(k);
+      }
+    }
+    const out = [];
+    let prevVerb = false;
+    words.forEach((w, wi) => {
+      let word = w;
+      // '하는 법' 의 '법' 은 법률이 아니라 방법이다.
+      if (prevVerb && w === '법') word = '방법';
+      prevVerb = false;
+      const m = word.match(/^(.*?)([가-힣]+)$/);
+      if (m && !keep.has(wi) && !known(m[2])) {
+        for (const e of ENDINGS) {
+          const tail = m[2];
+          if (tail.length <= e.length || !tail.endsWith(e)) {
+            // 'BTS에서' 처럼 영문 뒤에 조사만 붙은 경우. 숫자 뒤는 단위다('90도').
+            if (/[A-Za-z]$/.test(m[1]) && tail === e) {
+              word = m[1];
+              break;
+            }
+            continue;
+          }
+          const stem = tail.slice(0, -e.length);
+          if (stem.length < 2) continue;
+          // 한 글자 조사는 떼고 남은 말이 용어집 단어 그대로일 때만. '교통편의' 를
+          // 교통편 + 의 로 보고 다시 교통 + 편 으로 쪼개면 뜻이 사라진다.
+          if (e.length === 1 ? !idx.has(squash(stem)) : !known(stem)) continue;
+          word = m[1] + stem;
+          break;
+        }
+      }
+      prevVerb = /는$/.test(w);
+      out.push(word);
+    });
+    return out;
+  }
+
   // 검색어를 용어집 단어로 쪼갠다. 조각은 한국어 순서 그대로 돌려준다.
   //   glossary  용어집에 있는 말
   //   literal   영문·숫자(iPhone, 15, 500ml). 그대로 쓴다
@@ -1257,7 +1312,7 @@
   //   unknown   용어집에 없는 말. th 가 비어 있으니 호출부가 채운다
   function composeFromGlossary(query) {
     const idx = buildIndex();
-    const words = normKey(query).split(/\s+/).filter(Boolean);
+    const words = stripEndings(normKey(query).split(/\s+/).filter(Boolean), idx);
     // 단어를 한글과 그 밖으로 가른다. 'USB충전기' → USB | 충전기, 'C타입' → C | 타입.
     const toks = [];
     words.forEach((w, wi) => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.5
+// @version      1.22.6
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -3777,7 +3777,28 @@
 
   // 바꾼 뒤 그 사이트의 검색을 실행한다. 폼이 있으면 폼 제출(사이트의 submit 처리가 그대로 돈다),
   // 없으면 Enter 를 흉내 낸다(keyCode 를 보는 사이트가 많아 13 을 박아 둔다).
+  // 검색 결과를 새 탭으로 열거나(Pantip — 팝업 차단에 걸린다) 검색칸이 폼 밖에 숨어 있는
+  // (카오솟) 사이트는 확인해 둔 검색 주소로 바로 간다. 검색칸으로 보이는 칸에만 쓴다 —
+  // 글쓰기 제목 칸에서 Enter 를 쳤는데 검색 페이지로 가 버리면 안 된다.
+  const GENERIC_SEARCH_URLS = [
+    [/(^|\.)pantip\.com$/, 'https://pantip.com/search?q='],
+    [/(^|\.)khaosod\.co\.th$/, 'https://www.khaosod.co.th/search?s='],
+  ];
+
+  function looksLikeSearchBox(input) {
+    const hint = [input.type, input.name, input.id, input.placeholder, input.getAttribute('aria-label')]
+      .join(' ')
+      .toLowerCase();
+    return /search|ค้นหา|(^|\s)q(\s|$)/.test(hint);
+  }
+
   function submitGeneric(input) {
+    const known = GENERIC_SEARCH_URLS.find(([re]) => re.test(location.hostname));
+    const q = input.value.trim();
+    if (known && q && looksLikeSearchBox(input)) {
+      location.href = known[1] + encodeURIComponent(q);
+      return;
+    }
     if (input.form) {
       try {
         input.form.requestSubmit();

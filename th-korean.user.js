@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.13
+// @version      1.22.14
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1346,6 +1346,22 @@
     명: 'คน', 층: 'ชั้น', 박: 'คืน', 회: 'ครั้ง', 장: 'แผ่น',
   };
 
+  // 숫자 뒤의 만·천·억을 숫자로('80만 바트' → '800,000 바트'). 태국 사이트는 금액을 숫자로 쓴다.
+  // '1억2천만' 처럼 이어진 것도 합친다. 뒤에 한글이 바로 붙은 '만'(1개만 = '만' 조사)은 숫자 바로 뒤가
+  // 아니라 건드리지 않는다.
+  function koreanNumbers(s) {
+    return s.replace(/(\d+(?:\.\d+)?(?:억|천만|백만|만|천))+/g, (m) => {
+      let total = 0;
+      let rest = 0;
+      for (const [, n, u] of m.matchAll(/(\d+(?:\.\d+)?)(억|천만|백만|만|천)/g)) {
+        const v = parseFloat(n) * { 억: 1e8, 천만: 1e7, 백만: 1e6, 만: 1e4, 천: 1e3 }[u];
+        if (u === '억') total += v;
+        else rest += v;
+      }
+      return Math.round(total + rest).toLocaleString('en-US');
+    });
+  }
+
   // 검색어를 용어집 단어로 쪼갠다. 조각은 한국어 순서 그대로 돌려준다.
   //   glossary  용어집에 있는 말
   //   literal   영문·숫자(iPhone, 15, 500ml). 그대로 쓴다
@@ -1353,7 +1369,7 @@
   //   unknown   용어집에 없는 말. th 가 비어 있으니 호출부가 채운다
   function composeFromGlossary(query) {
     const idx = buildIndex();
-    const words = stripEndings(normKey(query).split(/\s+/).filter(Boolean), idx);
+    const words = stripEndings(koreanNumbers(normKey(query)).split(/\s+/).filter(Boolean), idx);
     // 단어를 한글과 그 밖으로 가른다. 'USB충전기' → USB | 충전기, 'C타입' → C | 타입.
     const toks = [];
     words.forEach((w, wi) => {
@@ -1474,6 +1490,8 @@
   // 꾸밈말: 용어집의 @꾸밈말 칸, 영문·숫자 덩어리(iPhone 15 Pro, 27 นิ้ว, L), 용어집에 없던 말.
   // 영문·숫자가 이어진 부분은 한 덩어리로 묶어 제 순서를 지키고, 숫자에 바로 붙은 단위
   // (27인치 → 27 นิ้ว)도 그 덩어리에 넣는다.
+  const CURRENCY_TH = new Set(['บาท', 'วอน', 'ดอลลาร์', 'เยน', 'หยวน']);
+
   function assembleThai(pieces) {
     const groups = [];
     let run = null;
@@ -1481,7 +1499,11 @@
     for (const p of pieces) {
       if (!p.th) continue;
       const latin = !THAI.test(p.th);
-      const unit = run && prev && prev.word === p.word && /^[\d.,]+$/.test(prev.th);
+      // 띄어 쓴 통화도 숫자에 붙인다('3천 바트 이하' → 3,000 บาท ไม่เกิน). 통화만 — '아이폰 15 케이스'
+      // 의 케이스까지 숫자에 붙으면 상품 이름이 뒤로 밀린다.
+      const unit =
+        run && prev && /^[\d.,]+$/.test(prev.th) &&
+        (prev.word === p.word || (prev.word === p.word - 1 && CURRENCY_TH.has(p.th)));
       if (run && (latin || unit)) {
         run.push(p);
       } else if (latin) {

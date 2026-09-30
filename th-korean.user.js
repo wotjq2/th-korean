@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.6
+// @version      1.22.7
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1227,7 +1227,7 @@
   // 끝까지 다 덮이지 않으면 쪼개지 않는다(null). 반만 맞춘 조각은 오역의 씨앗이다.
   // 한 글자 단어(차·옷·컵)는 맨 끝에서만 쓴다. 앞에서도 쓰게 하면 '차량' 이
   // 차(ชา) + 량 으로 쪼개지는 사고가 난다. 끝의 '용' 은 떼어 낸다(강아지용 → 강아지).
-  function segmentWord(s, idx) {
+  function segmentWord(s, idx, endings = true) {
     const n = s.length;
     const cost = new Array(n + 1).fill(Infinity);
     const back = new Array(n + 1).fill(null);
@@ -1238,10 +1238,17 @@
         const w = s.slice(i, j);
         if (w.length === 1 && !(j === n && i > 0)) continue;
         let piece = null;
+        let c = 1;
         if (NOISE_WORDS.has(w) || w === '용') piece = { ko: w, th: '', kind: 'noise' };
         else if (idx.has(squash(w))) piece = { ko: w, th: idx.get(squash(w)), kind: 'glossary' };
-        if (piece && cost[i] + 1 < cost[j]) {
-          cost[j] = cost[i] + 1;
+        else if (endings && i > 0 && w.length >= 2 && ENDINGS.includes(w)) {
+          // 붙여 친 문장 가운데의 조사·어미('수완나품공항에서시내가는법', '계좌개설하는방법').
+          // 두 글자 이상만, 맨 앞은 안 된다. 조금 비싸게 매겨 조사 없이 쪼개지는 쪽을 먼저 고른다.
+          piece = { ko: w, th: '', kind: 'noise' };
+          c = 1.5;
+        }
+        if (piece && cost[i] + c < cost[j]) {
+          cost[j] = cost[i] + c;
           back[j] = { i, piece };
         }
       }
@@ -1268,7 +1275,7 @@
   // '은·는' 은 넣지 않았다. 검색어에는 드물고, '자라는'(→ ZARA)처럼 동사를 명사로 잘못 뗀다.
 
   function stripEndings(words, idx) {
-    const known = (s) => idx.has(squash(s)) || !!segmentWord(s, idx);
+    const known = (s) => idx.has(squash(s)) || !!segmentWord(s, idx, false); // 조사 없이 덮이는지 본다
     // 여러 단어가 통째로 용어집에 있으면('짱구는 못말려') 그 단어들은 건드리지 않는다.
     const keep = new Set();
     for (let i = 0; i < words.length; i++) {
@@ -1363,6 +1370,20 @@
         relax(i, i + 1, keep ? 1 : 0, [
           { ko: t.text, th: keep ? t.text : '', kind: keep ? 'literal' : 'noise', word: t.word },
         ]);
+        // 숫자·영문에 붙은 용어집 말 뒤로 다른 말이 이어 붙은 경우('90일신고온라인' → 90일신고 + 온라인).
+        const next = toks[i + 1];
+        if (keep && next && next.hangul && next.word === t.word) {
+          for (let k = 1; k < next.text.length; k++) {
+            const th = idx.get(squash(t.text + next.text.slice(0, k)));
+            if (!th) continue;
+            const rest = segmentWord(next.text.slice(k), idx);
+            if (!rest) continue;
+            relax(i, i + 2, 1 + rest.length, [
+              { ko: t.text + next.text.slice(0, k), th, kind: 'glossary', word: t.word },
+              ...rest.map((p) => ({ ...p, word: t.word })),
+            ]);
+          }
+        }
         continue;
       }
       const segs = segmentWord(t.text, idx);

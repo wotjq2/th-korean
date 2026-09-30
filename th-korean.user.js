@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.20
+// @version      1.22.21
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1358,7 +1358,7 @@
   const NATIVE_NUMS = { 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10 };
   const NATIVE_UNITS = {
     시간: 'ชั่วโมง', 명: 'คน', 사람: 'คน', 주: 'สัปดาห์', 달: 'เดือน', 층: 'ชั้น', 장: 'แผ่น',
-    개: 'ชิ้น', 번: 'ครั้ง', 살: 'ขวบ', 잔: 'แก้ว', 병: 'ขวด', 그릇: 'ชาม',
+    개: 'ชิ้น', 번: 'ครั้ง', 살: 'ขวบ', 잔: 'แก้ว', 병: 'ขวด', 그릇: 'ชาม', 곳: 'แห่ง',
   };
   function nativeCount(num, unit, idx) {
     const n = NATIVE_NUMS[num];

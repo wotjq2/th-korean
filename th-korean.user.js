@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.7
+// @version      1.22.8
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1288,8 +1288,9 @@
     words.forEach((w, wi) => {
       let word = w;
       // '하는 법' 의 '법' 은 법률이 아니라 방법이다. '아시는 분' 의 '분' 은 사람이라 뺀다.
-      if (prevVerb && w === '법') word = '방법';
-      if (prevVerb && w === '분') {
+      // 통째 항목에 든 단어('살 빼는 법' → 살빼는법)는 그대로 둔다.
+      if (prevVerb && !keep.has(wi) && w === '법') word = '방법';
+      if (prevVerb && !keep.has(wi) && w === '분') {
         prevVerb = false;
         return;
       }

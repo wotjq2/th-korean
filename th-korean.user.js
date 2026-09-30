@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.38
+// @version      1.22.39
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1210,6 +1210,9 @@
   // '바·클럽' 도 쇼핑의 풀업바·골프클럽과 겹쳐 용어집에 따로 두지 않고, '통로 바', '방콕 클럽' 처럼
   // 띄어 쳤을 때만 술집으로 읽는다.
   const WORD_ONLY = { 아이: 'เด็ก', 바: 'บาร์', 클럽: 'ผับ', 비: 'ฝน', 강: 'แม่น้ำ', 산: 'ภูเขา', 짐: 'สัมภาระ', 차이: 'ความแตกต่าง', 열: 'ไข้' };
+  // 위와 같되 상품 이름처럼 맨 앞에 두는 말. '모스크 방문', '처가 방문' 의 '방문' 은 찾아가는 것(เยี่ยม)이고,
+  // 용어집의 방문(ประตูห้อง)은 '방문손잡이·방문고리' 같은 쇼핑 합성어 쪽에 남긴다.
+  const WORD_ONLY_HEAD = { 방문: 'เยี่ยม' };
   // '데이트 하기 좋은 곳', '주차 할 곳', '메이드 추천 부탁', '나눔 합니다'
   // '이 식당 맛있어요' 의 '이·그·저' 는 가리키는 말이라 뺀다.
   const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저']);
@@ -1555,6 +1558,10 @@
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
       if (WORD_ONLY[t.text] && firstOfWord(i) && lastOfWord(i)) {
         relax(i, i + 1, 1, [{ ko: t.text, th: WORD_ONLY[t.text], kind: 'glossary', word: t.word, mod: true }]);
+      }
+      // 용어집에도 같은 키가 있으니 비용을 조금 낮춰 이긴다. '방문 손잡이' 통째 항목(1)은 그래도 먼저다.
+      if (WORD_ONLY_HEAD[t.text] && firstOfWord(i) && lastOfWord(i)) {
+        relax(i, i + 1, 0.9, [{ ko: t.text, th: WORD_ONLY_HEAD[t.text], kind: 'glossary', word: t.word }]);
       }
       if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {
         relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);

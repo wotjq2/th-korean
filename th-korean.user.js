@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.27
+// @version      1.22.28
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1226,6 +1226,10 @@
     '거치대': { after: 'ขาตั้ง' },
     '별': { suffix: 'แยกตาม' },
     '기타': { prefix: 'อื่นๆ' },
+    // '보험금·적립금·계약금' 의 '금' 은 금(ทอง)이 아니라 돈. '18K금' 처럼 숫자·영문 뒤는 그대로 금.
+    '금': { suffix: 'เงิน' },
+    // '일주일간·한달간' 의 '간' 은 간(ตับ)이 아니라 '동안' 이라 뺀다. 돼지간·닭간은 통째 항목이 이긴다.
+    '간': { suffix: '' },
   };
 
   // 공백을 빼고 소문자로. '무선이어폰' 과 '무선 이어폰', 'c타입' 과 'C타입' 을 같게 본다.
@@ -1556,7 +1560,9 @@
       if (!f) return;
       if (f.before && i < content.length - 1 && squash(words[p.word]) === squash(p.ko)) p.th = f.before;
       else if (f.after && i > 0) p.th = f.after;
-      else if (f.suffix && i > 0 && content[i - 1].word === p.word) p.th = f.suffix;
+      else if ('suffix' in f && i > 0 && content[i - 1].word === p.word && content[i - 1].kind === 'glossary') {
+        p.th = f.suffix;
+      }
       else if (
         f.prefix && i < content.length - 1 && content[i + 1].word === p.word &&
         (i === 0 || content[i - 1].word !== p.word)

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.11
+// @version      1.22.12
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1340,6 +1340,8 @@
     return out;
   }
 
+  const NUM_UNITS = { 시간: 'ชั่วโมง', 분: 'นาที', 주: 'สัปดาห์', 초: 'วินาที' };
+
   // 검색어를 용어집 단어로 쪼갠다. 조각은 한국어 순서 그대로 돌려준다.
   //   glossary  용어집에 있는 말
   //   literal   영문·숫자(iPhone, 15, 500ml). 그대로 쓴다
@@ -1404,6 +1406,12 @@
           }
         }
         continue;
+      }
+      // 숫자 바로 뒤의 시간 단위. '시간' 은 혼자면 เวลา(때)지만 '2시간' 은 2 ชั่วโมง 이다.
+      // '분·주·초' 는 한 글자라 용어집 조합에 안 걸려 여기서 잡는다.
+      const prevTok = toks[i - 1];
+      if (prevTok && prevTok.word === t.word && /^\d+$/.test(prevTok.text) && NUM_UNITS[t.text]) {
+        relax(i, i + 1, 0.5, [{ ko: t.text, th: NUM_UNITS[t.text], kind: 'glossary', word: t.word }]);
       }
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
       if (NOISE_WORDS.has(t.text)) relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);

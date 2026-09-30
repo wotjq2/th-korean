@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.31
+// @version      1.22.32
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1311,6 +1311,19 @@
   // '는' 은 넣지 않았다. '자라는'(→ ZARA)처럼 동사를 명사로 잘못 뗀다. '은' 은 한 글자 조사라
   // 떼고 남은 말이 용어집 단어 그대로일 때만 뗀다('사람들은' → 사람들, '태국은' → 태국).
 
+  // 형용사 줄기를 꾸미는 꼴로. 조용하 → 조용한, 싸 → 싼, 가볍 → 가벼운, 작 → 작은.
+  function toAttributive(stem) {
+    if (!stem) return '';
+    const last = stem.charCodeAt(stem.length - 1) - 0xac00;
+    if (last < 0 || last > 11171) return '';
+    const jong = last % 28;
+    const head = stem.slice(0, -1);
+    if (stem.endsWith('하')) return head + '한';
+    if (jong === 0) return head + String.fromCharCode(0xac00 + last + 4);
+    if (jong === 17) return head + String.fromCharCode(0xac00 + last - 17) + '운';
+    return stem + '은';
+  }
+
   function stripEndings(words, idx) {
     const known = (s) => idx.has(squash(s)) || !!segmentWord(s, idx, false); // 조사 없이 덮이는지 본다
     // 여러 단어가 통째로 용어집에 있으면('짱구는 못말려') 그 단어들은 건드리지 않는다.
@@ -1368,6 +1381,12 @@
           if (e.length === 1 ? !idx.has(squash(stem)) : !known(stem)) continue;
           word = m[1] + stem;
           break;
+        }
+        // '가볍고 튼튼한', '싸게 사는 법', '작고 조용한' 의 '~고·~게' 는 꾸미는 꼴(가벼운·싼·작은)로
+        // 바꿔 용어집에 있으면 그 말로 읽는다.
+        if (word === w && /[고게]$/.test(m[2])) {
+          const attr = toAttributive(m[2].slice(0, -1));
+          if (attr && idx.has(squash(attr))) word = m[1] + attr;
         }
       }
       prevVerb = /는$/.test(w);

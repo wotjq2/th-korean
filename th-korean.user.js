@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.14
+// @version      1.22.15
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1346,6 +1346,19 @@
     명: 'คน', 층: 'ชั้น', 박: 'คืน', 회: 'ครั้ง', 장: 'แผ่น',
   };
 
+  // '두 시간'·'세 명'·'한 달' 처럼 한글 수 뒤에 단위가 오는 말. 분·초·회·박은 한자 수('이십 분')로 세니
+  // 넣지 않는다('두 분' 은 두 사람이다). '한번' 은 '한번 가 보고 싶다' 의 부사라 1 ครั้ง 으로 두지 않는다.
+  const NATIVE_NUMS = { 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10 };
+  const NATIVE_UNITS = {
+    시간: 'ชั่วโมง', 명: 'คน', 사람: 'คน', 주: 'สัปดาห์', 달: 'เดือน', 층: 'ชั้น', 장: 'แผ่น',
+    개: 'ชิ้น', 번: 'ครั้ง', 살: 'ขวบ', 잔: 'แก้ว', 병: 'ขวด', 그릇: 'ชาม',
+  };
+  function nativeCount(num, unit, idx) {
+    const n = NATIVE_NUMS[num];
+    if (!n || !NATIVE_UNITS[unit] || (n === 1 && unit === '번')) return '';
+    return idx.get(squash(n + unit)) || `${n} ${NATIVE_UNITS[unit]}`;
+  }
+
   // 숫자 뒤의 만·천·억을 숫자로('80만 바트' → '800,000 바트'). 태국 사이트는 금액을 숫자로 쓴다.
   // '1억2천만' 처럼 이어진 것도 합친다. 뒤에 한글이 바로 붙은 '만'(1개만 = '만' 조사)은 숫자 바로 뒤가
   // 아니라 건드리지 않는다.
@@ -1433,6 +1446,18 @@
       if (prevTok && prevTok.word === t.word && /^\d+$/.test(prevTok.text) && NUM_UNITS[t.text]) {
         relax(i, i + 1, 0.5, [{ ko: t.text, th: NUM_UNITS[t.text], kind: 'glossary', word: t.word }]);
       }
+      // 한글 수 + 단위. 띄어 쓴 '두 시간' 과 붙여 쓴 '두시간' 둘 다. 비용을 1 로 두어 같은 비용이면
+      // 먼저 들어간 용어집 항목('한달'·'세대')이 이긴다.
+      const nx = toks[i + 1];
+      if (firstOfWord(i) && lastOfWord(i) && nx && nx.hangul && nx.word === t.word + 1 && lastOfWord(i + 1)) {
+        const th = nativeCount(t.text, nx.text, idx);
+        if (th) relax(i, i + 2, 1, [{ ko: t.text + ' ' + nx.text, th, kind: 'glossary', word: t.word, mod: true }]);
+      }
+      const nm = firstOfWord(i) && lastOfWord(i) && t.text.match(/^(한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)(.+)$/);
+      if (nm) {
+        const th = nativeCount(nm[1], nm[2], idx);
+        if (th) relax(i, i + 1, 1, [{ ko: t.text, th, kind: 'glossary', word: t.word, mod: true }]);
+      }
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
       if (NOISE_WORDS.has(t.text)) relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
       const segs = segmentWord(t.text, idx);
@@ -1517,7 +1542,7 @@
 
     const mods = glossaryMods();
     const isHead = (g) =>
-      g.length === 1 && g[0].kind === 'glossary' && THAI.test(g[0].th) && !mods.has(squash(g[0].ko));
+      g.length === 1 && g[0].kind === 'glossary' && !g[0].mod && THAI.test(g[0].th) && !mods.has(squash(g[0].ko));
     let last = -1;
     groups.forEach((g, i) => {
       if (isHead(g)) last = i;

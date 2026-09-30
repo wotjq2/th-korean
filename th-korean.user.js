@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.15
+// @version      1.22.16
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1453,8 +1453,9 @@
         const th = nativeCount(t.text, nx.text, idx);
         if (th) relax(i, i + 2, 1, [{ ko: t.text + ' ' + nx.text, th, kind: 'glossary', word: t.word, mod: true }]);
       }
+      // 붙여 쓴 것은 병·층·주를 받지 않는다('열병' 은 열 병이 아니라 병 이름, '한층' 은 부사).
       const nm = firstOfWord(i) && lastOfWord(i) && t.text.match(/^(한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)(.+)$/);
-      if (nm) {
+      if (nm && !/^(병|층|주)$/.test(nm[2])) {
         const th = nativeCount(nm[1], nm[2], idx);
         if (th) relax(i, i + 1, 1, [{ ko: t.text, th, kind: 'glossary', word: t.word, mod: true }]);
       }

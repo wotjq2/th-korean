@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.28
+// @version      1.22.29
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1204,6 +1204,9 @@
   // 띄어 친 한 단어일 때만 빼는 말. '인사 하는 법', '운동 하는 곳' 의 '하는' 은 앞 명사가 뜻을
   // 다 가진다. 합성어 안에서는 빼지 않는다 — '연장하는' 이 연장 + 하는 으로 덮여 버리면
   // 어미를 떼지 않아 '비자 연장 방법'(วิธีต่อวีซ่า) 통째 항목을 놓친다.
+  // 한 단어로 띄어 쳤을 때만 쓰는 말. '아이' 를 용어집에 두면 '아이패치·아이크림' 이 아이(เด็ก)로
+  // 쪼개지니, '아이 선물·코딩 학원 아이' 처럼 따로 쳤을 때만 아이(เด็ก)로 읽는다.
+  const WORD_ONLY = { 아이: 'เด็ก' };
   // '데이트 하기 좋은 곳', '주차 할 곳', '메이드 추천 부탁', '나눔 합니다'
   const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요']); // '청소 해주세요'
 
@@ -1516,6 +1519,9 @@
         if (th) relax(i, i + 1, 1, [{ ko: t.text, th, kind: 'glossary', word: t.word, mod: true }]);
       }
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
+      if (WORD_ONLY[t.text] && firstOfWord(i) && lastOfWord(i)) {
+        relax(i, i + 1, 1, [{ ko: t.text, th: WORD_ONLY[t.text], kind: 'glossary', word: t.word, mod: true }]);
+      }
       if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {
         relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
       }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.32
+// @version      1.22.33
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1529,6 +1529,17 @@
         (/(요|게|음|함)$/.test(nx.text) || (nx.text.charCodeAt(nx.text.length - 1) - 0xac00) % 28 === 4)
       ) {
         const th = idx.get(squash(nx.text));
+        if (th && !/^(ไม่|กัน)/.test(th)) {
+          relax(i, i + 2, 1.5, [{ ko: t.text + ' ' + nx.text, th: 'ไม่' + th, kind: 'glossary', word: t.word, mod: true }]);
+        }
+      }
+      // '비싸지 않은', '맵지 않은' → ไม่ + 꾸미는 꼴(비싼·매운). 용어집 통째 항목('맵지않게')이 먼저다.
+      if (
+        firstOfWord(i) && lastOfWord(i) && t.text.length >= 2 && t.text.endsWith('지') &&
+        nx && nx.hangul && nx.word === t.word + 1 && lastOfWord(i + 1) && /^않(은|는|게|아요|음)$/.test(nx.text)
+      ) {
+        const attr = toAttributive(t.text.slice(0, -1));
+        const th = attr && idx.get(squash(attr));
         if (th && !/^(ไม่|กัน)/.test(th)) {
           relax(i, i + 2, 1.5, [{ ko: t.text + ' ' + nx.text, th: 'ไม่' + th, kind: 'glossary', word: t.word, mod: true }]);
         }

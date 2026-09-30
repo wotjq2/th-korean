@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.22
+// @version      1.22.23
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1464,6 +1464,11 @@
       const prevTok = toks[i - 1];
       if (prevTok && prevTok.word === t.word && /^\d+$/.test(prevTok.text) && NUM_UNITS[t.text]) {
         relax(i, i + 1, 0.5, [{ ko: t.text, th: NUM_UNITS[t.text], kind: 'glossary', word: t.word }]);
+      }
+      // 숫자 뒤의 '번'(몇 번째). '3번 출구' → ทางออก 3, '8번 버스' → รถบัส 8. 태국어는 숫자를 뒤에 쓰니
+      // '번' 은 빼고 숫자만 남긴다(숫자 덩어리는 꾸밈말이라 명사 뒤로 간다). 용어집의 '1번' 등이 먼저다.
+      if (t.text === '번' && prevTok && prevTok.word === t.word && /^\d+$/.test(prevTok.text)) {
+        relax(i, i + 1, 0.5, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
       }
       // 숫자 뒤의 '원'(한국 돈). '5만원' 은 koreanNumbers 를 거쳐 '50,000원' 이 된다. 띄어 쓴 '5만 원' 도.
       // '원' 을 용어집에 따로 두면 '상담원·연구원' 이 상담 + 원(วอน)으로 쪼개지니 숫자 바로 뒤에서만 본다.

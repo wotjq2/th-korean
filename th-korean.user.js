@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.48
+// @version      1.22.49
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1585,6 +1585,11 @@
       // 용어집에도 같은 키가 있으니 비용을 조금 낮춰 이긴다. '방문 손잡이' 통째 항목(1)은 그래도 먼저다.
       if (WORD_ONLY_HEAD[t.text] && firstOfWord(i) && lastOfWord(i)) {
         relax(i, i + 1, 0.9, [{ ko: t.text, th: WORD_ONLY_HEAD[t.text], kind: 'glossary', word: t.word }]);
+      }
+      // 다른 말 뒤에 띄어 쓴 '가요' 는 가다(ไป) — '한국 가요', '영화 보러 가요'. 혼자 친 '가요' 와
+      // 합성어 안의 가요(가요CD)는 용어집대로 노래(เพลงเกาหลี).
+      if (t.text === '가요' && t.word > 0 && firstOfWord(i) && lastOfWord(i)) {
+        relax(i, i + 1, 0.9, [{ ko: t.text, th: 'ไป', kind: 'glossary', word: t.word }]);
       }
       if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {
         relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);

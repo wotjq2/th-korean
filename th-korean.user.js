@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.53
+// @version      1.22.54
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1607,8 +1607,9 @@
       if (t.text === '가요' && t.word > 0 && firstOfWord(i) && lastOfWord(i)) {
         relax(i, i + 1, 0.9, [{ ko: t.text, th: 'ไป', kind: 'glossary', word: t.word }]);
       }
+      // 뺄 말도 비용을 조금 매겨, 그 말까지 든 통째 항목('가성비 좋아요' → คุ้มค่า, '자리 있어요')이 이기게 한다.
       if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {
-        relax(i, i + 1, 0, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
+        relax(i, i + 1, 0.6, [{ ko: t.text, th: '', kind: 'noise', word: t.word }]);
       }
       const segs = segmentWord(t.text, idx);
       if (segs) relax(i, i + 1, segs.length, segs.map((p) => ({ ...p, word: t.word })));

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.66
+// @version      1.22.67
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1222,7 +1222,7 @@
   // '안·못 + ~요' 에서 용어집과 뜻이 다른 동사(가요=เพลงเกาหลี).
   const VERB_YO = { 가요: 'ไป', 와요: 'มา' };
   const VERB_YO_AFTER = { 가요: 'ไป', 타요: 'นั่ง' };
-  const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘', '해도']);
+  const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘', '해도', '잘']);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
   //   before  뒤에 다른 말이 올 때. '차' 는 혼자면 마시는 차(ชา)지만 '차 방향제',
@@ -1615,9 +1615,10 @@
         relax(i, i + 1, 1, [{ ko: t.text, th: WORD_ONLY[t.text], kind: 'glossary', word: t.word, mod: true }]);
       }
       // 뒷말을 몰라도 띄어 쓴 '안·못' + '~요' 는 부정이다(못=ตะปู 로 읽지 않는다). 뒷말까지 아는 위 규칙이 먼저다.
+      // '못' 은 뒤에 어떤 말이 와도 부정('오늘 못 갈 것 같아요') — 쇼핑의 못(ตะปู)은 '못 박기' 처럼 '박' 이 뒤따른다.
       if (
         (t.text === '안' || t.text === '못') && firstOfWord(i) && lastOfWord(i) && nx && nx.hangul &&
-        nx.word === t.word + 1 && /요$/.test(nx.text)
+        nx.word === t.word + 1 && (/요$/.test(nx.text) || (t.text === '못' && !/^박/.test(nx.text)))
       ) {
         relax(i, i + 1, 0.9, [{ ko: t.text, th: t.text === '안' ? 'ไม่' : 'ไม่ได้', kind: 'glossary', word: t.word, mod: true }]);
       }

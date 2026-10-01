@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.47
+// @version      1.22.48
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1332,7 +1332,13 @@
   // 떼고 남은 말이 용어집 단어 그대로일 때만 뗀다('사람들은' → 사람들, '태국은' → 태국).
 
   // 형용사 줄기를 꾸미는 꼴로. 조용하 → 조용한, 싸 → 싼, 가볍 → 가벼운, 작 → 작은.
+  // 한 글자로 끝나는 꾸미는 꼴은 형용사만 — '가고 있어요' 의 가고 → 간(ตับ) 같은 동사는 뺀다.
+  const ONE_CHAR_ADJ = '긴큰싼짠흰먼';
   function toAttributive(stem) {
+    const a = attributiveOf(stem);
+    return a.length === 1 && !ONE_CHAR_ADJ.includes(a) ? '' : a;
+  }
+  function attributiveOf(stem) {
     if (!stem) return '';
     const last = stem.charCodeAt(stem.length - 1) - 0xac00;
     if (last < 0 || last > 11171) return '';

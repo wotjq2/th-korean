@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.58
+// @version      1.22.59
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1602,6 +1602,13 @@
       // 한 글자 뺄 말('뭐')은 segmentWord 가 한 글자를 안 받으니 여기서 뺀다.
       if (WORD_ONLY[t.text] && firstOfWord(i) && lastOfWord(i)) {
         relax(i, i + 1, 1, [{ ko: t.text, th: WORD_ONLY[t.text], kind: 'glossary', word: t.word, mod: true }]);
+      }
+      // 뒷말을 몰라도 띄어 쓴 '안·못' + '~요' 는 부정이다(못=ตะปู 로 읽지 않는다). 뒷말까지 아는 위 규칙이 먼저다.
+      if (
+        (t.text === '안' || t.text === '못') && firstOfWord(i) && lastOfWord(i) && nx && nx.hangul &&
+        nx.word === t.word + 1 && /요$/.test(nx.text)
+      ) {
+        relax(i, i + 1, 0.9, [{ ko: t.text, th: t.text === '안' ? 'ไม่' : 'ไม่ได้', kind: 'glossary', word: t.word, mod: true }]);
       }
       // 띄어 쓴 '더'. 뒤에 말이 오면 견주는 말('더 큰 거' → ขนาดใหญ่ กว่านี้), 끝에 오면 하나 더('한 잔 더' → อีก 1 แก้ว).
       if (t.text === '더' && firstOfWord(i) && lastOfWord(i)) {

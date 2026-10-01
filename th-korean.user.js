@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.45
+// @version      1.22.46
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1319,6 +1319,14 @@
     '에서는', '으로는', '에서', '으로', '에게', '한테', '까지', '부터', '처럼', '보다', '이랑',
     '에는', '에도', '와', '과', '이', '가', '을', '를', '에', '의', '로', '도', '만', '랑', '은',
   ];
+  // 몸·집안의 흔한 한 글자 말만(차가 막혀요의 차=ชา, 병이 났어요의 병=ขวด 같은 쇼핑 뜻은 뺀다).
+  // 받침이 있으면 이·을, 없으면 가·를 — 받침 없는 말 뒤의 '이' 는 조사가 아니다(차이·오이·나이).
+  const ONE_CHAR_NOUNS = '귀눈코목팔발손입턱혀뼈뇌폐털땀멍물불돈방집밥술약옷문꿈땅빚섬역숲꽃쌀빵떡꿀맛색향앱폰';
+  const oneCharParticleOk = (stem, e) => {
+    if (!ONE_CHAR_NOUNS.includes(stem)) return false;
+    const jong = (stem.charCodeAt(0) - 0xac00) % 28;
+    return e === '에' || ((e === '이' || e === '을') && jong > 0) || ((e === '가' || e === '를') && jong === 0);
+  };
   // '는' 은 넣지 않았다. '자라는'(→ ZARA)처럼 동사를 명사로 잘못 뗀다. '은' 은 한 글자 조사라
   // 떼고 남은 말이 용어집 단어 그대로일 때만 뗀다('사람들은' → 사람들, '태국은' → 태국).
 
@@ -1386,7 +1394,9 @@
             continue;
           }
           const stem = tail.slice(0, -e.length);
-          if (stem.length < 2) continue;
+          // 한 글자 말은 '귀가 아파요', '발에 물집' 처럼 주어·자리 조사가 붙고 그 한 글자가
+          // 용어집에 있을 때만(귀=หู, 발=เท้า).
+          if (stem.length < 2 && !(m[1] === '' && oneCharParticleOk(stem, e) && idx.has(squash(stem)))) continue;
           // 한 글자 조사는 떼고 남은 말이 용어집 단어 그대로일 때만. '교통편의' 를
           // 교통편 + 의 로 보고 다시 교통 + 편 으로 쪼개면 뜻이 사라진다.
           if (e.length === 1 ? !idx.has(squash(stem)) : !known(stem)) continue;

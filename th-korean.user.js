@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.52
+// @version      1.22.53
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1219,6 +1219,8 @@
   // '이 식당 맛있어요', '이거 얼마예요' 의 '이·그·저·이거' 는 가리키는 말이라 뺀다.
   // '주소 알려 주세요' 의 '알려' 도 뺀다(붙여 친 '알려주세요' 는 NOISE_WORDS) → ขอ ที่อยู่.
   // '식중독 같아요' 의 '같아요', '200바트에 해 주세요' 의 '해', '짐 좀 들어 주세요' 의 '좀' 도 뺀다.
+  // '안·못 + ~요' 에서 용어집과 뜻이 다른 동사(가요=เพลงเกาหลี).
+  const VERB_YO = { 가요: 'ไป', 와요: 'มา' };
   const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀']);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
@@ -1560,6 +1562,19 @@
         const th = idx.get(squash(nx.text));
         if (th && !/^(ไม่|กัน)/.test(th)) {
           relax(i, i + 2, 1.5, [{ ko: t.text + ' ' + nx.text, th: 'ไม่' + th, kind: 'glossary', word: t.word, mod: true }]);
+        }
+      }
+      // 띄어 쓴 '안·못' + '~요' 풀이말(동사). '안 먹어요' → ไม่กิน, '못 와요' → มาไม่ได้.
+      // 용어집의 못(ตะปู)은 '못 박기' 같은 쇼핑 말이라 뒤에 '~요' 가 올 때만 이렇게 읽는다.
+      if (
+        (t.text === '안' || t.text === '못') && firstOfWord(i) && lastOfWord(i) && nx && nx.hangul &&
+        nx.word === t.word + 1 && lastOfWord(i + 1) && /요$/.test(nx.text) && !glossaryMods().has(squash(nx.text))
+      ) {
+        const th = VERB_YO[nx.text] || idx.get(squash(nx.text));
+        if (th && !/^(ไม่|กัน)/.test(th) && !/ไม่ได้$/.test(th)) {
+          relax(i, i + 2, 1.5, [
+            { ko: t.text + ' ' + nx.text, th: t.text === '안' ? 'ไม่' + th : th + 'ไม่ได้', kind: 'glossary', word: t.word },
+          ]);
         }
       }
       // '비싸지 않은', '맵지 않은' → ไม่ + 꾸미는 꼴(비싼·매운). 용어집 통째 항목('맵지않게')이 먼저다.

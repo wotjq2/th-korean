@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.62
+// @version      1.22.63
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1221,7 +1221,7 @@
   // '식중독 같아요' 의 '같아요', '200바트에 해 주세요' 의 '해', '짐 좀 들어 주세요' 의 '좀' 도 뺀다.
   // '안·못 + ~요' 에서 용어집과 뜻이 다른 동사(가요=เพลงเกาหลี).
   const VERB_YO = { 가요: 'ไป', 와요: 'มา' };
-  const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘']);
+  const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘', '해도']);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
   //   before  뒤에 다른 말이 올 때. '차' 는 혼자면 마시는 차(ชา)지만 '차 방향제',
@@ -1472,9 +1472,17 @@
   //   literal   영문·숫자(iPhone, 15, 500ml). 그대로 쓴다
   //   noise     뺄 말(추천, 강아지'용', 기호)
   //   unknown   용어집에 없는 말. th 가 비어 있으니 호출부가 채운다
+  // 더 공손한 부탁·물음은 용어집에 든 꼴로 바꾼다. '열어 주시겠어요' → '열어 주세요', '앉아도 될까요' → '앉아도 돼요'.
+  const POLITE_FORMS = [
+    [/주시겠어요|주실래요|주시면\s*안\s*될까요/g, '주세요'],
+    [/될까요/g, '돼요'],
+    [/말씀해/g, '말해'],
+  ];
+  const plainPolite = (s) => POLITE_FORMS.reduce((acc, [re, to]) => acc.replace(re, to), s);
+
   function composeFromGlossary(query) {
     const idx = buildIndex();
-    const words = stripEndings(koreanNumbers(normKey(query)).split(/\s+/).filter(Boolean), idx);
+    const words = stripEndings(plainPolite(koreanNumbers(normKey(query))).split(/\s+/).filter(Boolean), idx);
     // 단어를 한글과 그 밖으로 가른다. 'USB충전기' → USB | 충전기, 'C타입' → C | 타입.
     const toks = [];
     words.forEach((w, wi) => {

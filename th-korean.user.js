@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.41
+// @version      1.22.42
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1666,9 +1666,17 @@
     groups.forEach((g, i) => {
       if (isHead(g)) last = i;
     });
+    // 용어집 꾸밈말만 있고 맨 끝이 '~요' 서술어면 주어 → 서술어 순서 그대로 둔다
+    // ('잇몸이 부었어요' → เหงือก บวม, '택배가 안 와요' → พัสดุ ไม่มา).
+    const keepOrder =
+      groups.length > 1 &&
+      groups.every((g) => g.length === 1 && g[0].kind === 'glossary' && THAI.test(g[0].th)) &&
+      /요$/.test(groups[groups.length - 1][0].ko);
     const ordered =
       last < 0
-        ? groups.slice().reverse() // 상품 이름을 모르면 예전처럼 뒤집는다
+        ? keepOrder
+          ? groups.slice()
+          : groups.slice().reverse() // 상품 이름을 모르면 예전처럼 뒤집는다
         : [
             ...groups.filter((g, i) => i <= last && isHead(g)).reverse(),
             ...groups.filter((g, i) => i < last && !isHead(g)).reverse(),

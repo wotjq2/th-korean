@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.63
+// @version      1.22.64
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1221,6 +1221,7 @@
   // '식중독 같아요' 의 '같아요', '200바트에 해 주세요' 의 '해', '짐 좀 들어 주세요' 의 '좀' 도 뺀다.
   // '안·못 + ~요' 에서 용어집과 뜻이 다른 동사(가요=เพลงเกาหลี).
   const VERB_YO = { 가요: 'ไป', 와요: 'มา' };
+  const VERB_YO_AFTER = { 가요: 'ไป', 타요: 'นั่ง' };
   const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘', '해도']);
 
   // 혼자 쓰일 때와 다른 말과 붙을 때 뜻이 갈리는 말.
@@ -1636,10 +1637,10 @@
       if (WORD_ONLY_HEAD[t.text] && firstOfWord(i) && lastOfWord(i)) {
         relax(i, i + 1, 0.9, [{ ko: t.text, th: WORD_ONLY_HEAD[t.text], kind: 'glossary', word: t.word }]);
       }
-      // 다른 말 뒤에 띄어 쓴 '가요' 는 가다(ไป) — '한국 가요', '영화 보러 가요'. 혼자 친 '가요' 와
-      // 합성어 안의 가요(가요CD)는 용어집대로 노래(เพลงเกาหลี).
-      if (t.text === '가요' && t.word > 0 && firstOfWord(i) && lastOfWord(i)) {
-        relax(i, i + 1, 0.9, [{ ko: t.text, th: 'ไป', kind: 'glossary', word: t.word }]);
+      // 다른 말 뒤에 띄어 쓴 '가요·타요' 는 동사(ไป·นั่ง) — '한국 가요', '오토바이 택시 타요'. 혼자 친 말과
+      // 합성어 안의 것(가요CD·타요버스)은 용어집대로 노래(เพลงเกาหลี)·만화 Tayo.
+      if (VERB_YO_AFTER[t.text] && t.word > 0 && firstOfWord(i) && lastOfWord(i)) {
+        relax(i, i + 1, 0.9, [{ ko: t.text, th: VERB_YO_AFTER[t.text], kind: 'glossary', word: t.word }]);
       }
       // 뺄 말도 비용을 조금 매겨, 그 말까지 든 통째 항목('가성비 좋아요' → คุ้มค่า, '자리 있어요')이 이기게 한다.
       if (NOISE_WORDS.has(t.text) || (WORD_NOISE.has(t.text) && firstOfWord(i) && lastOfWord(i))) {

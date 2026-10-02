@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.69
+// @version      1.22.70
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1362,7 +1362,7 @@
     // 여러 단어가 통째로 용어집에 있으면('짱구는 못말려') 그 단어들은 건드리지 않는다.
     const keep = new Set();
     for (let i = 0; i < words.length; i++) {
-      for (let j = i + 1; j < words.length && j < i + 4; j++) {
+      for (let j = i + 1; j < words.length && j < i + 7; j++) {
         if (idx.has(squash(words.slice(i, j + 1).join('')))) for (let k = i; k <= j; k++) keep.add(k);
       }
     }

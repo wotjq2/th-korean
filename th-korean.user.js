@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.0
+// @version      1.23.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -188,6 +188,9 @@
     confirmSearch: true,
     // 메신저에서 한국어 존댓말(~요·~니다)을 태국어로 보낼 때 끝에 붙이는 말. '' 이면 안 붙인다.
     chatParticle: 'ครับ',
+    // 메신저의 태국어 말풍선 밑에 한국어. 페이지 번역(pageEngine)을 꺼 두고 크롬 번역을 써도
+    // 메신저는 따로 켠다 — 크롬 번역은 화면이 한국어인 메신저에선 잘 안 뜬다.
+    chatTranslate: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
     imageTranslate: true,      // 사진에 마우스를 올리면 '사진 번역' 버튼
     // 마우스를 올려 두기만 해도 번역. 꺼 두면 버튼을 눌러야 읽는다(훑어보기만 해도 Vision 건수가
@@ -3491,6 +3494,9 @@
         <input type="checkbox" id="lzk-confirm"><span>검색 전 번역된 태국어 확인 (Enter 한 번 더)</span>
       </div>
 
+      <div class="lzk-check">
+        <input type="checkbox" id="lzk-chat-translate"><span>메신저: 태국어 메시지 밑에 한국어 표시</span>
+      </div>
       <label>메신저: 존댓말로 보낼 때 태국어 끝말</label>
       <select id="lzk-chat-particle">
         <option value="ครับ">ครับ (크랍 — 남자)</option>
@@ -3559,6 +3565,7 @@
     $('#lzk-auto').checked = cfg.autoTranslatePage;
     $('#lzk-confirm').checked = cfg.confirmSearch;
     $('#lzk-chat-particle').value = cfg.chatParticle;
+    $('#lzk-chat-translate').checked = cfg.chatTranslate;
     $('#lzk-selection').checked = cfg.selectionTranslate;
     $('#lzk-image').checked = cfg.imageTranslate;
     $('#lzk-image-auto').checked = cfg.imageAuto;
@@ -3688,6 +3695,7 @@
       cfg.autoTranslatePage = $('#lzk-auto').checked;
       cfg.confirmSearch = $('#lzk-confirm').checked;
       cfg.chatParticle = $('#lzk-chat-particle').value;
+      cfg.chatTranslate = $('#lzk-chat-translate').checked;
       cfg.selectionTranslate = $('#lzk-selection').checked;
       cfg.imageTranslate = $('#lzk-image').checked;
       cfg.imageAuto = $('#lzk-image-auto').checked;
@@ -4555,7 +4563,7 @@
   async function scanChat() {
     chatScanTimer = null;
     updateChatChip(); // Lexical 은 input 이벤트 없이 글자를 그리기도 해서 화면 변화 때마다 다시 본다
-    if (cfg.pageEngine === 'off' || !cfg.autoTranslatePage) return;
+    if (!cfg.chatTranslate) return;
     const todo = [];
     for (const d of chatBubbles()) {
       const src = bubbleText(d);

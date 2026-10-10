@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.22.70
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피 (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
+// @version      1.23.0
+// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
@@ -186,6 +186,8 @@
     searchEngine: 'free',    // 'free' | 'ai'
     autoTranslatePage: true,
     confirmSearch: true,
+    // 메신저에서 한국어 존댓말(~요·~니다)을 태국어로 보낼 때 끝에 붙이는 말. '' 이면 안 붙인다.
+    chatParticle: 'ครับ',
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
     imageTranslate: true,      // 사진에 마우스를 올리면 '사진 번역' 버튼
     // 마우스를 올려 두기만 해도 번역. 꺼 두면 버튼을 눌러야 읽는다(훑어보기만 해도 Vision 건수가
@@ -2049,6 +2051,16 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.25);
     }
     #lzk-thchip:hover { background: #1a22a0; }
+    #lzk-chatchip {
+      position: fixed; z-index: 2147483002; height: 24px; padding: 0 10px; border: none; border-radius: 12px;
+      background: #0f146e; color: #fff; cursor: pointer; font: 600 12px/24px system-ui, sans-serif;
+      white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    #lzk-chatchip[data-off] { background: #6b6b76; }
+    .lzk-msgko {
+      margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(128,128,128,.35);
+      font-size: .92em; opacity: .85; white-space: pre-wrap;
+    }
     #lzk-seltip {
       position: absolute; z-index: 2147483002; border: none; border-radius: 6px;
       background: #0f146e; color: #fff; padding: 6px 10px; cursor: pointer;
@@ -3478,6 +3490,14 @@
       <div class="lzk-check">
         <input type="checkbox" id="lzk-confirm"><span>검색 전 번역된 태국어 확인 (Enter 한 번 더)</span>
       </div>
+
+      <label>메신저: 존댓말로 보낼 때 태국어 끝말</label>
+      <select id="lzk-chat-particle">
+        <option value="ครับ">ครับ (크랍 — 남자)</option>
+        <option value="ค่ะ">ค่ะ / คะ (카 — 여자)</option>
+        <option value="">붙이지 않음</option>
+      </select>
+      <div class="lzk-hint">페이스북 메신저에서 한국어를 ~요·~니다로 쳤을 때 태국어 끝에 붙입니다. 반말에는 붙이지 않습니다.</div>
       <div class="lzk-check">
         <input type="checkbox" id="lzk-selection"><span>글자를 드래그하면 '한국어로' 버튼 표시</span>
       </div>
@@ -3538,6 +3558,7 @@
     $('#lzk-search-engine').value = usesAI(cfg.searchEngine) ? 'ai' : 'free';
     $('#lzk-auto').checked = cfg.autoTranslatePage;
     $('#lzk-confirm').checked = cfg.confirmSearch;
+    $('#lzk-chat-particle').value = cfg.chatParticle;
     $('#lzk-selection').checked = cfg.selectionTranslate;
     $('#lzk-image').checked = cfg.imageTranslate;
     $('#lzk-image-auto').checked = cfg.imageAuto;
@@ -3666,6 +3687,7 @@
       cfg.searchEngine = $('#lzk-search-engine').value;
       cfg.autoTranslatePage = $('#lzk-auto').checked;
       cfg.confirmSearch = $('#lzk-confirm').checked;
+      cfg.chatParticle = $('#lzk-chat-particle').value;
       cfg.selectionTranslate = $('#lzk-selection').checked;
       cfg.imageTranslate = $('#lzk-image').checked;
       cfg.imageAuto = $('#lzk-image-auto').checked;
@@ -4249,8 +4271,360 @@
     }, 2500);
   }
 
+  // ---------------------------------------------------------------------------
+  // 페이스북 메신저 (messenger.com) — 태국 사람과의 대화를 양쪽으로 옮긴다
+  //
+  //  - 태국어 말풍선 밑에 한국어 뜻을 작게 붙인다(내가 보낸 태국어도 — 되옮긴 뜻으로 확인).
+  //  - 입력칸에 한국어를 치고 Enter 한 번 → 태국어로 바꿔 바로 보낸다. 태국어를 못 읽으니
+  //    확인용 Enter 는 쓸모가 없다(사용자 요청). 뜻은 보낸 말풍선 밑의 한국어로 확인한다.
+  // 한국 사람과의 대화도 같은 메신저에서 한다. 그래서 대화방마다 상대가 태국어를 쓰는지 보고
+  // 켠다. 입력칸 위 칩을 누르면 그 대화방만 직접 켜고 끌 수 있다(기억해 둔다).
+  // 화면 구조(2026-10 확인): 메시지 = [data-message-id], 글자 = 그 안 맨 안쪽 div[dir=auto].
+  // 입력칸 = role=main 안의 Lexical 편집기 [contenteditable][role=textbox], Enter 로 보낸다.
+  // ---------------------------------------------------------------------------
+
+  const MESSENGER = /(^|\.)messenger\.com$/.test(location.hostname);
+  const CHAT_THREADS = 'chatThreads'; // { 대화방 id: true | false } — 칩으로 직접 고른 것만
+  const CHAT_RETRY_MS = 60000;
+  let chatThreads = GM_getValue(CHAT_THREADS, {});
+  let chatChip = null;
+  let chatBusy = false;
+  let chatSending = false; // 우리가 흉내 낸 Enter 는 가로채지 않는다
+  let chatScanTimer = null;
+  const chatPending = new Set();
+  const chatFailed = new WeakMap(); // 말풍선 → { src, at } 번역 실패. 잠시 뒤 다시 본다
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function chatThreadId() {
+    const m = /\/t\/([^/?#]+)/.exec(location.pathname);
+    return m ? m[1] : '';
+  }
+
+  function chatComposer(el) {
+    const ed = el && el.closest ? el.closest('[contenteditable="true"][role="textbox"]') : null;
+    return ed && ed.closest('[role="main"]') ? ed : null;
+  }
+
+  // Lexical 은 문단마다 <p> 라 innerText 가 빈 줄을 끼운다.
+  function flatText(s) {
+    return s.replace(/ /g, ' ').replace(/\n{2,}/g, '\n').trim();
+  }
+  function composerText(ed) {
+    return flatText(ed.innerText);
+  }
+
+  // 말풍선의 원문 — 우리가 붙인 한국어는 뺀다.
+  function bubbleText(el) {
+    let s = '';
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) s += n.nodeValue;
+      else if (n.nodeType === 1 && !n.classList.contains('lzk-msgko')) s += n.textContent;
+    }
+    return s.trim();
+  }
+
+  function chatBubbles(root = document) {
+    return [...root.querySelectorAll('[data-message-id] div[dir="auto"]')].filter(
+      (d) => !d.querySelector('div[dir="auto"]')
+    );
+  }
+
+  // 상대가 태국어로 말하는 대화방인가. 최근 말풍선 중 상대 것(왼쪽)을 본다. 상대 말이 없으면
+  // 내 말을 본다. 말풍선이 오른쪽에 붙어 있으면 내 것이다(화면 언어와 상관없이 맞는다).
+  function chatLooksThai() {
+    const log = document.querySelector('[role="main"] [role="log"]');
+    if (!log) return false;
+    const lr = log.getBoundingClientRect();
+    const theirs = [];
+    const mine = [];
+    for (const d of chatBubbles(log).slice(-40)) {
+      const t = bubbleText(d);
+      const lang = THAI.test(t) ? 'th' : HANGUL.test(t) ? 'ko' : '';
+      if (!lang) continue;
+      const r = d.getBoundingClientRect();
+      (r.left - lr.left > lr.right - r.right ? mine : theirs).push(lang);
+    }
+    const pick = theirs.length ? theirs : mine;
+    const th = pick.filter((x) => x === 'th').length;
+    return th > 0 && th >= pick.length - th;
+  }
+
+  function chatThaiOn() {
+    const id = chatThreadId();
+    if (id && id in chatThreads) return chatThreads[id];
+    return chatLooksThai();
+  }
+
+  // ---- 보내기: 한국어 → 태국어 ----
+
+  // ㅋㅋㅋ 같은 자모 줄임말. 구글 번역은 그대로 두거나 엉뚱하게 옮긴다.
+  const JAMO_RUN = /[ㄱ-ㅎㅏ-ㅣ]{2,}/g;
+  function jamoToThai(run, idx) {
+    if (/^ㅋ+$/.test(run)) return '5'.repeat(Math.max(3, run.length));
+    return idx.get(run) || idx.get(run.slice(0, 2)) || '';
+  }
+
+  // 태국어 존댓말 끝(ครับ/ค่ะ). 말하는 사람의 성별로 갈린다. 구글 번역은 성별을 몰라 존댓말
+  // 물음에 คะ(여자 말)를 붙이곤 한다 — 설정이 있으면 번역이 붙인 끝말은 떼고, 한국어를
+  // 존댓말(~요·~니다)로 썼을 때만 설정한 끝말을 붙인다. 반말에는 붙이지 않는다.
+  const TH_PARTICLE_END = /\s*(ครับผม|ครับ|คับ|ค่ะ|คะ|ค่า)(?=[\s?!.？！]*$)/;
+  function addPoliteParticle(ko, th) {
+    const p = cfg.chatParticle;
+    if (!p) return th;
+    th = th.replace(TH_PARTICLE_END, '');
+    if (!/(요|니다|니까|세요|십시오|죠)[\s?!.~？！]*$/.test(ko)) return th;
+    const word = p === 'ค่ะ' && /[?？]\s*$/.test(ko) ? 'คะ' : p;
+    return th.replace(/([\s?!.？！]*)$/, `${word}$1`);
+  }
+
+  // 물음표로 끝난 말에 묻는 꼴이 아닌 용어집 값을 쓰면 뜻이 바뀐다(밥먹었어요=กินข้าวแล้ว).
+  const TH_QUESTION = /ไหม|มั้ย|ยัง|หรือ|เหรอ|หรอ|ป่าว|อะไร|ไหน|เมื่อไ|ใคร|ทำไม|อย่างไร|ยังไง|กี่|เท่าไ/;
+
+  // 한 줄 옮기기. 용어집에 통째로 있는 말(사람이 고른 자연스러운 태국어)이 먼저, 아니면 문장째
+  // 무료 번역. 낱말을 이어 붙이는 용어집 조합은 대화에선 어색해서 번역이 안 될 때만 쓴다.
+  async function chatLine(line, idx) {
+    const jamo = line.match(JAMO_RUN) || [];
+    const core = line.replace(JAMO_RUN, ' ').replace(/\s+/g, ' ').trim();
+    const tail = jamo.map((r) => jamoToThai(r, idx)).filter(Boolean).join(' ');
+    if (!core || !HANGUL.test(core)) return { thai: [core, tail].filter(Boolean).join(' '), via: '용어집' };
+
+    const asks = /[?？]\s*$/.test(core);
+    const bare = core.replace(/[\s.!?~？！]+$/, '');
+    let thai = idx.get(squash(bare)) || '';
+    let via = '용어집';
+    if (thai && asks && !TH_QUESTION.test(thai)) thai = '';
+    if (!thai) {
+      thai = cacheGet(core, 'thc') || '';
+      via = '번역';
+      if (!thai) {
+        try {
+          thai = (await freeRaw(core, 'ko', 'th', SEARCH_FREE_TIMEOUT)).trim();
+          if (thai && !HANGUL.test(thai)) cacheSet(core, 'thc', thai);
+        } catch (e) {
+          console.warn(`[${APP_NAME}] 메시지 번역 실패, 용어집으로 대신:`, e.message);
+          const r = await koreanToThai(core);
+          thai = r.thai;
+          via = r.via;
+        }
+      }
+    }
+    if (!thai) return { thai: '', via };
+    thai = addPoliteParticle(core, thai);
+    return { thai: tail ? `${thai} ${tail}` : thai, via };
+  }
+
+  async function chatKoreanToThai(text) {
+    await ensureGlossary();
+    const idx = buildIndex();
+    const out = [];
+    const vias = new Set();
+    for (const raw of text.split('\n')) {
+      const line = normKey(raw);
+      if (!HANGUL.test(line)) {
+        out.push(line);
+        continue;
+      }
+      const { thai, via } = await chatLine(line, idx);
+      if (!thai) return { thai: '', via };
+      out.push(thai);
+      vias.add(via);
+    }
+    return { thai: out.join('\n'), via: [...vias].join(' + ') };
+  }
+
+  // 입력칸 글자를 통째로 바꾼다. innerHTML 을 직접 바꾸면 화면만 바뀌고 보내는 건 옛 글자다
+  // (Lexical 은 자기 상태를 따로 들고 있다). execCommand('insertText') 는 띄어쓰기가 든 글자를
+  // Lexical 이 버린다(시험함). 붙여넣기 이벤트는 띄어쓰기·줄바꿈까지 그대로 받는다. 다만 Lexical 은
+  // selectionchange 를 받은 뒤에야 '전체 선택'을 알아서, 고르고 잠깐 기다렸다가 붙여 넣는다.
+  async function setComposerText(ed, text, wait = 40) {
+    ed.focus();
+    const range = document.createRange();
+    range.selectNodeContents(ed);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    await sleep(wait);
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await sleep(30); // 편집기 상태가 화면에 반영될 틈
+  }
+
+  // 보내기 버튼. 이름이 화면 언어마다 달라도('Enter 키를 눌러 전송하세요', 'Press enter to send')
+  // Enter 라는 글자는 들어 있다. 메시지 목록 쪽 버튼은 보지 않는다.
+  function chatSendButton(ed) {
+    let box = ed;
+    while (box.parentElement && !box.parentElement.querySelector('[role="log"]')) box = box.parentElement;
+    return [...box.querySelectorAll('[role="button"][aria-label], button[aria-label]')].find((b) =>
+      /enter/i.test(b.getAttribute('aria-label'))
+    );
+  }
+
+  async function chatSend(ed) {
+    chatSending = true;
+    try {
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        const ev = new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+        for (const k of ['keyCode', 'which']) Object.defineProperty(ev, k, { get: () => 13 });
+        ed.dispatchEvent(ev);
+      }
+    } finally {
+      chatSending = false;
+    }
+    await sleep(300);
+    if (composerText(ed)) chatSendButton(ed)?.click(); // Enter 흉내가 안 먹었으면 버튼으로
+  }
+
+  async function chatConvertAndSend(ed) {
+    const value = composerText(ed);
+    if (chatBusy || !value || !HANGUL.test(value)) return;
+    chatBusy = true;
+    setBadge('태국어로 바꾸는 중…');
+    try {
+      const { thai, via } = await chatKoreanToThai(value);
+      if (!thai || HANGUL.test(thai)) throw new Error('번역 결과가 비어 있습니다');
+      if (composerText(ed) !== value) throw new Error('그 사이 입력칸 글자가 바뀌었습니다');
+      await setComposerText(ed, thai);
+      if (composerText(ed) !== flatText(thai)) await setComposerText(ed, thai, 150); // 한 번 더, 천천히
+      if (composerText(ed) !== flatText(thai)) throw new Error('입력칸에 태국어를 넣지 못했습니다');
+      await chatSend(ed);
+      toast(`"${value}" → "${thai}"  (${via})`, 3500);
+    } catch (e) {
+      toast(`태국어로 바꾸지 못했습니다: ${e.message || e}\n입력칸 글자는 보내지 않았습니다.`, 5000);
+    } finally {
+      chatBusy = false;
+      setBadge(null);
+      updateChatChip();
+    }
+  }
+
+  // 한국어를 치는 동안 입력칸 위에 'Enter → ไทย'(이 대화방은 태국어로 보냄) 또는
+  // 'Enter → 한국어 그대로'. 누르면 이 대화방만 바꾼다.
+  function updateChatChip() {
+    const ed = chatComposer(document.activeElement);
+    if (!ed || !HANGUL.test(ed.textContent)) {
+      if (chatChip) chatChip.style.display = 'none';
+      return;
+    }
+    if (!chatChip) {
+      chatChip = document.createElement('button');
+      chatChip.id = 'lzk-chatchip';
+      chatChip.type = 'button';
+      markNoTranslate(chatChip);
+      chatChip.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
+      chatChip.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = chatThreadId();
+        if (!id) return;
+        chatThreads[id] = !chatThaiOn();
+        GM_setValue(CHAT_THREADS, chatThreads);
+        toast(chatThreads[id] ? '이 대화방: 한국어를 태국어로 바꿔 보냅니다.' : '이 대화방: 한국어 그대로 보냅니다.', 2500);
+        updateChatChip();
+      });
+      document.body.appendChild(chatChip);
+    }
+    const on = chatThaiOn();
+    chatChip.textContent = on ? 'Enter → ไทย' : 'Enter → 한국어 그대로';
+    chatChip.title = on
+      ? '이 대화방은 한국어를 태국어로 바꿔 보냅니다. 누르면 이 대화방은 한국어 그대로 보냅니다.'
+      : '누르면 이 대화방에서 한국어를 태국어로 바꿔 보냅니다.';
+    chatChip.toggleAttribute('data-off', !on);
+    chatChip.style.display = '';
+    const r = ed.getBoundingClientRect();
+    chatChip.style.left = `${Math.max(4, r.right - chatChip.offsetWidth)}px`;
+    chatChip.style.top = `${Math.max(2, r.top - 30)}px`;
+  }
+
+  // ---- 받기: 태국어 말풍선 → 한국어 ----
+
+  function attachKorean(d, src, ko) {
+    if (!d.isConnected || bubbleText(d) !== src) return;
+    let box = d.querySelector(':scope > .lzk-msgko');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'lzk-msgko';
+      markNoTranslate(box);
+      d.appendChild(box);
+    }
+    box.dataset.src = src;
+    box.textContent = ko;
+  }
+
+  async function scanChat() {
+    chatScanTimer = null;
+    updateChatChip(); // Lexical 은 input 이벤트 없이 글자를 그리기도 해서 화면 변화 때마다 다시 본다
+    if (cfg.pageEngine === 'off' || !cfg.autoTranslatePage) return;
+    const todo = [];
+    for (const d of chatBubbles()) {
+      const src = bubbleText(d);
+      const box = d.querySelector(':scope > .lzk-msgko');
+      if (box && box.dataset.src === src) continue;
+      if (!THAI.test(src) || src.length > 3000) {
+        box?.remove();
+        continue;
+      }
+      const f = chatFailed.get(d);
+      if (chatPending.has(d) || (f && f.src === src && Date.now() - f.at < CHAT_RETRY_MS)) continue;
+      todo.push([d, src]);
+    }
+    if (!todo.length) return;
+    todo.forEach(([d]) => chatPending.add(d));
+    try {
+      const kos = await translateToKorean(todo.map(([, s]) => s));
+      todo.forEach(([d, src], i) => {
+        if (kos[i] && !THAI.test(kos[i])) attachKorean(d, src, kos[i]);
+        else chatFailed.set(d, { src, at: Date.now() });
+      });
+    } catch (e) {
+      console.warn(`[${APP_NAME}] 메시지 한국어 번역 실패:`, e.message);
+      todo.forEach(([d, src]) => chatFailed.set(d, { src, at: Date.now() }));
+    } finally {
+      todo.forEach(([d]) => chatPending.delete(d));
+    }
+  }
+
+  function scheduleChatScan() {
+    if (!chatScanTimer) chatScanTimer = setTimeout(scanChat, 300);
+  }
+
+  function messengerInit() {
+    GM_addStyle(LZK_CSS);
+    ensureGlossary();
+    registerMenus();
+    new MutationObserver(scheduleChatScan).observe(document.body, { childList: true, subtree: true, characterData: true });
+    scheduleChatScan();
+
+    document.addEventListener('input', updateChatChip, true);
+    document.addEventListener('keyup', updateChatChip, true);
+    document.addEventListener('focusin', updateChatChip, true);
+    document.addEventListener('focusout', () => setTimeout(updateChatChip, 150), true);
+    window.addEventListener('resize', updateChatChip);
+    // 사이트의 어떤 리스너보다 먼저(window 캡처) 잡는다. 한글 조합 중의 Enter(글자 확정)와
+    // 줄바꿈(Shift+Enter)은 그냥 둔다.
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (chatSending || e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+        const ed = chatComposer(e.target);
+        if (!ed) return;
+        if (chatBusy) {
+          e.preventDefault(); // 바꾸는 중에 한 번 더 누른 Enter 로 한국어가 나가지 않게
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (!HANGUL.test(ed.textContent) || !chatThaiOn()) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        chatConvertAndSend(ed);
+      },
+      true
+    );
+  }
+
   if (!GENERIC) registerMenus();
-  const start = GENERIC ? genericInit : init;
+  const start = MESSENGER ? messengerInit : GENERIC ? genericInit : init;
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
   } else {

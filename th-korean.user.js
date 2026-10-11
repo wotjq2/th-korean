@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.1
+// @version      1.23.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4316,7 +4316,7 @@
 
   // Lexical 은 문단마다 <p> 라 innerText 가 빈 줄을 끼운다.
   function flatText(s) {
-    return s.replace(/ /g, ' ').replace(/\n{2,}/g, '\n').trim();
+    return s.replace(/\u00a0/g, ' ').replace(/\n{2,}/g, '\n').trim();
   }
   function composerText(ed) {
     return flatText(ed.innerText);
@@ -4338,24 +4338,44 @@
     );
   }
 
-  // 상대가 태국어로 말하는 대화방인가. 최근 말풍선 중 상대 것(왼쪽)을 본다. 상대 말이 없으면
-  // 내 말을 본다. 말풍선이 오른쪽에 붙어 있으면 내 것이다(화면 언어와 상관없이 맞는다).
+  // 상대 이름. 대화방 머리의 제목 중 입력칸 이름표('… 님에게 메시지 쓰기')에 들어 있는 가장 긴 것.
+  // 화면 언어마다 이름표 문구가 달라도 이름은 그대로 들어 있다.
+  function chatPartnerName() {
+    const main = document.querySelector('[role="main"]');
+    const ed = main && main.querySelector('[contenteditable="true"][role="textbox"]');
+    const label = (ed && ed.getAttribute('aria-label')) || '';
+    let name = '';
+    for (const h of main ? main.querySelectorAll('h1, h2, h3') : []) {
+      if (h.closest('[role="log"]')) continue;
+      const t = h.textContent.trim();
+      if (t.length > name.length && label.includes(t)) name = t;
+    }
+    return name;
+  }
+
+  // 한국어를 태국어로 바꿔 보낼 대화방인가.
+  //  1) 상대가 태국어로 말했으면 태국 사람.
+  //  2) 아니면 상대 이름: 한글이면 한국 사람, 태국 글자나 영문이면 태국 사람으로 본다.
+  //     (태국 사람이 번역기로 한국어를 보내오는 방도 있다 — Paphawee 방. 말로만 보면 놓친다.)
+  //  3) 이름도 모르면 상대 말이 한국어인지 본다.
+  // 말풍선이 오른쪽에 붙어 있으면 내 것이다(화면 언어와 상관없이 맞는다).
   function chatLooksThai() {
     const log = document.querySelector('[role="main"] [role="log"]');
     if (!log) return false;
     const lr = log.getBoundingClientRect();
     const theirs = [];
-    const mine = [];
     for (const d of chatBubbles(log).slice(-40)) {
       const t = bubbleText(d);
       const lang = THAI.test(t) ? 'th' : HANGUL.test(t) ? 'ko' : '';
       if (!lang) continue;
       const r = d.getBoundingClientRect();
-      (r.left - lr.left > lr.right - r.right ? mine : theirs).push(lang);
+      if (r.left - lr.left <= lr.right - r.right) theirs.push(lang);
     }
-    const pick = theirs.length ? theirs : mine;
-    const th = pick.filter((x) => x === 'th').length;
-    return th > 0 && th >= pick.length - th;
+    if (theirs.includes('th')) return true;
+    const name = chatPartnerName();
+    if (HANGUL.test(name)) return false;
+    if (THAI.test(name) || /[A-Za-z]/.test(name)) return true;
+    return theirs.length > 0 && !theirs.includes('ko');
   }
 
   function chatThaiOn() {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.2
+// @version      1.23.3
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4409,6 +4409,46 @@
   // 물음표로 끝난 말에 묻는 꼴이 아닌 용어집 값을 쓰면 뜻이 바뀐다(밥먹었어요=กินข้าวแล้ว).
   const TH_QUESTION = /ไหม|มั้ย|ยัง|หรือ|เหรอ|หรอ|ป่าว|อะไร|ไหน|เมื่อไ|ใคร|ทำไม|อย่างไร|ยังไง|กี่|เท่าไ/;
 
+  // 한국어로 쓴 태국 사람 별명. 구글 번역은 '푸이' 를 ปุย·ผู่อี๋·ผู่ยี่·Puyi(청 황제)로 그때그때
+  // 다르게 옮겼다. 로마자로 바꿔 넘기면 이름으로 알아보고(Pui → ปุย/ปุ้ย), 나온 표기를 하나로 맞춘다.
+  const CHAT_NAMES = [{ ko: '푸이|뿌이', latin: 'Pui', th: 'ปุ้ย', out: /Pui|ปุ้?ย(?!ฝ้าย|นุ่น)/gi }];
+  const CHAT_NAME_RES = CHAT_NAMES.map((n) => ({ ...n, re: new RegExp(`(^|[^가-힣])(?:${n.ko})`, 'g') }));
+
+  // 학년. 태국은 중·고를 ม.1~ม.6 으로 잇따라 센다(고1 = ม.4). 구글 번역은 '고등학교 1학년' 을
+  // มัธยมศึกษาปีที่ 1(중1), 홑 '1학년' 을 ประถมศึกษาปีที่ 1(초1)로 옮겼다. 태국 표기로 미리 바꿔
+  // 넘기면 그대로 둔다(내년에 ม.4으로? → ปีหน้า…ม.4). 홑 'N학년' 은 같은 말에 학교가 나올 때만.
+  function chatGradesToThai(s) {
+    const hi = (n) => `ม.${+n + 3}`;
+    // 줄인 꼴(고1·중2)은 앞이 낱말 경계일 때만 — '공부하고 1학년 때' 의 고는 학교가 아니다.
+    s = s
+      .replace(/고등학교\s*([1-3])\s*학년/g, (m, n) => hi(n))
+      .replace(/중학교\s*([1-3])\s*학년/g, 'ม.$1')
+      .replace(/초등학교\s*([1-6])\s*학년/g, 'ป.$1')
+      .replace(/(^|[^가-힣\d])고([1-3])(?:\s*학년)?(?!\d)/g, (m, p, n) => p + hi(n))
+      .replace(/(^|[^가-힣\d])중([1-3])(?:\s*학년)?(?!\d)/g, '$1ม.$2')
+      .replace(/(^|[^가-힣\d])초([1-6])(?:\s*학년)?(?!\d)/g, '$1ป.$2');
+    const school = /고등학|고딩/.test(s) ? 'hi' : /중학/.test(s) ? 'mid' : /초등학/.test(s) ? 'ele' : '';
+    if (school) {
+      s = s.replace(/(^|[^\d])([1-6])\s*학년/g, (m, p, n) =>
+        school === 'hi' ? (n <= 3 ? p + hi(n) : m) : school === 'mid' ? (n <= 3 ? `${p}ม.${n}` : m) : `${p}ป.${n}`
+      );
+    }
+    return s;
+  }
+
+  // 번역에 넘기기 전 한국어 손질 → [넘길 글, 번역 뒤 고칠 함수]
+  function chatPrepKorean(core) {
+    let s = chatGradesToThai(core);
+    const used = [];
+    for (const n of CHAT_NAME_RES) {
+      const t = s.replace(n.re, `$1${n.latin}`);
+      if (t !== s) used.push(n);
+      s = t;
+    }
+    const fix = (th) => used.reduce((acc, n) => acc.replace(n.out, n.th), th);
+    return [s, fix];
+  }
+
   // 한 줄 옮기기. 용어집에 통째로 있는 말(사람이 고른 자연스러운 태국어)이 먼저, 아니면 문장째
   // 무료 번역. 낱말을 이어 붙이는 용어집 조합은 대화에선 어색해서 번역이 안 될 때만 쓴다.
   async function chatLine(line, idx) {
@@ -4423,12 +4463,14 @@
     let via = '용어집';
     if (thai && asks && !TH_QUESTION.test(thai)) thai = '';
     if (!thai) {
-      thai = cacheGet(core, 'thc') || '';
+      const [src, fix] = chatPrepKorean(core);
+      thai = cacheGet(src, 'thc') || '';
       via = '번역';
+      if (!HANGUL.test(src)) thai = fix(src); // 이름·학년뿐인 말(푸이 → ปุ้ย)
       if (!thai) {
         try {
-          thai = (await freeRaw(core, 'ko', 'th', SEARCH_FREE_TIMEOUT)).trim();
-          if (thai && !HANGUL.test(thai)) cacheSet(core, 'thc', thai);
+          thai = fix((await freeRaw(src, 'ko', 'th', SEARCH_FREE_TIMEOUT)).trim());
+          if (thai && !HANGUL.test(thai)) cacheSet(src, 'thc', thai);
         } catch (e) {
           console.warn(`[${APP_NAME}] 메시지 번역 실패, 용어집으로 대신:`, e.message);
           const r = await koreanToThai(core);
@@ -4567,6 +4609,92 @@
 
   // ---- 받기: 태국어 말풍선 → 한국어 ----
 
+  // 대화에서 흔히 틀리게 쓰는 철자. 구글 번역이 엉뚱하게 읽는다(เอาใว้จะทำไห้สำเร็จ →
+  // '왜 성공할까요?', ฉันจะไห้ทำงาน → '나도 일할게'). 태국어에 없는 꼴만 고친다.
+  const TH_TYPOS = [
+    [/(?<!ร้อง)ไห้/g, 'ให้'], // ร้องไห้(울다)는 그대로
+    [/ใว้/g, 'ไว้'],
+    [/ใด้/g, 'ได้'],
+    [/ใม่/g, 'ไม่'],
+    [/ใหน/g, 'ไหน'],
+    [/ไส่/g, 'ใส่'],
+    [/ไคร(?!้)/g, 'ใคร'], // ตะไคร้(레몬그라스)는 그대로
+    [/ไกล้/g, 'ใกล้'],
+    [/เข้าไจ/g, 'เข้าใจ'],
+    [/ความผิดชอบ/g, 'ความรับผิดชอบ'],
+    [/([ก-ฮะาำเ-ไ])\1{2,}/g, '$1'], // 늘여 쓴 글자(มากกกก, ค่าาา)
+    [/(^|\s)เอาไว้จะ/g, '$1สักวันจะ'], // '두고 봐, (언젠가) 할 거야' — 그대로면 '유지하면…'
+  ];
+
+  // 말끝으로 본 말하는 사람의 성별. ค่ะ·คะ·ค่า 는 여자, ครับ·คับ 은 남자 말끝이다.
+  const TH_FEMALE = /ค่ะ|คะ(?!แนน|เน|น้า)|ค่า(?=[\s!.~?ๆ]|$)|ค้า|คร่ะ|จ้ะ/;
+  const TH_MALE = /ครับ|คับ|ครัช|คร้าบ/;
+  function thaiSpeakerGender(s) {
+    const f = TH_FEMALE.test(s);
+    const m = TH_MALE.test(s);
+    return f === m ? '' : f ? 'f' : 'm';
+  }
+
+  // 상대가 나를 부르는 พี่·พี่ชาย. 구글 번역은 형제·선생님·동생으로 오락가락한다(ค่ะพี่ชาย →
+  // '응, 형제', พี่ชายเก่งมากเลยค่ะ → '내 동생은 재능이…'). 한국 호칭을 태국 글자로 적은 말
+  // (โอปป้า·ฮยอง·ออนนี่)로 바꿔 넘기면 오빠·형·언니로 나온다. 나(설정한 말끝)와 상대(말끝)의
+  // 성별로 고른다. 누나(นูน่า)는 번역이 버려서 그대로 둔다. 남의 형제(พี่ชายของฉัน·พี่สาว·
+  // พี่น้อง·ลูกพี่ลูกน้อง)는 건드리지 않는다.
+  const CHAT_ADDRESS = { mf: 'โอปป้า', mm: 'ฮยอง', ff: 'ออนนี่' };
+  const TH_PHI =
+    /(?<!ลูก)พี่(?:ชาย(?!ของ|ฉัน|หนู|เค้า|เขา|คน|ที่|แท้))?(?!สาว|น้อง|เลี้ยง|ใหญ่|รอง|เขย|สะใภ้|ชาย|ๆ)/g;
+
+  // 태국 학년 ม.1~ม.6 은 중1~고3. 번역은 ม.5 를 '마타욤 5'·'5학년'(초등)으로 옮긴다.
+  // 풀어 쓰면(มัธยมปลายปีที่ 2) '고등학교 2학년' 이 된다. 주소의 ม.(หมู่ 마을)는 그대로.
+  function thaiGrades(s) {
+    return s.replace(/ม\.\s?([1-6])(?!\d)(?!\s*(?:ต\.|ตำบล|อ\.|ซ\.))/g, (m, n) =>
+      n <= 3 ? `มัธยมต้นปีที่ ${n}` : `มัธยมปลายปีที่ ${n - 3}`
+    );
+  }
+
+  // 번역에 넘기기 전 태국어 손질. mine = 내가 보낸 말풍선(되옮김 확인용)이면 호칭은 두고,
+  // partner = 상대 성별('f'|'m'|'') — 이 말에 말끝이 없을 때 대화방 전체에서 본 것.
+  function chatPrepThai(src, mine, partner) {
+    let s = TH_TYPOS.reduce((acc, [re, to]) => acc.replace(re, to), src);
+    s = thaiGrades(s);
+    // ทุน 은 '자본' 으로 옮겨진다. 공부 얘기 속이면 장학금(ทุนการศึกษา).
+    if (/เรียน|มหาลัย|มหาวิทยาลัย|สอบ/.test(s)) {
+      s = s.replace(/(?<!ลง|ต้น|ขาด|เงิน|กอง)ทุน(?!การ|ทรัพย์|นิยม|ส่วน|เดิม|สำรอง|จด|ประกัน|หมุน)/g, 'ทุนการศึกษา');
+    }
+    if (!mine) {
+      const me = cfg.chatParticle === 'ครับ' ? 'm' : cfg.chatParticle === 'ค่ะ' ? 'f' : '';
+      const word = CHAT_ADDRESS[me + (thaiSpeakerGender(s) || partner)];
+      if (word) s = s.replace(TH_PHI, word);
+    }
+    return s;
+  }
+
+  // 대답 한마디. 번역은 ค่า 를 '요금', ค้า 를 '거래' 로 옮긴다.
+  const TH_SHORT_REPLY = /^(ค่ะ|ค่า|ค้า|คร่ะ|ครับ|คับ|ครัช|คร้าบ)[\s!.~ๆ]*$/;
+
+  function chatFixKorean(ko, th) {
+    if (/^(ค่ะ|ค่า|ครับ|คับ)/.test(th)) ko = ko.replace(/^응(?=[,.!\s]|$)/, '네'); // 존댓말 대답
+    return ko.replace(/것이다(?=[.!?…\s]|$)/g, '거예요'); // '노력할 것이다' — 대화에 안 맞는 글말
+  }
+
+  function chatBubbleMine(d, lr) {
+    const r = d.getBoundingClientRect();
+    return r.left - lr.left > lr.right - r.right;
+  }
+
+  // 상대 성별 — 대화방에서 상대가 쓴 말끝을 센다.
+  function chatPartnerGender(log, lr) {
+    let f = 0;
+    let m = 0;
+    for (const d of chatBubbles(log)) {
+      if (chatBubbleMine(d, lr)) continue;
+      const g = thaiSpeakerGender(bubbleText(d));
+      if (g === 'f') f++;
+      else if (g === 'm') m++;
+    }
+    return f > m ? 'f' : m > f ? 'm' : '';
+  }
+
   function attachKorean(d, src, ko) {
     if (!d.isConnected || bubbleText(d) !== src) return;
     let box = d.querySelector(':scope > .lzk-msgko');
@@ -4600,9 +4728,17 @@
     if (!todo.length) return;
     todo.forEach(([d]) => chatPending.add(d));
     try {
-      const kos = await translateToKorean(todo.map(([, s]) => s));
+      const log = document.querySelector('[role="main"] [role="log"]');
+      const lr = log ? log.getBoundingClientRect() : null;
+      const partner = log ? chatPartnerGender(log, lr) : '';
+      const prepped = todo.map(([d, src]) => chatPrepThai(src, lr ? chatBubbleMine(d, lr) : false, partner));
+      const ask = prepped.filter((s) => !TH_SHORT_REPLY.test(s));
+      const got = ask.length ? await translateToKorean(ask) : [];
+      const kos = new Map(ask.map((s, i) => [s, got[i]]));
       todo.forEach(([d, src], i) => {
-        if (kos[i] && !THAI.test(kos[i])) attachKorean(d, src, kos[i]);
+        const s = prepped[i];
+        const ko = TH_SHORT_REPLY.test(s) ? '네' : kos.get(s) && chatFixKorean(kos.get(s), s);
+        if (ko && !THAI.test(ko)) attachKorean(d, src, ko);
         else chatFailed.set(d, { src, at: Date.now() });
       });
     } catch (e) {

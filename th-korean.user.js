@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.3
+// @version      1.23.4
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1228,6 +1228,11 @@
   // '식중독 같아요' 의 '같아요', '200바트에 해 주세요' 의 '해', '짐 좀 들어 주세요' 의 '좀' 도 뺀다.
   // '안·못 + ~요' 에서 용어집과 뜻이 다른 동사(가요=เพลงเกาหลี).
   const VERB_YO = { 가요: 'ไป', 와요: 'มา' };
+  // 반말의 존댓말 꼴(매워 → 매워요, 얼마야 → 얼마예요) 중 용어집(또는 VERB_YO)에 있는 것.
+  function banmalYo(text, idx) {
+    const forms = [text + '요', ...(text.endsWith('야') ? [text.slice(0, -1) + '예요', text.slice(0, -1) + '이에요'] : [])];
+    return forms.find((k) => VERB_YO[k] || idx.has(squash(k))) || '';
+  }
   const VERB_YO_AFTER = { 가요: 'ไป', 타요: 'นั่ง' };
   const WORD_NOISE = new Set(['하는', '하기', '할', '부탁', '합니다', '해주세요', '해줘요', '이', '그', '저', '이거', '그거', '저거', '이것', '그것', '저것', '이건', '알려', '같아요', '해', '좀', '줘', '해도', '잘']);
 
@@ -1574,25 +1579,31 @@
         const th = nativeCount(t.text, nx.text, idx);
         if (th) relax(i, i + 2, 1, [{ ko: t.text + ' ' + nx.text, th, kind: 'glossary', word: t.word, mod: true }]);
       }
+      // 안·못 뒤의 반말('안 매워·안 추워·못 가')은 존댓말 꼴('매워요·가요')로 읽는다. 아래 두 규칙이
+      // '~요' 로만 풀이말을 알아봐서 반말은 '안' 을 못 읽고 부정이 빠졌다('기분이 안 좋아' → ดี).
+      const nxPos = nx && nx.hangul && nx.word === t.word + 1 && lastOfWord(i + 1);
+      const nxYo =
+        nxPos && (t.text === '안' || t.text === '못') && firstOfWord(i) && lastOfWord(i)
+          ? /요$/.test(nx.text)
+            ? nx.text
+            : banmalYo(nx.text, idx)
+          : '';
       // 띄어 쓴 '안' + 꾸미는 말·풀이말('안 비싼', '안 무거운', '안 뜨거워요') → ไม่ + 그 말. 용어집의
       // 통째 항목('안새는' กันรั่ว, '안 매운' ไม่เผ็ด)이 비용 1 로 먼저 이긴다. 뒷말이 명사면('안 방') 안 한다.
+      const adj = nxYo && nxYo !== nx.text ? nxYo : nx && nx.text;
       if (
-        t.text === '안' && firstOfWord(i) && lastOfWord(i) && nx && nx.hangul && nx.word === t.word + 1 &&
-        lastOfWord(i + 1) && glossaryMods().has(squash(nx.text)) &&
-        (/(요|게|음|함)$/.test(nx.text) || (nx.text.charCodeAt(nx.text.length - 1) - 0xac00) % 28 === 4)
+        t.text === '안' && firstOfWord(i) && lastOfWord(i) && nxPos && glossaryMods().has(squash(adj)) &&
+        (/(요|게|음|함)$/.test(adj) || (adj.charCodeAt(adj.length - 1) - 0xac00) % 28 === 4)
       ) {
-        const th = idx.get(squash(nx.text));
+        const th = idx.get(squash(adj));
         if (th && !/^(ไม่|กัน)/.test(th)) {
           relax(i, i + 2, 1.5, [{ ko: t.text + ' ' + nx.text, th: 'ไม่' + th, kind: 'glossary', word: t.word, mod: true }]);
         }
       }
       // 띄어 쓴 '안·못' + '~요' 풀이말(동사). '안 먹어요' → ไม่กิน, '못 와요' → มาไม่ได้.
       // 용어집의 못(ตะปู)은 '못 박기' 같은 쇼핑 말이라 뒤에 '~요' 가 올 때만 이렇게 읽는다.
-      if (
-        (t.text === '안' || t.text === '못') && firstOfWord(i) && lastOfWord(i) && nx && nx.hangul &&
-        nx.word === t.word + 1 && lastOfWord(i + 1) && /요$/.test(nx.text) && !glossaryMods().has(squash(nx.text))
-      ) {
-        const th = VERB_YO[nx.text] || idx.get(squash(nx.text));
+      if (nxYo && !glossaryMods().has(squash(nxYo))) {
+        const th = VERB_YO[nxYo] || idx.get(squash(nxYo));
         if (th && !/^(ไม่|กัน)/.test(th) && !/ไม่ได้$/.test(th)) {
           // 지난 일('먹었어요' → กินแล้ว)은 ไม่ได้ + 동사: '안 먹었어요' → ไม่ได้กิน.
           const past = th.endsWith('แล้ว') && th.length > 4 ? th.slice(0, -4) : '';

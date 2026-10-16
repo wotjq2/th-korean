@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.6
+// @version      1.23.7
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4419,7 +4419,10 @@
     const p = cfg.chatParticle;
     if (!p) return th;
     th = th.replace(TH_PARTICLE_END, '');
-    if (!/(요|니다|니까|세요|십시오|죠)[\s?!.~？！]*$/.test(ko)) return th;
+    // '~니까' 는 받침 ㅂ 다음(갑니까·입니까·습니까)만 존댓말이다. '그러니까·아프니까' 는 반말.
+    const m = ko.match(/(.)니까[\s?!.~？！]*$/);
+    const formalAsk = !!m && (m[1] === '습' || (m[1] >= '가' && m[1] <= '힣' && (m[1].charCodeAt(0) - 0xac00) % 28 === 17));
+    if (!formalAsk && !/(요|니다|세요|십시오|죠)[\s?!.~？！]*$/.test(ko)) return th;
     const word = p === 'ค่ะ' && /[?？]\s*$/.test(ko) ? 'คะ' : p;
     return th.replace(/([\s?!.？！]*)$/, `${word}$1`);
   }
@@ -4469,8 +4472,16 @@
 
   // 통째 항목이 반말·존댓말 한쪽만 있어도 찾는다: '잘 지냈어' ↔ '잘 지냈어요', '얼마야' ↔ '얼마예요',
   // '오랜만이야' ↔ '오랜만이에요'. 한 글자 반말('가' → 가요=เพลงเกาหลี)에는 요를 붙이지 않는다.
+  // 혼자 보낸 맞장구·감탄사. 용어집에선 쇼핑 뜻이 이기거나(진짜=ของแท้) 낱말을 깨뜨려(나도X 식물 이름,
+  // 아마씨) 넣지 못한 말. 줄 전체가 이 말일 때만 쓴다.
+  const CHAT_WORDS = {
+    응: 'อืม', 웅: 'อืม', 엉: 'อืม', 어: 'อืม', 와: 'ว้าว', 우와: 'ว้าว', 에이: 'โธ่',
+    진짜: 'จริงเหรอ', 진짜로: 'จริงๆ', 정말로: 'จริงๆ', 나도: 'ฉันก็เหมือนกัน', 아마: 'อาจจะ', 됐어: 'พอแล้ว',
+  };
+
   function chatWhole(bare, idx) {
     const k = squash(bare);
+    if (CHAT_WORDS[k]) return CHAT_WORDS[k];
     if (idx.has(k)) return idx.get(k);
     const forms = [];
     if (k.endsWith('요')) {

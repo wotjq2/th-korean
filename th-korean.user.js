@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.5
+// @version      1.23.6
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1648,7 +1648,11 @@
       }
       // 반말('피곤해·배고파·멀어·얼마야')은 용어집의 존댓말 항목('피곤해요·얼마예요')이 있으면 그 뜻으로 읽는다.
       if (firstOfWord(i) && lastOfWord(i) && t.text.length >= 2 && !idx.has(squash(t.text))) {
-        const yo = [t.text + '요', ...(t.text.endsWith('야') ? [t.text.slice(0, -1) + '예요', t.text.slice(0, -1) + '이에요'] : [])]
+        const yo = [
+          t.text + '요',
+          ...(t.text.endsWith('야') ? [t.text.slice(0, -1) + '예요', t.text.slice(0, -1) + '이에요'] : []),
+          ...(t.text.endsWith('이야') ? [t.text.slice(0, -2) + '이에요'] : []), // 오랜만이야 → 오랜만이에요
+        ]
           .find((k) => idx.has(squash(k)));
         if (yo) {
           relax(i, i + 1, 1, [{ ko: t.text, th: idx.get(squash(yo)), kind: 'glossary', word: t.word, mod: glossaryMods().has(squash(yo)) }]);
@@ -4463,6 +4467,25 @@
     return [s, fix];
   }
 
+  // 통째 항목이 반말·존댓말 한쪽만 있어도 찾는다: '잘 지냈어' ↔ '잘 지냈어요', '얼마야' ↔ '얼마예요',
+  // '오랜만이야' ↔ '오랜만이에요'. 한 글자 반말('가' → 가요=เพลงเกาหลี)에는 요를 붙이지 않는다.
+  function chatWhole(bare, idx) {
+    const k = squash(bare);
+    if (idx.has(k)) return idx.get(k);
+    const forms = [];
+    if (k.endsWith('요')) {
+      if (k.endsWith('이에요')) forms.push(k.slice(0, -3) + '이야');
+      else if (k.endsWith('예요')) forms.push(k.slice(0, -2) + '야');
+      forms.push(k.slice(0, -1));
+    } else if (k.length >= 2) {
+      if (k.endsWith('이야')) forms.push(k.slice(0, -2) + '이에요');
+      else if (k.endsWith('야')) forms.push(k.slice(0, -1) + '예요');
+      forms.push(k + '요');
+    }
+    const hit = forms.find((f) => f.length >= 2 && idx.has(f));
+    return hit ? idx.get(hit) : '';
+  }
+
   // 한 줄 옮기기. 용어집에 통째로 있는 말(사람이 고른 자연스러운 태국어)이 먼저, 아니면 문장째
   // 무료 번역. 낱말을 이어 붙이는 용어집 조합은 대화에선 어색해서 번역이 안 될 때만 쓴다.
   async function chatLine(line, idx) {
@@ -4473,7 +4496,7 @@
 
     const asks = /[?？]\s*$/.test(core);
     const bare = core.replace(/[\s.!?~？！]+$/, '');
-    let thai = idx.get(squash(bare)) || '';
+    let thai = chatWhole(bare, idx);
     let via = '용어집';
     if (thai && asks && !TH_QUESTION.test(thai)) thai = '';
     if (!thai) {

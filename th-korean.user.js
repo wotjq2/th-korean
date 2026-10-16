@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.13
+// @version      1.23.14
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4500,6 +4500,15 @@
       '오케이 고마워 고마워요 감사합니다 미안 미안해 미안해요 괜찮아 괜찮아요 진짜 정말 헐 와 대박').split(' ')
   );
 
+  // 부르는 말. 줄 앞이나 끝에 오면 떼어 따로 옮긴다: '자기야 일어났어' → ที่รัก ตื่นหรือยัง,
+  // '잘 자 자기야' → ฝันดี ที่รัก. 줄 앞의 엄마·오빠 는 '아빠 번호도 적어 둘게요'(아빠의) 일 수 있어
+  // 쉼표가 붙었을 때만(엄마, 나 늦어) 뗀다. 홑 '자기' 는 '자기 전에'(잠자기) 와 겹쳐 넣지 않는다.
+  const CHAT_CALLS = {
+    자기야: 'ที่รัก', 여보: 'ที่รัก', 여보야: 'ที่รัก', 애기야: 'ที่รัก', 오빠: 'พี่', 언니: 'พี่', 누나: 'พี่',
+    형: 'พี่', 형님: 'พี่', 엄마: 'แม่', 아빠: 'พ่อ',
+  };
+  const CHAT_CALLS_HEAD = /^(자기야|여보야?|애기야)[\s.!?~,？！]*$|^[가-힣]+[,!~]+$/;
+
   function chatWhole(bare, idx, ok = () => true) {
     const get = (k) => (idx.has(k) && ok(idx.get(k)) ? idx.get(k) : '');
     const look = (k) => {
@@ -4568,6 +4577,8 @@
   // 물음표로 끝난 말에 묻는 꼴이 아닌 값은 쓰지 않는다(밥먹었어요=กินข้าวแล้ว).
   function chatFromGlossary(core, idx) {
     const one = (s) => {
+      const call = CHAT_CALLS[s.replace(/[\s.!?~,？！]+$/, '')]; // '고마워 오빠' 의 오빠 = พี่ (พี่ชาย 아님)
+      if (call) return call;
       const asks = /[?？]\s*$/.test(s);
       const th = chatWhole(s.replace(/[\s.!?~,？！]+$/, ''), idx, (v) => !asks || TH_QUESTION.test(v));
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
@@ -4582,6 +4593,17 @@
       const a = one(lead[1]);
       const b = a && one(lead[2]);
       if (b) return `${a} ${b}`;
+    }
+    const words = core.split(/\s+/);
+    if (words.length >= 2) {
+      const call = (w) => CHAT_CALLS[w.replace(/[\s.!?~,？！]+$/, '')];
+      const head = CHAT_CALLS_HEAD.test(words[0]) && call(words[0]);
+      const rest = head && chatFromGlossary(words.slice(1).join(' '), idx);
+      if (rest) return `${head} ${rest}`;
+      const end = call(words[words.length - 1]);
+      const q = /[?？]\s*$/.test(core) ? '?' : '';
+      const front = end && chatFromGlossary(words.slice(0, -1).join(' ') + q, idx);
+      if (front) return `${front} ${end}`;
     }
     const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
     if (parts.length < 2) return '';

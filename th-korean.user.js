@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.7
+// @version      1.23.8
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4410,6 +4410,8 @@
     if (/^ㅋ+$/.test(run)) return '5'.repeat(Math.max(3, run.length));
     return idx.get(run) || idx.get(run.slice(0, 2)) || '';
   }
+  // 이모지·이모티콘(^^ ;; ♡). 붙어 있으면 '잘 자 😊' 가 통째 항목 '잘자' 와 안 맞는다 — 떼어 찾고 끝에 그대로 붙인다.
+  const EMOJI_RUN = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|[‍️\u{1f3fb}-\u{1f3ff}])+|\^[_\-.]?\^+|;{2,}|[♡♥]+/gu;
 
   // 태국어 존댓말 끝(ครับ/ค่ะ). 말하는 사람의 성별로 갈린다. 구글 번역은 성별을 몰라 존댓말
   // 물음에 คะ(여자 말)를 붙이곤 한다 — 설정이 있으면 번역이 붙인 끝말은 떼고, 한국어를
@@ -4501,8 +4503,9 @@
   // 무료 번역. 낱말을 이어 붙이는 용어집 조합은 대화에선 어색해서 번역이 안 될 때만 쓴다.
   async function chatLine(line, idx) {
     const jamo = line.match(JAMO_RUN) || [];
-    const core = line.replace(JAMO_RUN, ' ').replace(/\s+/g, ' ').trim();
-    const tail = jamo.map((r) => jamoToThai(r, idx)).filter(Boolean).join(' ');
+    const emoji = line.match(EMOJI_RUN) || [];
+    const core = line.replace(JAMO_RUN, ' ').replace(EMOJI_RUN, ' ').replace(/\s+/g, ' ').trim();
+    const tail = [...jamo.map((r) => jamoToThai(r, idx)).filter(Boolean), ...emoji].join(' ');
     if (!core || !HANGUL.test(core)) return { thai: [core, tail].filter(Boolean).join(' '), via: '용어집' };
 
     const asks = /[?？]\s*$/.test(core);

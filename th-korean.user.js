@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.10
+// @version      1.23.11
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4421,11 +4421,18 @@
     const p = cfg.chatParticle;
     if (!p) return th;
     th = th.replace(TH_PARTICLE_END, '');
+    // 값·번역 가운데 박힌 끝말도 설정한 성별로 맞춘다: 안녕히계세요=สวัสดีครับ ไว้คุยกัน 이 여성 설정이면
+    // สวัสดีค่ะ. สครับ(스크럽)·คะแนน(점수)은 낱말이라 그대로 둔다. 반말에도 적용.
+    // 두 끝말이 다 들어 있으면 끝말 자체를 말하는 문장(카랑 크랍 차이가 뭐야)이라 건드리지 않는다.
+    const male = /(?<!ส)ครับ/.test(th);
+    const female = /ค่ะ|คะ(?=[\s?!.？！]|$)/.test(th);
+    if (p === 'ค่ะ' && male && !female) th = th.replace(/(?<!ส)ครับ(?:ผม)?/g, 'ค่ะ').replace(/นะค่ะ/g, 'นะคะ');
+    else if (p === 'ครับ' && female && !male) th = th.replace(/ค่ะ|คะ(?=[\s?!.？！]|$)/g, 'ครับ');
     // '~니까' 는 받침 ㅂ 다음(갑니까·입니까·습니까)만 존댓말이다. '그러니까·아프니까' 는 반말.
     const m = ko.match(/(.)니까[\s?!.~？！]*$/);
     const formalAsk = !!m && (m[1] === '습' || (m[1] >= '가' && m[1] <= '힣' && (m[1].charCodeAt(0) - 0xac00) % 28 === 17));
     if (!formalAsk && !/(요|니다|세요|십시오|죠)[\s?!.~？！]*$/.test(ko)) return th;
-    const word = p === 'ค่ะ' && /[?？]\s*$/.test(ko) ? 'คะ' : p;
+    const word = p === 'ค่ะ' && (/[?？]\s*$/.test(ko) || /นะ[\s?!.？！]*$/.test(th)) ? 'คะ' : p; // นะคะ
     return th.replace(/([\s?!.？！]*)$/, `${word}$1`);
   }
 

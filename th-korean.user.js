@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.8
+// @version      1.23.9
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4482,21 +4482,32 @@
   };
 
   function chatWhole(bare, idx) {
+    const look = (k) => {
+      if (idx.has(k)) return idx.get(k);
+      const forms = [];
+      if (k.endsWith('요')) {
+        if (k.endsWith('이에요')) forms.push(k.slice(0, -3) + '이야');
+        else if (k.endsWith('예요')) forms.push(k.slice(0, -2) + '야');
+        forms.push(k.slice(0, -1));
+      } else if (k.length >= 2) {
+        if (k.endsWith('이야')) forms.push(k.slice(0, -2) + '이에요');
+        else if (k.endsWith('야')) forms.push(k.slice(0, -1) + '예요');
+        forms.push(k + '요');
+      }
+      const hit = forms.find((f) => f.length >= 2 && idx.has(f));
+      return hit ? idx.get(hit) : '';
+    };
     const k = squash(bare);
     if (CHAT_WORDS[k]) return CHAT_WORDS[k];
-    if (idx.has(k)) return idx.get(k);
-    const forms = [];
-    if (k.endsWith('요')) {
-      if (k.endsWith('이에요')) forms.push(k.slice(0, -3) + '이야');
-      else if (k.endsWith('예요')) forms.push(k.slice(0, -2) + '야');
-      forms.push(k.slice(0, -1));
-    } else if (k.length >= 2) {
-      if (k.endsWith('이야')) forms.push(k.slice(0, -2) + '이에요');
-      else if (k.endsWith('야')) forms.push(k.slice(0, -1) + '예요');
-      forms.push(k + '요');
-    }
-    const hit = forms.find((f) => f.length >= 2 && idx.has(f));
-    return hit ? idx.get(hit) : '';
+    const th = look(k);
+    if (th) return th;
+    // '밥은 먹었어'·'차가 막혀'·'오늘은 쉬는 날이야' — 끝 낱말이 아닌 데의 은·는·이·가·을·를 을 떼고 한 번 더.
+    const words = bare.split(/\s+/);
+    if (words.length < 2) return '';
+    const stripped = words
+      .map((w, i) => (i < words.length - 1 && w.length >= 2 ? w.replace(/(은|는|이|가|을|를)$/, '') : w))
+      .join('');
+    return stripped !== k ? look(stripped) : '';
   }
 
   // 한 줄 옮기기. 용어집에 통째로 있는 말(사람이 고른 자연스러운 태국어)이 먼저, 아니면 문장째

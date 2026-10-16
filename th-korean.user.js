@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.9
+// @version      1.23.10
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4481,9 +4481,12 @@
     진짜: 'จริงเหรอ', 진짜로: 'จริงๆ', 정말로: 'จริงๆ', 나도: 'ฉันก็เหมือนกัน', 아마: 'อาจจะ', 됐어: 'พอแล้ว',
   };
 
-  function chatWhole(bare, idx) {
+  // ok: 값 거르개 — 물음표로 끝난 줄이면 묻는 꼴 값만 받는다('밥 먹었어요?' 는 밥먹었어요=กินข้าวแล้ว 를
+  // 건너뛰고 밥먹었어=กินข้าวยัง 을 쓴다).
+  function chatWhole(bare, idx, ok = () => true) {
+    const get = (k) => (idx.has(k) && ok(idx.get(k)) ? idx.get(k) : '');
     const look = (k) => {
-      if (idx.has(k)) return idx.get(k);
+      if (get(k)) return get(k);
       const forms = [];
       if (k.endsWith('요')) {
         if (k.endsWith('이에요')) forms.push(k.slice(0, -3) + '이야');
@@ -4494,11 +4497,11 @@
         else if (k.endsWith('야')) forms.push(k.slice(0, -1) + '예요');
         forms.push(k + '요');
       }
-      const hit = forms.find((f) => f.length >= 2 && idx.has(f));
-      return hit ? idx.get(hit) : '';
+      const hit = forms.find((f) => f.length >= 2 && get(f));
+      return hit ? get(hit) : '';
     };
     const k = squash(bare);
-    if (CHAT_WORDS[k]) return CHAT_WORDS[k];
+    if (CHAT_WORDS[k] && ok(CHAT_WORDS[k])) return CHAT_WORDS[k];
     const th = look(k);
     if (th) return th;
     // '밥은 먹었어'·'차가 막혀'·'오늘은 쉬는 날이야' — 끝 낱말이 아닌 데의 은·는·이·가·을·를 을 떼고 한 번 더.
@@ -4519,11 +4522,8 @@
     const tail = [...jamo.map((r) => jamoToThai(r, idx)).filter(Boolean), ...emoji].join(' ');
     if (!core || !HANGUL.test(core)) return { thai: [core, tail].filter(Boolean).join(' '), via: '용어집' };
 
-    const asks = /[?？]\s*$/.test(core);
-    const bare = core.replace(/[\s.!?~？！]+$/, '');
-    let thai = chatWhole(bare, idx);
+    let thai = chatFromGlossary(core, idx);
     let via = '용어집';
-    if (thai && asks && !TH_QUESTION.test(thai)) thai = '';
     if (!thai) {
       const [src, fix] = chatPrepKorean(core);
       thai = cacheGet(src, 'thc') || '';
@@ -4540,10 +4540,27 @@
           via = r.via;
         }
       }
+      if (!thai) return { thai: '', via };
+      thai = addPoliteParticle(core, thai);
     }
-    if (!thai) return { thai: '', via };
-    thai = addPoliteParticle(core, thai);
     return { thai: tail ? `${thai} ${tail}` : thai, via };
+  }
+
+  // 용어집 통째 항목으로 한 줄을 옮긴다(끝말 ครับ 까지). 줄 전체가 없으면 문장부호(. ! ? , ~)로 나눈
+  // 조각이 모두 있을 때만 이어 붙인다: '고마워. 잘 자' → ขอบคุณ ฝันดี. 하나라도 없으면 '' (줄째 번역).
+  // 물음표로 끝난 말에 묻는 꼴이 아닌 값은 쓰지 않는다(밥먹었어요=กินข้าวแล้ว).
+  function chatFromGlossary(core, idx) {
+    const one = (s) => {
+      const asks = /[?？]\s*$/.test(s);
+      const th = chatWhole(s.replace(/[\s.!?~,？！]+$/, ''), idx, (v) => !asks || TH_QUESTION.test(v));
+      return th && addPoliteParticle(s, th);
+    };
+    const whole = one(core);
+    if (whole) return whole;
+    const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
+    if (parts.length < 2) return '';
+    const out = parts.map(one);
+    return out.every(Boolean) ? out.join(' ') : '';
   }
 
   async function chatKoreanToThai(text) {

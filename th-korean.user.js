@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.12
+// @version      1.23.13
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4489,11 +4489,17 @@
     // 혼자 쓴 대답. 네·예 = 태국어로는 끝말(ครับ/ค่ะ)이 곧 '네' — 설정한 성별로 바뀐다.
     // 가요(=เพลงเกาหลี K팝)·돼요(=ได้ไหม 묻는 꼴)·안돼요(=ใช้ไม่ได้ 고장) 는 쇼핑 뜻 대신 대답 뜻으로.
     네: 'ครับ', 예: 'ครับ', 응응: 'อืมๆ', 가요: 'ไป', 돼요: 'ได้', 돼: 'ได้', 안돼요: 'ไม่ได้', 안돼: 'ไม่ได้',
-    있어요: 'มี', 있어: 'มี',
+    있어요: 'มี', 있어: 'มี', 됐어요: 'พอแล้ว',
   };
 
   // ok: 값 거르개 — 물음표로 끝난 줄이면 묻는 꼴 값만 받는다('밥 먹었어요?' 는 밥먹었어요=กินข้าวแล้ว 를
   // 건너뛰고 밥먹었어=กินข้าวยัง 을 쓴다).
+  // 줄 맨 앞에 오는 대답말. 뒤 말과 나눠 찾는다(chatFromGlossary).
+  const CHAT_LEADS = new Set(
+    ('네 예 응 웅 엉 어 아니 아니요 아뇨 아니야 그래 그래요 좋아 좋아요 알았어 알겠어 알았어요 알겠어요 ' +
+      '오케이 고마워 고마워요 감사합니다 미안 미안해 미안해요 괜찮아 괜찮아요 진짜 정말 헐 와 대박').split(' ')
+  );
+
   function chatWhole(bare, idx, ok = () => true) {
     const get = (k) => (idx.has(k) && ok(idx.get(k)) ? idx.get(k) : '');
     const look = (k) => {
@@ -4569,6 +4575,14 @@
     };
     const whole = one(core);
     if (whole) return whole;
+    // '네 알겠어요'·'응 고마워'·'아니 괜찮아' — 앞의 대답말과 나머지를 따로 찾아 잇는다.
+    const lead = core.match(/^([^\s,.!~]+)[\s,.!~]+(.+)$/);
+    // 뒤가 '정말·진짜' 뿐이면 꾸밈말이라(감사합니다 정말 = 정말 감사합니다) 나누지 않는다.
+    if (lead && CHAT_LEADS.has(lead[1]) && !/^(정말|진짜)(로)?[\s.!?~？！]*$/.test(lead[2])) {
+      const a = one(lead[1]);
+      const b = a && one(lead[2]);
+      if (b) return `${a} ${b}`;
+    }
     const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
     if (parts.length < 2) return '';
     const out = parts.map(one);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.25
+// @version      1.23.26
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4445,6 +4445,21 @@
 
   // 물음표로 끝난 말에 묻는 꼴이 아닌 용어집 값을 쓰면 뜻이 바뀐다(밥먹었어요=กินข้าวแล้ว).
   const TH_QUESTION = /ไหม|มั้ย|ยัง|หรือ|เหรอ|หรอ|ป่าว|อะไร|ไหน|เมื่อไ|ใคร|ทำไม|อย่างไร|ยังไง|กี่|เท่าไ/;
+  // 물음표 붙은 평서 끝(피곤해?·갔어?·좋아요?)과 물음말(이게 있으면 '…ไหม' 를 붙이면 틀린다).
+  // ~세요?·~할게요? 는 부탁·약속이라 뺀다(미터기 켜 주세요?·나중에 전화할게요?).
+  const CHAT_ASK_END = /(어|아|야|해|워|와|려|돼|나|요)$/;
+  const CHAT_ASK_NOT = /(세요|게요|잖아|잖아요)$/;
+  const CHAT_ASK_WORD = /뭐|어디|언제|누구|누가|왜|몇|얼마|어떻게|어때|무슨|어느/;
+  // 평서 값 → 예/아니오 물음. 띄어 쓴 값(두 마디)·끝말(นะ·สิ…)·부탁·금지·부정으로 시작하는 값은 '' (번역에 맡김).
+  // past: 한국어가 ~었어(요)·~했어(요) 꼴이면 true — ไปหาหมอมา 같은 ~มา 값을 หรือยัง 으로 물을 때만.
+  function thaiAsk(v, past) {
+    if (!v || /\s/.test(v) || TH_QUESTION.test(v)) return '';
+    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|ไม่เป็นไร)$/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ|ไม่)/.test(v)) return '';
+    // ~แล้ว 은 한국어가 지난 일(~었어)일 때만 หรือยัง: 맞아요?=ใช่แล้ว 를 ใช่หรือยัง 으로 만들지 않는다.
+    if (v.endsWith('แล้ว')) return past && v.length > 4 ? v.slice(0, -4) + 'หรือยัง' : '';
+    if (past && /[ก-๙]มา$/.test(v)) return v + 'หรือยัง'; // 연기가 나요? = มีควันออกมาไหม (หรือยัง 아님)
+    return v.replace(/(.)มาก$/, '$1') + 'ไหม'; // สนุกมาก → สนุกไหม
+  }
 
   // 한국어로 쓴 태국 사람 별명. 구글 번역은 '푸이' 를 ปุย·ผู่อี๋·ผู่ยี่·Puyi(청 황제)로 그때그때
   // 다르게 옮겼다. 로마자로 바꿔 넘기면 이름으로 알아보고(Pui → ปุย/ปุ้ย), 나온 표기를 하나로 맞춘다.
@@ -4617,7 +4632,14 @@
       const call = CHAT_CALLS[s.replace(/[\s.!?~,？！]+$/, '')]; // '고마워 오빠' 의 오빠 = พี่ (พี่ชาย 아님)
       if (call) return call;
       const asks = /[?？]\s*$/.test(s);
-      const th = chatWhole(s.replace(/[\s.!?~,？！]+$/, ''), idx, (v) => !asks || TH_QUESTION.test(v));
+      const bare = s.replace(/[\s.!?~,？！]+$/, '');
+      let th = chatWhole(bare, idx, (v) => !asks || TH_QUESTION.test(v));
+      // '피곤해?'·'도착했어?' — 묻는 꼴 값이 없으면 평서 값을 묻는 꼴로(เหนื่อย → เหนื่อยไหม,
+      // ถึงแล้ว → ถึงหรือยัง). 뭐·어디 같은 물음말이 있거나 ~줘·~자 처럼 묻는 말이 아니면 번역에 맡긴다.
+      if (!th && asks && CHAT_ASK_END.test(bare) && !CHAT_ASK_NOT.test(bare) && !CHAT_ASK_WORD.test(bare)) {
+        const pre = bare.replace(/어요?$/, '').slice(-1).charCodeAt(0) - 0xac00;
+        th = thaiAsk(chatWhole(bare, idx), /어요?$/.test(bare) && pre >= 0 && pre % 28 === 20); // ㅆ 받침 + 어
+      }
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
       return th && addPoliteParticle(s, th);
     };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.18
+// @version      1.23.19
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -2082,6 +2082,8 @@
       margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(128,128,128,.35);
       font-size: .92em; opacity: .85; white-space: pre-wrap;
     }
+    .lzk-msgsrc { margin-top: 2px; font-size: .8em; opacity: .6; white-space: pre-wrap; }
+    .lzk-msgsrc:empty { display: none; }
     #lzk-seltip {
       position: absolute; z-index: 2147483002; border: none; border-radius: 6px;
       background: #0f146e; color: #fff; padding: 6px 10px; cursor: pointer;
@@ -4313,6 +4315,11 @@
   const CHAT_THREADS = 'chatThreads'; // { 대화방 id: true | false } — 칩으로 직접 고른 것만
   const CHAT_RETRY_MS = 60000;
   let chatThreads = GM_getValue(CHAT_THREADS, {});
+  // 보낸 말 기록 [{ ko, th }] — 내 말풍선 아래에 쓴 한국어 원문을 함께 보여 주려고(되옮김과 견주면
+  // 오번역이 바로 보인다). 최근 300개만.
+  const CHAT_SENT = 'chatSentLog';
+  let chatSentLog = GM_getValue(CHAT_SENT, []);
+  const sentKey = (th) => th.replace(/\s+/g, '');
   let chatChip = null;
   let chatBusy = false;
   let chatSending = false; // 우리가 흉내 낸 Enter 는 가로채지 않는다
@@ -4345,7 +4352,7 @@
     let s = '';
     for (const n of el.childNodes) {
       if (n.nodeType === 3) s += n.nodeValue;
-      else if (n.nodeType === 1 && !n.classList.contains('lzk-msgko')) s += n.textContent;
+      else if (n.nodeType === 1 && !n.classList.contains('lzk-msgko') && !n.classList.contains('lzk-msgsrc')) s += n.textContent;
     }
     return s.trim();
   }
@@ -4475,8 +4482,20 @@
       if (t !== s) used.push(n);
       s = t;
     }
-    const fix = (th) => used.reduce((acc, n) => acc.replace(n.out, n.th), th);
-    return [s, fix];
+    // 번역이 이름 앞에 붙인 พี่(손윗사람 호칭)는 뗀다 — ตอนนี้ฉันไม่โกรธพี่ปุ้ยแล้ว. 상대가 손아래다.
+    const fix = (th) =>
+      used.reduce((acc, n) => acc.replace(n.out, n.th).replace(new RegExp(`พี่(?:สาว)?\\s*(?=${n.th})`, 'g'), ''), th);
+    return [koBigNumbers(s), fix];
+  }
+
+  // '2억 15만명' 처럼 억·만·천을 섞어 쓴 수. 번역은 '200 ล้านคน' 으로 뒤를 버렸다 — 숫자로 바꿔 넘긴다.
+  function koBigNumbers(s) {
+    const num = (v) => v.toLocaleString('en-US');
+    return s
+      .replace(/(\d+)\s*([천백])\s*만/g, (m, a, u) => `${a * (u === '천' ? 1000 : 100)}만`) // 2천만 = 2000만
+      .replace(/(\d+)\s*억\s*(\d+)\s*만(?:\s*(\d+)\s*천)?/g, (m, a, b, c) => num(a * 1e8 + b * 1e4 + (c || 0) * 1e3))
+      .replace(/(\d+)\s*억\s*(\d+)\s*천/g, (m, a, c) => num(a * 1e8 + c * 1e7)) // 말로는 '3억 5천' = 3억 5천만
+      .replace(/(\d+)\s*만\s*(\d+)\s*천/g, (m, b, c) => num(b * 1e4 + c * 1e3));
   }
 
   // 통째 항목이 반말·존댓말 한쪽만 있어도 찾는다: '잘 지냈어' ↔ '잘 지냈어요', '얼마야' ↔ '얼마예요',
@@ -4697,6 +4716,8 @@
       if (composerText(ed) !== flatText(thai)) await setComposerText(ed, thai, 150); // 한 번 더, 천천히
       if (composerText(ed) !== flatText(thai)) throw new Error('입력칸에 태국어를 넣지 못했습니다');
       await chatSend(ed);
+      chatSentLog = [...chatSentLog.filter((e) => sentKey(e.th) !== sentKey(thai)), { ko: value, th: thai }].slice(-300);
+      GM_setValue(CHAT_SENT, chatSentLog);
       toast(`"${value}" → "${thai}"  (${via})`, 3500);
     } catch (e) {
       toast(`태국어로 바꾸지 못했습니다: ${e.message || e}\n입력칸 글자는 보내지 않았습니다.`, 5000);
@@ -4760,7 +4781,14 @@
     [/ไกล้/g, 'ใกล้'],
     [/เข้าไจ/g, 'เข้าใจ'],
     [/ความผิดชอบ/g, 'ความรับผิดชอบ'],
+    [/อึก(?!อัก|ๆ)/g, 'อีก'], // ขึ้นอึก → ขึ้นอีก ('다시')
+    [/(แบบ|อย่าง|เหมือน|ตอน|เรื่อง|อัน)นั่น/g, '$1นั้น'],
+    [/ถุก(?=ต้อง)/g, 'ถูก'],
     [/([ก-ฮะาำเ-ไ])\1{2,}/g, '$1'], // 늘여 쓴 글자(มากกกก, ค่าาา)
+    // 문장 가운데 띄어쓰기. 번역은 띄어 쓴 곳을 문장 끝으로 읽는다(จะไม่เกิดเหตุการณ์ แบบนั้นขึ้นอีก →
+    // '이벤트는 없습니다. 그렇죠.'). 뒤가 앞말에 붙는 말(แบบ·ขึ้น·อีก·ด้วย·กัน…)이면 붙인다.
+    // 앞이 말끝(ค่ะ·ครับ·นะ)이면 진짜 문장 끝이라 둔다.
+    [/(?<=[ก-๙])(?<!ค่ะ|คะ|ค่า|ครับ|คับ|นะ|จ้า|จ้ะ|ๆ)\s+(?=(?:แบบ|ขึ้น|อีก|ด้วย|กัน|ไหม|มั้ย|อยู่|ไว้|จัง|หน่อย|บ้าง|ของ|กับ|และ|หรือ|นั้น|นี้|ค่ะ|คะ|ครับ|นะ|จ้า)(?:[ก-๙]|[\s?!.~]|$))/g, ''],
     [/(^|\s)เอาไว้จะ/g, '$1สักวันจะ'], // '두고 봐, (언젠가) 할 거야' — 그대로면 '유지하면…'
   ];
 
@@ -5023,7 +5051,9 @@
     if (/^(ค่ะ|ค่า|ครับ|คับ)/.test(th)) ko = ko.replace(/^응(?=[,.!\s]|$)/, '네'); // 존댓말 대답
     return ko
       .replace(/것이다(?=[.!?…\s]|$)/g, '거예요') // '노력할 것이다' — 대화에 안 맞는 글말
-      .replace(/(^|\s)5{3,}\+?(?=[\s!.~]|$)/g, '$1ㅋㅋㅋ'); // 555 = 태국식 ㅋㅋㅋ
+      .replace(/(^|\s)5{3,}\+?(?=[\s!.~]|$)/g, '$1ㅋㅋㅋ') // 555 = 태국식 ㅋㅋㅋ
+      // 끝의 ครับ 을 'sir' 로 읽어 붙인 '선생님'(푸켓에서 돈을 너무 많이 잃었어요 선생님.)
+      .replace(/,?\s*선생님([.!?]*)$/, (m, p) => (/ครู|อาจารย์|หมอ/.test(th) ? m : p));
   }
 
   function chatBubbleMine(d, lr) {
@@ -5044,8 +5074,16 @@
     return f > m ? 'f' : m > f ? 'm' : '';
   }
 
-  function attachKorean(d, src, ko) {
+  function attachKorean(d, src, ko, orig = '') {
     if (!d.isConnected || bubbleText(d) !== src) return;
+    let o = d.querySelector(':scope > .lzk-msgsrc');
+    if (orig && !o) {
+      o = document.createElement('div');
+      o.className = 'lzk-msgsrc';
+      markNoTranslate(o);
+      d.appendChild(o);
+    }
+    if (o) o.textContent = orig ? `✎ ${orig}` : '';
     let box = d.querySelector(':scope > .lzk-msgko');
     if (!box) {
       box = document.createElement('div');
@@ -5080,15 +5118,26 @@
       const log = document.querySelector('[role="main"] [role="log"]');
       const lr = log ? log.getBoundingClientRect() : null;
       const partner = log ? chatPartnerGender(log, lr) : '';
-      const prepped = todo.map(([d, src]) => chatPrepThai(src, lr ? chatBubbleMine(d, lr) : false, partner));
+      const mine = todo.map(([d]) => (lr ? chatBubbleMine(d, lr) : false));
+      const prepped = todo.map(([d, src], i) => chatPrepThai(src, mine[i], partner));
       const whole = prepped.map(chatThaiWhole);
       const ask = prepped.filter((s, i) => !whole[i] && !TH_SHORT_REPLY.test(s));
-      const got = ask.length ? await translateToKorean(ask) : [];
-      const kos = new Map(ask.map((s, i) => [s, got[i]]));
+      // 여러 줄 말풍선은 줄마다 옮겨 줄을 살린다(묶어 옮기면 한 덩어리로 뭉친다).
+      const split = (s) => s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+      const lines = [...new Set(ask.flatMap(split))];
+      const got = lines.length ? await translateToKorean(lines) : [];
+      const byLine = new Map(lines.map((l, i) => [l, got[i]]));
+      const kos = new Map(
+        ask.map((s) => {
+          const ko = split(s).map((l) => byLine.get(l));
+          return [s, ko.every(Boolean) ? ko.join('\n') : null];
+        })
+      );
       todo.forEach(([d, src], i) => {
         const s = prepped[i];
         const ko = whole[i] || (TH_SHORT_REPLY.test(s) ? '네' : kos.get(s) && chatFixKorean(kos.get(s), s));
-        if (ko && !THAI.test(ko)) attachKorean(d, src, ko);
+        const orig = mine[i] ? chatSentLog.find((e) => sentKey(e.th) === sentKey(src))?.ko || '' : '';
+        if (ko && !THAI.test(ko)) attachKorean(d, src, ko, orig);
         else chatFailed.set(d, { src, at: Date.now() });
       });
     } catch (e) {

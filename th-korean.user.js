@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.26
+// @version      1.23.27
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4627,6 +4627,19 @@
   // 용어집 통째 항목으로 한 줄을 옮긴다(끝말 ครับ 까지). 줄 전체가 없으면 문장부호(. ! ? , ~)로 나눈
   // 조각이 모두 있을 때만 이어 붙인다: '고마워. 잘 자' → ขอบคุณ ฝันดี. 하나라도 없으면 '' (줄째 번역).
   // 물음표로 끝난 말에 묻는 꼴이 아닌 값은 쓰지 않는다(밥먹었어요=กินข้าวแล้ว).
+  // '커피 좋아해'·'벌레 싫어' — 앞말(용어집 한 항목, 끝 조사는 뗌) + 좋아해/싫어 → ชอบ/ไม่ชอบ + 그 말.
+  // 맨 '좋아' 는 '맛 좋아'·'머리 좋아'(좋다) 와 겹쳐 쓰지 않는다. 값이 두 마디·영문·묻는 꼴이면 '' (번역에 맡김).
+  const CHAT_LIKE = /^(.+?)\s+(좋아해|좋아해요|싫어|싫어요|싫어해|싫어해요)$/;
+  function chatLike(bare, idx) {
+    const m = bare.match(CHAT_LIKE);
+    if (!m) return '';
+    let n = squash(m[1]);
+    if (!idx.has(n) && /[이가을를은는도]$/.test(n)) n = n.slice(0, -1);
+    const v = n.length >= 2 ? idx.get(n) : '';
+    if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
+    return (m[2].startsWith('좋') ? 'ชอบ' : 'ไม่ชอบ') + v;
+  }
+
   function chatFromGlossary(core, idx) {
     const one = (s) => {
       const call = CHAT_CALLS[s.replace(/[\s.!?~,？！]+$/, '')]; // '고마워 오빠' 의 오빠 = พี่ (พี่ชาย 아님)
@@ -4634,6 +4647,10 @@
       const asks = /[?？]\s*$/.test(s);
       const bare = s.replace(/[\s.!?~,？！]+$/, '');
       let th = chatWhole(bare, idx, (v) => !asks || TH_QUESTION.test(v));
+      if (!th) {
+        const like = chatLike(bare, idx);
+        if (like) th = asks ? like + 'ไหม' : like;
+      }
       // '피곤해?'·'도착했어?' — 묻는 꼴 값이 없으면 평서 값을 묻는 꼴로(เหนื่อย → เหนื่อยไหม,
       // ถึงแล้ว → ถึงหรือยัง). 뭐·어디 같은 물음말이 있거나 ~줘·~자 처럼 묻는 말이 아니면 번역에 맡긴다.
       if (!th && asks && CHAT_ASK_END.test(bare) && !CHAT_ASK_NOT.test(bare) && !CHAT_ASK_WORD.test(bare)) {

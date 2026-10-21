@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.27
+// @version      1.23.28
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4627,17 +4627,48 @@
   // 용어집 통째 항목으로 한 줄을 옮긴다(끝말 ครับ 까지). 줄 전체가 없으면 문장부호(. ! ? , ~)로 나눈
   // 조각이 모두 있을 때만 이어 붙인다: '고마워. 잘 자' → ขอบคุณ ฝันดี. 하나라도 없으면 '' (줄째 번역).
   // 물음표로 끝난 말에 묻는 꼴이 아닌 값은 쓰지 않는다(밥먹었어요=กินข้าวแล้ว).
-  // '커피 좋아해'·'벌레 싫어' — 앞말(용어집 한 항목, 끝 조사는 뗌) + 좋아해/싫어 → ชอบ/ไม่ชอบ + 그 말.
-  // 맨 '좋아' 는 '맛 좋아'·'머리 좋아'(좋다) 와 겹쳐 쓰지 않는다. 값이 두 마디·영문·묻는 꼴이면 '' (번역에 맡김).
-  const CHAT_LIKE = /^(.+?)\s+(좋아해|좋아해요|싫어|싫어요|싫어해|싫어해요)$/;
-  function chatLike(bare, idx) {
-    const m = bare.match(CHAT_LIKE);
-    if (!m) return '';
-    let n = squash(m[1]);
-    if (!idx.has(n) && /[이가을를은는도]$/.test(n)) n = n.slice(0, -1);
-    const v = n.length >= 2 ? idx.get(n) : '';
-    if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
-    return (m[2].startsWith('좋') ? 'ชอบ' : 'ไม่ชอบ') + v;
+  // 앞말(용어집 한 항목, 끝 조사는 뗌) + 자주 쓰는 틀 → 태국어 틀에 그 말을 넣는다:
+  // '커피 좋아해' → ชอบกาแฟ, '물 있어' → มีน้ำ, '망고 먹고 싶어' → อยากกินมะม่วง, '우유 사 줘' → ซื้อนมให้หน่อย.
+  // 맨 '좋아' 는 '맛 좋아'(좋다)와 겹쳐 뺀다. 앞말이 두 글자 미만·~수/거/데 같은 매인 말·~아/어 로 끝나는
+  // 동사(보내 줘)면, 값이 두 마디·영문·묻는 꼴·ไม่ 로 시작하면 '' (번역에 맡김).
+  const CHAT_FRAMES = [
+    [/^(.+?)\s+(좋아해|좋아해요)$/, 'ชอบ#'],
+    [/^(.+?)\s+(싫어|싫어요|싫어해|싫어해요)$/, 'ไม่ชอบ#'],
+    [/^(.+?)\s+(있어|있어요)$/, 'มี#'],
+    [/^(.+?)\s+(없어|없어요)$/, 'ไม่มี#'],
+    [/^(.+?)\s+먹고\s*싶어요?$/, 'อยากกิน#'],
+    [/^(.+?)\s+마시고\s*싶어요?$/, 'อยากดื่ม#'],
+    [/^(.+?)\s+사고\s*싶어요?$/, 'อยากซื้อ#'],
+    [/^(.+?)\s+가고\s*싶어요?$/, 'อยากไป#'],
+    [/^(.+?)\s+사\s*(줘|주세요)$/, 'ซื้อ#ให้หน่อย'],
+    [/^(.+?)\s+(줘|주세요)$/, 'ขอ#หน่อย'],
+    [/^(.+?)\s+(먹었어|먹었어요)$/, 'กิน#แล้ว'],
+    [/^(.+?)\s+(샀어|샀어요)$/, 'ซื้อ#แล้ว'],
+  ];
+  // 한 글자 명사 중 틀에 넣어도 되는 것(차=ชา·눈·배·말 처럼 뜻이 갈리는 글자는 뺌).
+  const CHAT_FRAME_ONE = '물돈밥약옷펜빵껌꿀술쌀집표컵';
+  // 앞말이 이런 대명사·부사면 틀에 넣지 않는다(거기 있어? = 거기 있니, 방금 먹었어 = 막 먹었다).
+  const CHAT_FRAME_NOT = new Set(
+    ('거기 여기 저기 이거 그거 저거 지금 방금 아까 금방 빨리 천천히 너무 진짜 정말 많이 조금 다시 먼저 같이 ' +
+      '혼자 또 아직 벌써 오늘 내일 어제 매일 항상 자주 가끔 요즘 나중에 일찍 늦게 나도 너도 우리').split(' ')
+  );
+  function chatFrame(bare, idx) {
+    for (const [re, th] of CHAT_FRAMES) {
+      const m = bare.match(re);
+      if (!m) continue;
+      let n = squash(m[1]);
+      if (!idx.has(n) && /[이가을를은는도]$/.test(n)) n = n.slice(0, -1);
+      if (CHAT_FRAME_NOT.has(n) || (n.length < 2 && !CHAT_FRAME_ONE.includes(n))) return '';
+      if (/(게|러|[아어여워와해봐려])$/.test(n)) return ''; // 보내 줘·하러 = 동사
+      if (/(에|번|씩|만|부터|까지)$/.test(n)) return ''; // 이틀에 한 번 주세요·반 킬로만 주세요 = 명사 아님
+      // 할 수·먹을 거·간 데·본 적 — ㄹ/ㄴ 받침 뒤 매인 말은 명사가 아니다(쌀국수·매운탕 은 괜찮다).
+      const jong = n.length >= 2 ? (n.charCodeAt(n.length - 2) - 0xac00) % 28 : 0;
+      if (/(수|거|것|데|적|줄)$/.test(n) && (jong === 8 || jong === 4)) return '';
+      const v = idx.get(n);
+      if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
+      return th.replace('#', v);
+    }
+    return '';
   }
 
   function chatFromGlossary(core, idx) {
@@ -4647,15 +4678,15 @@
       const asks = /[?？]\s*$/.test(s);
       const bare = s.replace(/[\s.!?~,？！]+$/, '');
       let th = chatWhole(bare, idx, (v) => !asks || TH_QUESTION.test(v));
-      if (!th) {
-        const like = chatLike(bare, idx);
-        if (like) th = asks ? like + 'ไหม' : like;
-      }
       // '피곤해?'·'도착했어?' — 묻는 꼴 값이 없으면 평서 값을 묻는 꼴로(เหนื่อย → เหนื่อยไหม,
       // ถึงแล้ว → ถึงหรือยัง). 뭐·어디 같은 물음말이 있거나 ~줘·~자 처럼 묻는 말이 아니면 번역에 맡긴다.
-      if (!th && asks && CHAT_ASK_END.test(bare) && !CHAT_ASK_NOT.test(bare) && !CHAT_ASK_WORD.test(bare)) {
-        const pre = bare.replace(/어요?$/, '').slice(-1).charCodeAt(0) - 0xac00;
-        th = thaiAsk(chatWhole(bare, idx), /어요?$/.test(bare) && pre >= 0 && pre % 28 === 20); // ㅆ 받침 + 어
+      const askable = asks && CHAT_ASK_END.test(bare) && !CHAT_ASK_NOT.test(bare) && !CHAT_ASK_WORD.test(bare);
+      const pre = bare.replace(/어요?$/, '').slice(-1).charCodeAt(0) - 0xac00;
+      const past = /어요?$/.test(bare) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
+      if (!th && askable) th = thaiAsk(chatWhole(bare, idx), past);
+      if (!th) {
+        const fr = chatFrame(bare, idx);
+        if (fr) th = !asks ? fr : askable ? thaiAsk(fr, past) : ''; // 물 있어? → มีน้ำไหม, 밥 먹었어? → กินข้าวหรือยัง
       }
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
       return th && addPoliteParticle(s, th);

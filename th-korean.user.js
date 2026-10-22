@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.74
+// @version      1.23.75
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5152,7 +5152,7 @@
     if (marked) n = n.slice(0, -1);
     // 그림씨는 목적어를 안 받으니 조사 없는 앞말도 주어다: '경치 진짜 좋다' → ทิวทัศน์ดีจริงๆ.
     if (!marked && !CHAT_PRON[n] && !CHAT_SUBJ.has(n) && !CHAT_ADJ_END.test(s[2])) return '';
-    const sv = CHAT_PRON[n] || idx.get(n);
+    const sv = CHAT_PRON[n] || CHAT_TIME_TH[n] || idx.get(n); // 요즘 = ช่วงนี้(용어집 요즘 = มาแรง 은 '요즘 유행')
     if (!sv || /[\sA-Za-z0-9]/.test(sv) || TH_QUESTION.test(sv) || /^ไม่/.test(sv)) return '';
     const d = chatDegree(s[2], idx);
     if (d && sv === 'เธอ' && CHAT_LEAD_OBJ.test(d)) return d; // 너 진짜 보고 싶어 = คิดถึงเธอ(เธอ 가 목적어)
@@ -5323,7 +5323,7 @@
         const b = a && one(nd[2] + s.slice(bare.length));
         if (b) {
           const soft =
-            asks || TH_QUESTION.test(b) || /(กัน|หน่อย|นะ|เถอะ|ด้วย|สิ)(ครับ|ค่ะ|คะ)?$/.test(b) || /^(ช่วย|ขอ|อย่า)/.test(b) ||
+            asks || TH_QUESTION.test(b) || /(กัน|(?<!นิด)หน่อย|นะ|เถอะ|ด้วย|สิ)(ครับ|ค่ะ|คะ)?$/.test(b) || /^(ช่วย|ขอ|อย่า)/.test(b) ||
             /(자|까|래|게|겠다|겠어|야지|줘|주세요)요?$/.test(nd[2]);
           return a + (soft ? ' ' : 'แต่') + b;
         }

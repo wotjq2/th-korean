@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.78
+// @version      1.23.79
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4591,8 +4591,10 @@
       const hit = forms.find((f) => f.length >= 2 && get(f));
       if (hit) return get(hit);
       // '졸리다'·'보고 싶다' — 혼잣말 ~다 는 ~어 꼴 평서 값으로(졸려·보고싶어). 묻는 값(밥먹었어=กินข้าวยัง)은 안 쓴다.
-      if (k.length < 3 || !k.endsWith('다')) return '';
-      const f = koInfinitives(k.slice(0, -1)).find((x) => x.length >= 2 && get(x) && !TH_QUESTION.test(get(x)));
+      // '싸더라'·'맛있더라고' — 겪어 본 일 ~더라 도 같은 평서 값으로.
+      const dm = k.length >= 3 && k.match(/^(.+?)(더라고요|더라고|더라|다)$/);
+      if (!dm) return '';
+      const f = koInfinitives(dm[1]).find((x) => x.length >= 2 && get(x) && !TH_QUESTION.test(get(x)));
       return f ? get(f) : '';
     };
     const k = squash(bare);
@@ -4835,6 +4837,8 @@
     [/^(.+?)\s+낼게요?$/, 'เดี๋ยวจ่าย#เอง', 'pay'],
   ];
   const CHAT_PAY = /^(ค่า|ภาษี|เบี้ยประกัน|ดอกเบี้ย|หนี้|เงินประกัน|เงินผ่อน|เงินดาวน์)/;
+  // 틀 앞말 중 용어집 값(쇼핑 뜻)이 대화 뜻과 다른 것: 월세 = เช่ารายเดือน(월세 매물) → ค่าเช่า(월세 냈어?).
+  const CHAT_FRAME_TH = { 월세: 'ค่าเช่า', 집세: 'ค่าเช่าบ้าน' };
   const CHAT_FRAME_IDIOM = {
     go: new Set(),
     drink: new Set(),
@@ -4848,7 +4852,7 @@
   const CHAT_FRAME_TIME = /^(วัน|พรุ่งนี้|มะรืน|เมื่อวาน|เมื่อกี้|เมื่อก่อน|คืนนี้|เย็นนี้|เช้านี้|ตอน|สัปดาห์|อาทิตย์|เดือน|ปี|เดี๋ยว|ทุก|บ่อย|แล้ว)/;
   // 줄 앞 때 낱말(chatFromGlossary 가 떼고 나머지를 찾는다).
   const CHAT_TIME_LEAD =
-    /^(오늘\s*밤에?|오늘\s*저녁에?|내일\s*아침에?|내일\s*저녁에?|다음\s*주에?|이번\s*주말에?|오늘|내일|모레|지금|이따가?|주말에|저녁에|아침에|밤에|새벽에|낮에|점심에|요즘|어제|아까)\s+(\S.*)$/;
+    /^(이번\s*달에?|다음\s*달에?|지난\s*달에?|이번\s*주에?|지난\s*주에?|어젯밤에?|오늘\s*아침에?|내년에?|올해|작년에?|오늘\s*밤에?|오늘\s*저녁에?|내일\s*아침에?|내일\s*저녁에?|다음\s*주에?|이번\s*주말에?|오늘|내일|모레|지금|이따가?|주말에|저녁에|아침에|밤에|새벽에|낮에|점심에|요즘|어제|아까)\s+(\S.*)$/;
   const CHAT_TIME_PRED = /(어|아|야|해|워|와|려|여|자|게|까|지|다|네|요|줘|라|래|대|셔|봐|가|져|돼|나|내|파|싸|커|빠|뻐|퍼|때|춰|쳐|켜|짜|러|니|냐)$/;
   const CHAT_TIME_TH = {
     오늘: 'วันนี้', 내일: 'พรุ่งนี้', 모레: 'มะรืนนี้', 지금: 'ตอนนี้', 이따: 'เดี๋ยว', 이따가: 'เดี๋ยว',
@@ -4856,6 +4860,9 @@
     오늘밤: 'คืนนี้', 오늘밤에: 'คืนนี้', 오늘저녁: 'เย็นนี้', 오늘저녁에: 'เย็นนี้', 내일아침: 'พรุ่งนี้เช้า', 내일아침에: 'พรุ่งนี้เช้า',
     내일저녁: 'พรุ่งนี้เย็น', 내일저녁에: 'พรุ่งนี้เย็น', 다음주: 'อาทิตย์หน้า', 다음주에: 'อาทิตย์หน้า', 어제: 'เมื่อวาน', 아까: 'เมื่อกี้',
     밤에: 'ตอนกลางคืน', 새벽에: 'ตอนเช้ามืด', 낮에: 'ตอนกลางวัน', 점심에: 'ตอนเที่ยง', 요즘: 'ช่วงนี้',
+    이번달: 'เดือนนี้', 이번달에: 'เดือนนี้', 다음달: 'เดือนหน้า', 다음달에: 'เดือนหน้า', 지난달: 'เดือนที่แล้ว', 지난달에: 'เดือนที่แล้ว',
+    이번주: 'อาทิตย์นี้', 이번주에: 'อาทิตย์นี้', 지난주: 'อาทิตย์ที่แล้ว', 지난주에: 'อาทิตย์ที่แล้ว', 어젯밤: 'เมื่อคืน', 어젯밤에: 'เมื่อคืน',
+    오늘아침: 'เช้านี้', 오늘아침에: 'เช้านี้', 내년: 'ปีหน้า', 내년에: 'ปีหน้า', 올해: 'ปีนี้', 작년: 'ปีที่แล้ว', 작년에: 'ปีที่แล้ว',
   };
   // 값 앞의 때 말(대명사를 그 뒤에 넣는다: พรุ่งนี้เราไปทะเลกัน). 긴 것부터.
   const CHAT_TIME_TH_RE = new RegExp(
@@ -4923,7 +4930,7 @@
       // 할 수·먹을 거·간 데·본 적 — ㄹ/ㄴ 받침 뒤 매인 말은 명사가 아니다(쌀국수·매운탕 은 괜찮다).
       const jong = n.length >= 2 ? (n.charCodeAt(n.length - 2) - 0xac00) % 28 : 0;
       if (/(수|거|것|데|적|줄)$/.test(n) && (jong === 8 || jong === 4) && n !== '자전거') return '';
-      const v = idx.get(n);
+      const v = CHAT_FRAME_TH[n] || idx.get(n);
       if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
       // 앞말 값이 이미 문장(우산챙겨 = อย่าลืมพกร่มนะ)이면 명사가 아니다: '우산 챙겨 가' ≠ ไปอย่าลืม….
       if (/^(อย่า|ช่วย|ขอ(?!ง))/.test(v) || /(นะ|สิ|หน่อย|เถอะ|ด้วย|แล้ว|จัง)$/.test(v)) return '';
@@ -5075,10 +5082,17 @@
 
   // 들은 말: '사람 많이 다쳤대' → เขาว่า…, '내일 비 온대' → เขาว่าพรุ่งนี้ฝนตก. 물음표면 …เหรอ.
   // ~었대 → ~었어, ~ㄴ대·~는대 → 줄기, 그 밖(많대) → 줄기의 ~어 꼴로 평서 값을 찾는다. 침대·반대·20대 는 앞이 짧거나 한글이 아니라 건너뛴다.
+  // 들은 말의 말한 사람: '의사가 괜찮대' → หมอบอกว่าไม่เป็นไร(เขาว่าหมอโอเค 아님).
+  const CHAT_HEARSAY_WHO = {
+    의사: 'หมอ', 엄마: 'แม่', 아빠: 'พ่อ', 친구: 'เพื่อน', 선생님: 'ครู', 사장님: 'เจ้านาย', 언니: 'พี่สาว', 누나: 'พี่สาว',
+    오빠: 'พี่ชาย', 형: 'พี่ชาย', 동생: 'น้อง', 할머니: 'ยาย', 할아버지: 'ตา', 남편: 'สามี', 아내: 'ภรรยา', 걔: 'เขา',
+  };
   function chatHearsay(bare, idx, asks) {
     const m = bare.match(/^(.+?)대요?$/);
     if (!m || m[1].replace(/\s/g, '').length < 2) return '';
-    const body = m[1];
+    const sm = m[1].match(/^(\S+?)(?:이|가|는|은)\s+(\S.*)$/);
+    const who = sm && CHAT_HEARSAY_WHO[sm[1]];
+    const body = who ? sm[2] : m[1];
     const L = body.charCodeAt(body.length - 1) - 0xac00;
     if (L < 0 || L > 11171) return '';
     const jong = L % 28;
@@ -5090,8 +5104,9 @@
     for (const f of forms) {
       let v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
       if (!v) { const fr = chatFrame(f, idx); v = fr && !TH_QUESTION.test(fr) ? fr : ''; } // 거기 비싸대 → 틀
+      if (!v) v = chatDuration(f, false); // 30분 걸린대 → เขาว่าใช้เวลา 30 นาที
       if (!v || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) continue;
-      const s = 'เขาว่า' + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
+      const s = (who ? who + 'บอกว่า' : 'เขาว่า') + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
       return asks ? s + 'เหรอ' : s;
     }
     return '';
@@ -5155,7 +5170,7 @@
   const CHAT_ADJ_END =
     /(좋아|좋다|많아|많다|비싸|비싸다|싸다|맛있어|맛있다|매워|맵다|더워|덥다|추워|춥다|멀어|멀다|가까워|가깝다|커|크다|작아|작다|예뻐|예쁘다|깨끗해|깨끗하다|더러워|더럽다|시끄러워|시끄럽다|조용해|조용하다|재밌어|재밌다|어려워|어렵다|쉬워|쉽다|귀여워|귀엽다|멋있어|멋있다|아파|아프다|달아|달다|짜|짜다|빨라|빠르다|느려|느리다|넓어|넓다|좁아|좁다)$/;
   function chatDegree(bare, idx) {
-    if (!/(어|아|해|워|와|려|여|요|야|파|뻐|퍼|싸|빠|커|져|돼|나|다|네)$/.test(bare) || /(세요|줘|자|마)$/.test(bare)) return '';
+    if (!/(어|아|해|워|와|려|여|요|야|파|뻐|퍼|싸|빠|커|져|돼|나|다|네|라)$/.test(bare) || /(세요|줘|자|마)$/.test(bare)) return '';
     for (const [re, th] of CHAT_DEGREE) {
       const m = bare.match(re);
       if (!m) continue;
@@ -5176,7 +5191,8 @@
     const marked = !idx.has(n) && !CHAT_PRON[n] && /[이가은는도]$/.test(n);
     if (marked) n = n.slice(0, -1);
     // 그림씨는 목적어를 안 받으니 조사 없는 앞말도 주어다: '경치 진짜 좋다' → ทิวทัศน์ดีจริงๆ.
-    if (!marked && !CHAT_PRON[n] && !CHAT_SUBJ.has(n) && !CHAT_ADJ_END.test(s[2])) return '';
+    const adjTail = s[2].replace(/더라(고)?(요)?$/, '다'); // 망고 엄청 싸더라 → 싸다
+    if (!marked && !CHAT_PRON[n] && !CHAT_SUBJ.has(n) && !CHAT_SUBJ_TH[n] && !CHAT_ADJ_END.test(adjTail)) return '';
     // 요즘 = ช่วงนี้(용어집 요즘 = มาแรง 은 '요즘 유행'), 차 = รถ(용어집 차 = ชา), 일 = งาน(용어집 일 = วัน).
     const sv = CHAT_PRON[n] || CHAT_TIME_TH[n] || CHAT_SUBJ_TH[n] || idx.get(n);
     if (!sv || /[\sA-Za-z0-9]/.test(sv) || TH_QUESTION.test(sv) || /^ไม่/.test(sv)) return '';
@@ -5265,7 +5281,7 @@
       if (r && (CHAT_TIME_PRED.test(tm[2]) || TH_QUESTION.test(r))) {
         const key = squash(tm[1]);
         const t = CHAT_TIME_TH[key];
-        const past = key === '어제' || key === '아까';
+        const past = /^(어제|아까|지난달에?|지난주에?|어젯밤에?|작년에?)$/.test(key);
         if (/^เดี๋ยว/.test(r)) return past ? '' : r.replace(/^เดี๋ยว/, t);
         if (CHAT_FRAME_TIME.test(r)) return '';
         if (!past) return t + r;
@@ -5367,6 +5383,21 @@
         return L >= 0 && L <= 11171 && L % 28 === j ? w.slice(0, -1) + String.fromCharCode(0xac00 + L - j) : '';
       };
       const tail = s.slice(bare.length);
+      // '거기 사람 많더라' → ที่นั่นคนเยอะ: 겪어 본 일 ~더라(고) 는 ~어 꼴 평서로 한 번 더.
+      const dr = !th && !asks && bare.match(/^(.+?)더라(?:고)?(?:요)?$/);
+      if (dr) {
+        const [pre, w] = splitLast(dr[1]);
+        const [a] = stateOf(pre, koInfinitives(w));
+        if (a) return addPoliteParticle(s, a);
+      }
+      // '늦게 끝날 것 같아' → น่าจะเลิกดึก, '비 올 것 같아' → น่าจะฝนตก: ~ㄹ/을 것 같아 = 아마 그럴 것.
+      const gt = !th && !asks && bare.match(/^(.+?)\s*(?:것|거)\s*같아요?$/);
+      if (gt) {
+        const [pre, w] = splitLast(gt[1]);
+        const stem = /을$/.test(w) && w.length >= 2 ? w.slice(0, -1) : dropJong(w, 8);
+        const [a] = stem ? stateOf(pre, koInfinitives(stem)) : [''];
+        if (a && !/^(น่าจะ|คง|จะ)/.test(a)) return addPoliteParticle(s, 'น่าจะ' + a.replace(/แล้ว$/, ''));
+      }
       const nd = !th && bare.match(/^(.+?)데\s+(\S.*)$/);
       if (nd) {
         const [pre, w] = splitLast(nd[1]);

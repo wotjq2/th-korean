@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.73
+// @version      1.23.74
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5169,7 +5169,8 @@
     if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|มาก)$/.test(v)) return '';
     const pre = m[2].replace(/요$/, '').slice(-2, -1).charCodeAt(0) - 0xac00;
     const past = /어요?$/.test(m[2]) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
-    if (past) return v.endsWith('แล้ว') && v.length > 4 ? (m[1] ? 'ยังไม่ได้' : 'ไม่ได้') + v.slice(0, -4) : '';
+    // 받았어 = ได้รับแล้ว → ไม่ได้รับ(ไม่ได้ได้รับ 아님)
+    if (past) return v.endsWith('แล้ว') && v.length > 4 ? (m[1] ? 'ยังไม่' : 'ไม่') + (/^ได้/.test(v) ? '' : 'ได้') + v.slice(0, -4) : '';
     return v.endsWith('แล้ว') ? '' : (m[1] ? 'ยังไม่' : 'ไม่') + v;
   }
 
@@ -5295,6 +5296,36 @@
         if (b && !/^(เลย|แล้ว|ก็)/.test(b) && (CHAT_TIME_PRED.test(cz[2]) || TH_QUESTION.test(b))) {
           const seq = /(가|와|나|사)$/.test(cz[1]) && !/^(ฝน|หิมะ|ลม)/.test(a);
           return a.replace(/แล้ว$/, '') + (seq ? 'แล้ว' : 'เลย') + b;
+        }
+      }
+      // '배고픈데 뭐 먹을까?' → หิว กินอะไรดี, '맛있는데 비싸' → อร่อยแต่แพง: ~는데·~은데·~ㄴ데 앞마디를 ~어 꼴로
+      // 되돌려(배고픈 → 배고파, 일하는 → 일해, 좋은 → 좋아, 주말인 → 주말이야) 한 줄처럼 찾고 뒷마디와 잇는다.
+      // 뒤가 묻기·권하기·부탁이면 그냥 띄워 잇고(까닭), 아니면 แต่(그런데).
+      const nd = !th && bare.match(/^(.+?)데\s+(\S.*)$/);
+      if (nd) {
+        const ws = nd[1].trim().split(/\s+/);
+        const w = ws.pop();
+        const pre = ws.length ? ws.join(' ') + ' ' : '';
+        const L = w.charCodeAt(w.length - 1) - 0xac00;
+        const forms =
+          L < 0 || L > 11171 ? []
+            : /[는은]$/.test(w) && w.length >= 2 ? koInfinitives(w.slice(0, -1))
+              : /인$/.test(w) && w.length >= 2 ? [w.slice(0, -1) + '이야']
+                : L % 28 === 4 ? koInfinitives(w.slice(0, -1) + String.fromCharCode(0xac00 + L - 4))
+                  : [];
+        let a = '';
+        for (const f of forms) {
+          const x = one(pre + f);
+          a = x && !TH_QUESTION.test(x) ? x : chatFrame(pre + f, idx) || chatHada(pre + f, idx);
+          if (a && !TH_QUESTION.test(a) && !/^(ขอ(?!ง)|ช่วย|อย่า)/.test(a)) break;
+          a = '';
+        }
+        const b = a && one(nd[2] + s.slice(bare.length));
+        if (b) {
+          const soft =
+            asks || TH_QUESTION.test(b) || /(กัน|หน่อย|นะ|เถอะ|ด้วย|สิ)(ครับ|ค่ะ|คะ)?$/.test(b) || /^(ช่วย|ขอ|อย่า)/.test(b) ||
+            /(자|까|래|게|겠다|겠어|야지|줘|주세요)요?$/.test(nd[2]);
+          return a + (soft ? ' ' : 'แต่') + b;
         }
       }
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)

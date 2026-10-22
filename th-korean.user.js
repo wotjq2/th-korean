@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.49
+// @version      1.23.50
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4745,6 +4745,10 @@
       const m = bare.match(re);
       if (!m) continue;
       let n = squash(m[1]);
+      // '이 드라마 재밌어' → ละครนี้สนุก: 앞의 이·그·저 는 떼고 값 뒤에 นี้/นั้น.
+      let demo = '';
+      const dm = !idx.has(n) && m[1].match(/^(이|그|저)\s+(\S.*)$/);
+      if (dm) [n, demo] = [squash(dm[2]), dm[1] === '이' ? 'นี้' : 'นั้น'];
       if (!idx.has(n) && /[이가을를은는도]$/.test(n)) n = n.slice(0, -1);
       if (CHAT_FRAME_NOT.has(n) || (n.length < 2 && !CHAT_FRAME_ONE.includes(n))) return '';
       if (idiom && (CHAT_FRAME_IDIOM[idiom].has(n) || CHAT_FRAME_TIME.test(idx.get(n) || ''))) return '';
@@ -4758,7 +4762,7 @@
       if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
       // '모레 어때?'·'토요일 어때?' 는 날을 묻는 말 → สะดวกไหม(그날 괜찮아?).
       if (th === '#เป็นยังไง' && /^(วัน|พรุ่งนี้|มะรืน|เมื่อวาน|คืนนี้|เย็นนี้|พรุ่ง|สัปดาห์|อาทิตย์|เดือน|ปีหน้า|ตอน)/.test(v)) return v + 'สะดวกไหม';
-      return th.replace('#', v);
+      return th.replace('#', v + demo);
     }
     return '';
   }

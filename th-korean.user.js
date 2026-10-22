@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.81
+// @version      1.23.82
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4676,6 +4676,7 @@
     [/^(.+?)\s+먹을래요?$/, 'กิน#ไหม'],
     [/^(.+?)\s+마실래요?$/, 'ดื่ม#ไหม'],
     [/^(.+?)\s+볼래요?$/, 'ดู#ไหม'],
+    [/^(.+?)\s+갈래요?$/, 'ไป#กันไหม'], // 산책 갈래? → ไปเดินเล่นกันไหม
     // 해 줌: '꽃다발 사 줄게' → จะซื้อช่อดอกไม้ให้, '한국어 가르쳐 줘' → สอนภาษาเกาหลีให้หน่อย.
     [/^(.+?)\s+사\s*줄게요?$/, 'จะซื้อ#ให้'],
     [/^(.+?)\s+만들어\s*줄게요?$/, 'จะทำ#ให้'],
@@ -5499,7 +5500,7 @@
       !/^(네|예)$/.test(l[1]) || /^[^\s]+[,.!~]/.test(core) || /(요|니다|니까|세요)[\s.!?~？！]*$/.test(l[2]);
     if (lead && CHAT_LEADS.has(lead[1]) && yesOk(lead) && !/^(정말|진짜)(로)?[\s.!?~？！]*$/.test(lead[2])) {
       const a = one(lead[1]);
-      const b = a && one(lead[2]);
+      const b = a && (one(lead[2]) || chatFromGlossary(lead[2], idx)); // '미안 늦었어. 길이 막혀'
       if (b) return `${a} ${b}`;
     }
     const words = core.split(/\s+/);
@@ -5515,7 +5516,7 @@
     }
     const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
     if (parts.length < 2) return '';
-    const out = parts.map(one);
+    const out = parts.map((p) => one(p) || chatFromGlossary(p, idx)); // 조각 안의 대답말(미안 늦었어.)도 나눈다
     return out.every(Boolean) ? out.join(' ') : '';
   }
 

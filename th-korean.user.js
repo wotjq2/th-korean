@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.89
+// @version      1.23.90
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1870,7 +1870,8 @@
   // 제출도 한국어로 나간다. 네이티브 setter 로 쓴 뒤 값 추적기를 무효화해야
   // 프레임워크가 변경을 인식한다.
   function setInputValue(input, value) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; // 구글 검색칸 = textarea
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
     setter.call(input, value);
     if (input._valueTracker) input._valueTracker.setValue('');
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2022,11 +2023,23 @@
       box-shadow: 0 4px 14px rgba(0,0,0,.28);
     }
     #lzk-fab:hover { background: #1a22a0; }
+    #lzk-langbar {
+      position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px;
+    }
+    #lzk-langbar[data-solo] { right: 18px; }
+    #lzk-langbar button {
+      width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
+      border: 1px solid #0f146e; background: #fff; color: #0f146e; opacity: .85;
+      font: 600 13px/1 system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    #lzk-langbar button:hover { opacity: 1; }
+    #lzk-langbar button[data-on] { background: #0f146e; color: #fff; opacity: 1; }
     #lzk-badge {
       position: fixed; right: 74px; bottom: 26px; z-index: 2147483000;
       background: #0f146e; color: #fff; padding: 5px 10px; border-radius: 6px;
       font: 500 12px/1.4 system-ui, sans-serif; white-space: nowrap;
     }
+    #lzk-langbar ~ #lzk-badge { bottom: 64px; }
     #lzk-toast {
       position: fixed; right: 18px; bottom: 76px; z-index: 2147483000; max-width: 340px;
       background: #111; color: #fff; padding: 11px 14px; border-radius: 8px;
@@ -3847,6 +3860,7 @@
     fab.title = `${APP_NAME} 설정 (${SITE.label})`;
     fab.addEventListener('click', togglePanel);
     document.body.appendChild(fab);
+    refreshLangBar(); // 태·미·중 막대를 '한' 왼쪽으로
   }
 
   // ---------------------------------------------------------------------------
@@ -4100,6 +4114,19 @@
   let genericChip = null;
   let genericBusy = false;
 
+  // 입력 언어 고르기(태·미·중, '한' 버튼 옆). 하나를 고르면 해제할 때까지 모든 일반 사이트(한국
+  // 사이트 포함)의 입력칸에서 한국어 + Enter → 그 언어. 아무것도 안 고르면 전처럼 태국어 페이지만
+  // 태국어로 바꾼다. 태국어는 용어집, 영어·중국어는 아직 용어집이 없어 무료 번역으로.
+  const TYPE_LANG_KEY = 'typeLang';
+  const TYPE_LANGS = [
+    { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
+    { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
+    { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
+  ];
+  let typeLang = GM_getValue(TYPE_LANG_KEY, '');
+  let genericThaiPage = false;
+  const genericLang = () => TYPE_LANGS.find((l) => l.id === (typeLang || (genericThaiPage ? 'th' : ''))) || null;
+
   // 태국어 페이지인가. 글자 수만 세고 30자에 닿으면 멈춘다(큰 페이지에서도 가볍게).
   function looksThaiPage() {
     const lang = (document.documentElement.lang || '').toLowerCase();
@@ -4118,8 +4145,11 @@
   }
 
   function genericTarget(el) {
-    if (!isTypableText(el) || el.readOnly || el.disabled || el.closest('[id^="lzk-"]')) return null;
-    return el;
+    if (!el || el.readOnly || el.disabled || el.closest('[id^="lzk-"]')) return null;
+    if (isTypableText(el)) return el;
+    // 구글처럼 검색칸이 textarea 인 사이트(name=q, role=combobox). 글쓰기 칸 textarea 는 건드리지 않는다.
+    if (el.tagName === 'TEXTAREA' && (el.getAttribute('role') === 'combobox' || looksLikeSearchBox(el))) return el;
+    return null;
   }
 
   // 문장(낱말 다섯 개 이상, 물음표·마침표로 끝남)은 용어집 조합 대신 문장째 번역한다.
@@ -4153,7 +4183,7 @@
     const hint = [input.type, input.name, input.id, input.placeholder, input.getAttribute('aria-label')]
       .join(' ')
       .toLowerCase();
-    return /search|ค้นหา|(^|\s)q(\s|$)/.test(hint);
+    return /search|ค้นหา|검색|(^|\s)q(\s|$)/.test(hint);
   }
 
   function submitGeneric(input) {
@@ -4178,13 +4208,23 @@
     }
   }
 
+  // 고른 언어로. 태국어는 용어집(+문장 번역), 영어·중국어는 무료 번역.
+  async function koreanToLang(value, lang) {
+    if (lang.id === 'th') {
+      await ensureGlossary();
+      return koreanToThai(value);
+    }
+    return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: '번역' };
+  }
+
   async function convertInputToThai(input) {
     const value = input.value.trim();
-    if (genericBusy || !value || !HANGUL.test(value)) return;
+    const lang = genericLang();
+    if (genericBusy || !lang || !value || !HANGUL.test(value)) return;
     genericBusy = true;
-    setBadge('한국어를 태국어로 바꾸는 중…');
+    setBadge(`한국어를 ${lang.name}로 바꾸는 중…`);
     try {
-      const { thai, via, note } = await koreanToThai(value);
+      const { thai, via, note } = await koreanToLang(value, lang);
       if (!thai || HANGUL.test(thai)) throw new Error('번역 결과가 비어 있습니다');
       setInputValue(input, thai);
       input.focus();
@@ -4202,7 +4242,7 @@
         submitGeneric(input);
       }
     } catch (e) {
-      toast(`한국어를 태국어로 바꾸지 못했습니다: ${e.message || e}`, 4000);
+      toast(`한국어를 ${lang.name}로 바꾸지 못했습니다: ${e.message || e}`, 4000);
     } finally {
       genericBusy = false;
       setBadge(null);
@@ -4214,7 +4254,8 @@
   // 먼저 가져가는 사이트용).
   function updateGenericChip() {
     const input = genericTarget(document.activeElement);
-    if (!input || !HANGUL.test(input.value)) {
+    const lang = genericLang();
+    if (!lang || !input || !HANGUL.test(input.value)) {
       if (genericChip) genericChip.style.display = 'none';
       return;
     }
@@ -4222,8 +4263,6 @@
       genericChip = document.createElement('button');
       genericChip.id = 'lzk-thchip';
       genericChip.type = 'button';
-      genericChip.textContent = '→ ไทย';
-      genericChip.title = '입력한 한국어를 태국어로 바꿉니다 (Enter 와 같음)';
       markNoTranslate(genericChip);
       genericChip.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
       genericChip.addEventListener('click', (e) => {
@@ -4234,6 +4273,8 @@
       });
       document.body.appendChild(genericChip);
     }
+    genericChip.textContent = lang.chip;
+    genericChip.title = `입력한 한국어를 ${lang.name}로 바꿉니다 (Enter 와 같음)`;
     const r = input.getBoundingClientRect();
     const w = 58;
     const outside = r.right + 6 + w < innerWidth;
@@ -4254,7 +4295,7 @@
     window.addEventListener(
       'keydown',
       (e) => {
-        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || !genericLang()) return;
         const input = genericTarget(e.target);
         if (!input || !HANGUL.test(input.value)) return;
         e.preventDefault();
@@ -4266,6 +4307,7 @@
     window.addEventListener(
       'submit',
       (e) => {
+        if (!genericLang()) return;
         const input = [...(e.target?.elements || [])].find((el) => genericTarget(el) && HANGUL.test(el.value));
         if (!input) return;
         e.preventDefault();
@@ -4276,19 +4318,77 @@
     );
   }
 
+  // 태·미·중 막대. '한' 버튼이 있으면 그 왼쪽, 없으면(한국 사이트 등) 오른쪽 끝.
+  function mountLangBar() {
+    if (document.getElementById('lzk-langbar')) return refreshLangBar();
+    const bar = document.createElement('div');
+    bar.id = 'lzk-langbar';
+    markNoTranslate(bar);
+    for (const l of TYPE_LANGS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = l.label;
+      b.dataset.lang = l.id;
+      b.title = `한국어로 쓰고 Enter → ${l.name}로 바꿉니다 (한 번 누르면 계속 켜짐, 다시 누르면 꺼짐)`;
+      b.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
+      b.addEventListener('click', () => setTypeLang(typeLang === l.id ? '' : l.id));
+      bar.appendChild(b);
+    }
+    document.body.appendChild(bar);
+    refreshLangBar();
+  }
+
+  function refreshLangBar() {
+    const bar = document.getElementById('lzk-langbar');
+    if (!bar) return;
+    bar.toggleAttribute('data-solo', !document.getElementById('lzk-fab'));
+    for (const b of bar.children) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
+  }
+
+  function setTypeLang(id) {
+    typeLang = id;
+    GM_setValue(TYPE_LANG_KEY, id);
+    refreshLangBar();
+    const l = genericLang();
+    toast(
+      id
+        ? `${l.name} 입력 켬: 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 ${l.name}로 바꿉니다.\n같은 글자를 다시 누르면 끕니다.`
+        : genericThaiPage
+          ? '입력 언어 선택을 껐습니다. 이 태국어 페이지에서는 전처럼 태국어로 바꿉니다.'
+          : '입력 언어 선택을 껐습니다. 한국어가 그대로 입력됩니다.',
+      4000
+    );
+    updateGenericChip();
+  }
+
+  // 모든 일반 사이트: 태·미·중 막대와 입력칸 가로채기만 단다(고른 언어가 없으면 Enter 를 건드리지 않는다).
+  // 네트워크·용어집은 실제로 바꿀 때까지 쓰지 않는다. 다른 탭에서 바꾼 선택은 이 탭으로 돌아올 때 맞춘다.
+  function genericBase() {
+    GM_addStyle(LZK_CSS);
+    mountLangBar();
+    installGenericSearch();
+    window.addEventListener('focus', () => {
+      const v = GM_getValue(TYPE_LANG_KEY, '');
+      if (v !== typeLang) {
+        typeLang = v;
+        refreshLangBar();
+      }
+    });
+  }
+
   let genericOn = false;
   function activateGeneric() {
     if (genericOn) return;
     genericOn = true;
-    GM_addStyle(LZK_CSS);
+    genericThaiPage = true;
     ensureGlossary();
     mountFab();
-    installGenericSearch();
     registerMenus();
   }
 
   // 태국어가 늦게 그려지는 페이지(SPA)도 있어 15초 동안 몇 번 더 본다.
   function genericInit() {
+    genericBase();
     if (looksThaiPage()) return activateGeneric();
     let n = 0;
     const t = setInterval(() => {

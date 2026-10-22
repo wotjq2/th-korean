@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.84
+// @version      1.23.85
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5501,6 +5501,22 @@
         const pm2 = r && r.match(/^(.*?)((?:ไหม|หรือยัง|หรือเปล่า|(?<!ห)ยัง|แล้ว|(?<!เจอ)กัน|อยู่)?(?:นะ|เถอะ|ด้วย)?(?:ครับ|ค่ะ|คะ)?)$/);
         if (pm2 && pm2[1] && !/(ที่|จาก)/.test(pm2[1])) {
           return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : 'ที่') + pv + pm2[2];
+        }
+      }
+      // '집에 휴지 있어?' → ที่บ้านมีทิชชู่ไหม, '냉장고에 우유 없어' → ในตู้เย็นไม่มีนม: 곳+에 + 것 + 있어/없어.
+      // 관심·재미·약속 있어 처럼 굳은 말은 뺀다. 때 낱말(주말에 시간 있어)은 CHAT_FRAME_TIME 으로 거른다.
+      const pe = !th && bare.match(/^(\S+)에\s+(\S+)\s+(있어|없어)(?:요)?$/);
+      if (pe) {
+        let n = pe[2];
+        if (!idx.has(n) && /[이가은는도]$/.test(n)) n = n.slice(0, -1);
+        const pv = CHAT_SUBJ_TH[pe[1]] || idx.get(pe[1]);
+        const nv = CHAT_FRAME_TH[n] || idx.get(n);
+        const okV = (v) => v && !/[\sA-Za-z0-9]/.test(v) && !TH_QUESTION.test(v) && !CHAT_FRAME_TIME.test(v) && !/^(ไม่|อย่า|ช่วย|ขอ(?!ง))/.test(v);
+        if (okV(pv) && okV(nv) && !/^(관심|재미|의미|약속|볼일|문제|생각|자신|일|맛|시간|돈)$/.test(n)) {
+          const pre = /^ที่/.test(pv) ? '' : /^(냉장고|가방|지갑|방|차|서랍|상자|박스|주머니|핸드폰|폰|통)$/.test(pe[1]) ? 'ใน' : 'ที่';
+          const has = pe[3] === '있어';
+          const c = pre + pv + (has ? 'มี' : 'ไม่มี') + nv;
+          return addPoliteParticle(s, asks ? c + (has ? 'ไหม' : 'เหรอ') : c);
         }
       }
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)

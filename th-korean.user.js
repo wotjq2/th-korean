@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.52
+// @version      1.23.53
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4580,7 +4580,11 @@
         forms.push(k + '요');
       }
       const hit = forms.find((f) => f.length >= 2 && get(f));
-      return hit ? get(hit) : '';
+      if (hit) return get(hit);
+      // '졸리다'·'보고 싶다' — 혼잣말 ~다 는 ~어 꼴 평서 값으로(졸려·보고싶어). 묻는 값(밥먹었어=กินข้าวยัง)은 안 쓴다.
+      if (k.length < 3 || !k.endsWith('다')) return '';
+      const f = koInfinitives(k.slice(0, -1)).find((x) => x.length >= 2 && get(x) && !TH_QUESTION.test(get(x)));
+      return f ? get(f) : '';
     };
     const k = squash(bare);
     if (CHAT_WORDS[k] && ok(CHAT_WORDS[k])) return CHAT_WORDS[k];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.75
+// @version      1.23.76
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5000,6 +5000,10 @@
   }
 
   // '~ 줘서 고마워' 의 한 글자 앞말(와 = 감탄사 ว้าว 와 겹친다).
+  // 용어집에 낱말로도 있는 ~고 중 동사 이음꼴(광고·창고·최고 는 명사라 ~고 이음에서 뺀다).
+  const CHAT_GO_VERB = new Set('먹고 씻고 마시고 끝나고 가고 오고 자고 놀고 하고 입고 타고 쉬고 만나고 일하고 공부하고 샤워하고'.split(' '));
+  // 이음 마디의 한 글자 동사(올 때 → ตอนมา; 와 는 홀로 쓰면 감탄사 ว้าว).
+  const CHAT_VERB_ONE = { 와: 'มา', 가: 'ไป', 자: 'นอน', 봐: 'ดู', 사: 'ซื้อ', 해: 'ทำ', 놀아: 'เล่น', 쉬어: 'พัก', 먹어: 'กิน' };
   // 사랑해 = รักกัน(ขอบคุณที่รัก 은 '고마워 자기야' 로 읽힌다).
   const CHAT_GIVE_BASE = {
     와: 'มา', 놀러와: 'มาเที่ยว', 데리러와: 'มารับ', 보러와: 'มาหา', 가: 'ไป', 들어: 'ฟัง', 연락: 'ติดต่อมา', 사랑해: 'รักกัน',
@@ -5301,32 +5305,80 @@
       // '배고픈데 뭐 먹을까?' → หิว กินอะไรดี, '맛있는데 비싸' → อร่อยแต่แพง: ~는데·~은데·~ㄴ데 앞마디를 ~어 꼴로
       // 되돌려(배고픈 → 배고파, 일하는 → 일해, 좋은 → 좋아, 주말인 → 주말이야) 한 줄처럼 찾고 뒷마디와 잇는다.
       // 뒤가 묻기·권하기·부탁이면 그냥 띄워 잇고(까닭), 아니면 แต่(그런데).
+      // 이음 마디 공통: 앞마디 끝 낱말을 ~어 꼴로 되돌린 후보(forms)를 앞말과 붙여 한 줄처럼 찾는다 —
+      // 묻는 값·부탁 값은 빼고 틀·하다 말로 한 번 더. [값, 고른 꼴].
+      const stateOf = (pre, forms) => {
+        for (const f of forms) {
+          if (!pre && CHAT_VERB_ONE[f]) return [CHAT_VERB_ONE[f], f]; // 와 = มา(감탄사 ว้าว 아님)
+          const x = one(pre + f);
+          const a = x && !TH_QUESTION.test(x) ? x : chatFrame(pre + f, idx) || chatHada(pre + f, idx);
+          if (a && !TH_QUESTION.test(a) && !/^(ขอ(?!ง)|ช่วย|อย่า)/.test(a) && !/(หน่อย|นะ|สิ|เถอะ)$/.test(a)) return [a, f];
+        }
+        return ['', ''];
+      };
+      // 뒷마디가 묻기·권하기·부탁이면 '까닭' 이라 그냥 띄워 잇는다.
+      const softB = (b, ko) =>
+        asks || TH_QUESTION.test(b) || /(กัน|(?<!นิด)หน่อย|นะ|เถอะ|ด้วย|สิ)(ครับ|ค่ะ|คะ)?$/.test(b) || /^(ช่วย|ขอ|อย่า)/.test(b) ||
+        /(자|까|래|게|겠다|겠어|야지|줘|주세요)요?$/.test(ko);
+      // 뒷마디가 서술어로 끝나거나 묻는 값이어야 한다('여행 갈 때 필요한 것' 같은 명사 조각은 뺀다).
+      const predB = (b, ko) => TH_QUESTION.test(b) || CHAT_TIME_PRED.test(ko.replace(/[\s.!?~,？！]+$/, ''));
+      const splitLast = (x) => {
+        const ws = x.trim().split(/\s+/);
+        const w = ws.pop();
+        return [ws.length ? ws.join(' ') + ' ' : '', w];
+      };
+      const dropJong = (w, j) => {
+        const L = w.charCodeAt(w.length - 1) - 0xac00;
+        return L >= 0 && L <= 11171 && L % 28 === j ? w.slice(0, -1) + String.fromCharCode(0xac00 + L - j) : '';
+      };
+      const tail = s.slice(bare.length);
       const nd = !th && bare.match(/^(.+?)데\s+(\S.*)$/);
       if (nd) {
-        const ws = nd[1].trim().split(/\s+/);
-        const w = ws.pop();
-        const pre = ws.length ? ws.join(' ') + ' ' : '';
-        const L = w.charCodeAt(w.length - 1) - 0xac00;
+        const [pre, w] = splitLast(nd[1]);
+        const nj = dropJong(w, 4);
         const forms =
-          L < 0 || L > 11171 ? []
-            : /[는은]$/.test(w) && w.length >= 2 ? koInfinitives(w.slice(0, -1))
-              : /인$/.test(w) && w.length >= 2 ? [w.slice(0, -1) + '이야']
-                : L % 28 === 4 ? koInfinitives(w.slice(0, -1) + String.fromCharCode(0xac00 + L - 4))
-                  : [];
-        let a = '';
-        for (const f of forms) {
-          const x = one(pre + f);
-          a = x && !TH_QUESTION.test(x) ? x : chatFrame(pre + f, idx) || chatHada(pre + f, idx);
-          if (a && !TH_QUESTION.test(a) && !/^(ขอ(?!ง)|ช่วย|อย่า)/.test(a)) break;
-          a = '';
+          /[는은]$/.test(w) && w.length >= 2 ? koInfinitives(w.slice(0, -1))
+            : /인$/.test(w) && w.length >= 2 ? [w.slice(0, -1) + '이야']
+              : nj ? koInfinitives(nj) : [];
+        const [a] = stateOf(pre, forms);
+        const b = a && one(nd[2] + tail);
+        if (b) return a + (softB(b, nd[2]) ? ' ' : 'แต่') + b;
+      }
+      // '바쁘니까 나중에 전화할게' → ยุ่ง เดี๋ยวโทรไปทีหลัง: ~(으)니까 = 까닭. 뒤가 평서면 เลย.
+      const nk = !th && bare.match(/^(.+?)(?:으)?니까\s+(\S.*)$/);
+      if (nk) {
+        const [pre, w] = splitLast(nk[1]);
+        if (!/^(그러|이러|저러|그렇|아)$/.test(w)) {
+          const [a] = stateOf(pre, koInfinitives(w));
+          const b = a && one(nk[2] + tail);
+          if (b && predB(b, nk[2])) return a + (softB(b, nk[2]) ? ' ' : 'เลย') + b;
         }
-        const b = a && one(nd[2] + s.slice(bare.length));
-        if (b) {
-          const soft =
-            asks || TH_QUESTION.test(b) || /(กัน|(?<!นิด)หน่อย|นะ|เถอะ|ด้วย|สิ)(ครับ|ค่ะ|คะ)?$/.test(b) || /^(ช่วย|ขอ|อย่า)/.test(b) ||
-            /(자|까|래|게|겠다|겠어|야지|줘|주세요)요?$/.test(nd[2]);
-          return a + (soft ? ' ' : 'แต่') + b;
-        }
+      }
+      // '밥 먹고 전화할게' → กินข้าวแล้วจะโทร, '싸고 맛있어' → ถูกและอร่อย: ~고(나서) = 하고 나서. 둘 다 그림씨면 และ.
+      // ~고 있어·~고 싶어 는 틀이 맡고, '친구하고' 의 하고 는 '~와' 라 뺀다.
+      const gk = !th && bare.match(/^(.+?)고(?:\s*나서)?\s+(\S.*)$/);
+      if (gk && !/^(있|싶|계|말|보니|해서|하니)/.test(gk[2])) {
+        const [pre, w] = splitLast(gk[1]);
+        // 광고·창고·최고 처럼 ~고 까지가 한 낱말이면 뺀다(광 → 광어 = ปลาตาเดียว 가 된다).
+        const who =
+          (idx.has(w + '고') && !CHAT_GO_VERB.has(w + '고')) ||
+          (/하$/.test(w) && (CHAT_LEAD_OWNED.has(w.slice(0, -1)) || CHAT_PRON[w.slice(0, -1)]));
+        const [a, f] = who ? ['', ''] : stateOf(pre, koInfinitives(w));
+        const b = a && one(gk[2] + tail);
+        const adjs = CHAT_ADJ_END.test(f) && CHAT_ADJ_END.test(gk[2].replace(/요$/, '')); // 맵고 달아요 → เผ็ดและหวาน
+        if (b && predB(b, gk[2])) return a.replace(/แล้ว$/, '') + (adjs ? 'และ' : 'แล้ว') + b;
+      }
+      // '밥 먹기 전에 손 씻어' → ก่อนกินข้าว ล้างมือนะ, '올 때 전화해' → ตอนมา โทรมานะ.
+      const bf = !th && bare.match(/^(.+?)기\s*전에\s+(\S.*)$/);
+      // '기저귀 갈 때 됐어요' = ~할 때가 됐다 는 뺀다.
+      const wh = !th && !bf && bare.match(/^(.+?)\s*때\s+(?!(?:됐|되|이야|예요|에요|야)(?:\s|$|어|요))(\S.*)$/);
+      const cl = bf || wh;
+      if (cl) {
+        const [pre, w] = splitLast(cl[1]);
+        const stem = bf ? w : /을$/.test(w) && w.length >= 2 ? w.slice(0, -1) : dropJong(w, 8);
+        const [a] = stem ? stateOf(pre, koInfinitives(stem)) : [''];
+        const b = a && one(cl[2] + tail);
+        if (b && predB(b, cl[2])) return (bf ? 'ก่อน' : 'ตอน') + a.replace(/แล้ว$/, '') + ' ' + b;
       }
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
       return th && addPoliteParticle(s, th);

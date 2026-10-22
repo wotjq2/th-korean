@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.57
+// @version      1.23.58
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4805,6 +4805,30 @@
     return out;
   }
 
+  // 들은 말: '사람 많이 다쳤대' → เขาว่า…, '내일 비 온대' → เขาว่าพรุ่งนี้ฝนตก. 물음표면 …เหรอ.
+  // ~었대 → ~었어, ~ㄴ대·~는대 → 줄기, 그 밖(많대) → 줄기의 ~어 꼴로 평서 값을 찾는다. 침대·반대·20대 는 앞이 짧거나 한글이 아니라 건너뛴다.
+  function chatHearsay(bare, idx, asks) {
+    const m = bare.match(/^(.+?)대요?$/);
+    if (!m || m[1].replace(/\s/g, '').length < 2) return '';
+    const body = m[1];
+    const L = body.charCodeAt(body.length - 1) - 0xac00;
+    if (L < 0 || L > 11171) return '';
+    const jong = L % 28;
+    const forms =
+      jong === 20 ? [body + '어']
+        : body.endsWith('는') ? koInfinitives(body.slice(0, -1))
+          : jong === 4 ? koInfinitives(body.slice(0, -1) + String.fromCharCode(0xac00 + L - 4))
+            : koInfinitives(body);
+    for (const f of forms) {
+      let v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
+      if (!v) { const fr = chatFrame(f, idx); v = fr && !TH_QUESTION.test(fr) ? fr : ''; } // 거기 비싸대 → 틀
+      if (!v || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) continue;
+      const s = 'เขาว่า' + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
+      return asks ? s + 'เหรอ' : s;
+    }
+    return '';
+  }
+
   // 끝말로 붙인 느낌: '덥지?' → ร้อนใช่ไหม, '멋있네' → หล่อนะ, '힘들겠다' → คงเหนื่อยแน่ๆ.
   // 끝을 ~어 꼴로 바꿔 용어집 평서 값을 찾는다. ~네·~겠다 는 물음표가 없을 때만.
   function chatEnding(bare, idx, asks) {
@@ -4926,6 +4950,7 @@
         // 물 있어? → มีน้ำไหม, 밥 먹었어? → กินข้าวหรือยัง. 어때·먹을래 틀은 값이 이미 묻는 꼴이다.
         if (fr) th = !asks || TH_QUESTION.test(fr) ? fr : askable ? thaiAsk(fr, past) : '';
       }
+      if (!th) th = chatHearsay(bare, idx, asks);
       if (!th) th = chatEnding(bare, idx, asks);
       if (!th) th = chatIf(bare, idx, asks);
       if (!th) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.47
+// @version      1.23.48
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4455,7 +4455,7 @@
   function thaiAsk(v, past) {
     if (!v || /\s/.test(v) || TH_QUESTION.test(v)) return '';
     if (/กันเถอะ$/.test(v)) return v.slice(0, -4) + 'ไหม'; // 같이 청소하자? = ทำความสะอาดด้วยกันไหม
-    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|ไม่เป็นไร)$/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!พร)|ไม่)/.test(v)) return ''; // ขอพร(소원 빌다)는 부탁이 아니다
+    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|ไม่เป็นไร)$/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!พร|ง)|ไม่)/.test(v)) return ''; // ขอพร(소원 빌다)·ของ(물건)은 부탁이 아니다
     if (/^ยังไม่/.test(v)) return v + 'เหรอ'; // 밥 못 먹었어? = ยังไม่ได้กินข้าวเหรอ (ไหม 아님)
     // ~แล้ว 은 한국어가 지난 일(~었어)일 때만 หรือยัง: 맞아요?=ใช่แล้ว 를 ใช่หรือยัง 으로 만들지 않는다.
     if (v.endsWith('แล้ว')) return past && v.length > 4 ? v.slice(0, -4) + 'หรือยัง' : v.length > 4 ? v + 'เหรอ' : '';
@@ -4781,7 +4781,7 @@
     if ((kv !== undefined && !/(นะ|สิ|เนอะ|ใช่ไหม)$/.test(kv)) || (m[2] === '지' && !asks)) return '';
     for (const f of koInfinitives(m[1])) {
       const v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
-      if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ)/.test(v)) continue;
+      if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) continue;
       if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง)$/.test(v)) continue;
       if (kind === 'tag') return /ใช่$/.test(v) ? v + 'ไหม' : v + 'ใช่ไหม';
       if (kind === 'see') return v + 'นะ';
@@ -4827,7 +4827,7 @@
       if (!m) continue;
       if (/^(그래|그래요|그렇지|그렇죠)$/.test(m[2])) return '';
       let v = chatWhole(m[2], idx, (x) => !TH_QUESTION.test(x));
-      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ)/.test(v)) return '';
+      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
       if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|แล้ว|กว่า|ที่สุด|เกินไป)$/.test(v)) return '';
       if (th === '#มาก' && /มาก$/.test(v)) return v;
       v = v.replace(/(.)มาก$/, '$1');
@@ -4853,7 +4853,7 @@
     const m = bare.match(/^(아직\s+)?안\s+(\S+)$/);
     if (!m) return '';
     const v = chatWhole(m[2], idx, (x) => !TH_QUESTION.test(x));
-    if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ)/.test(v)) return '';
+    if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
     if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|มาก)$/.test(v)) return '';
     const pre = m[2].replace(/요$/, '').slice(-2, -1).charCodeAt(0) - 0xac00;
     const past = /어요?$/.test(m[2]) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
@@ -4866,7 +4866,7 @@
     const m = bare.match(/^왜\s+(.+)$/);
     if (!m) return '';
     const v = chatWhole(m[1], idx, (x) => !TH_QUESTION.test(x)) || chatNeg(m[1], idx);
-    if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ)/.test(v)) return '';
+    if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
     if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง)$/.test(v)) return '';
     return 'ทำไม' + v.replace(/แล้ว$/, '');
   }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.92
+// @version      1.23.93
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4122,6 +4122,11 @@
     { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
     { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
     { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
+    // 아래 넷은 용어집 없이 구글 번역만(사용자 요청 2026-10-23). '이' = 이스라엘 → 히브리어.
+    { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語' },
+    { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU' },
+    { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית' },
+    { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL' },
   ];
   // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
   // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.
@@ -4422,7 +4427,7 @@
       await ensureGlossary();
       return koreanToThai(value);
     }
-    const hit = koEnZhLookup(value, lang.id);
+    const hit = (lang.id === 'en' || lang.id === 'zh') && koEnZhLookup(value, lang.id);
     if (hit) return { thai: hit, via: '용어집' };
     return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: '번역' };
   }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.90
+// @version      1.23.91
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4116,13 +4116,221 @@
 
   // 입력 언어 고르기(태·미·중, '한' 버튼 옆). 하나를 고르면 해제할 때까지 모든 일반 사이트(한국
   // 사이트 포함)의 입력칸에서 한국어 + Enter → 그 언어. 아무것도 안 고르면 전처럼 태국어 페이지만
-  // 태국어로 바꾼다. 태국어는 용어집, 영어·중국어는 아직 용어집이 없어 무료 번역으로.
+  // 태국어로 바꾼다. 태국어는 용어집, 영어·중국어는 샘플 용어집(KO_EN_ZH_TSV)에 통째로 맞으면 그 값, 아니면 무료 번역.
   const TYPE_LANG_KEY = 'typeLang';
   const TYPE_LANGS = [
     { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
     { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
     { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
   ];
+  // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
+  // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.
+  const KO_EN_ZH_TSV = `
+수학숙제야	It's math homework	是数学作业
+뭐하자	What shall we do?	我们做什么呢
+레진아트	resin art	滴胶艺术
+잘안들려	I can't hear you well	听不太清楚
+요리중이야	I'm cooking	我在做饭
+베타딘	Betadine	碘伏
+조절식	adjustable	可调节
+경마장	racecourse	赛马场
+기업파산	corporate bankruptcy	企业破产
+개발	development	开发
+벤처캐피탈	venture capital	风险投资
+태국국가	Thai national anthem	泰国国歌
+숯있어	Do you have charcoal?	有木炭吗
+군청	district office	县政府
+위약금	cancellation penalty	违约金
+드레스	dress	连衣裙
+캠샤프트	camshaft	凸轮轴
+육교	pedestrian overpass	天桥
+대형쓰레기	bulky waste	大件垃圾
+해고수당	severance pay	解雇补偿金
+생활잡화	household goods	生活杂货
+블라우스	blouse	女式衬衫
+코킹	caulk	填缝剂
+어디있었어	Where were you?	你刚才在哪儿
+하면안되는	not allowed	不能做的
+믿기지않아	I can't believe it	难以置信
+나도찬성	I agree too	我也赞成
+포장재	packaging material	包装材料
+짜증나	I'm annoyed	好烦
+피나요	It's bleeding	流血了
+태국가는	going to Thailand	去泰国的
+자금	funds	资金
+산세베리아	snake plant	虎尾兰
+물떨어짐	water dripping	滴水
+시인	poet	诗人
+쏘였을때	when stung	被蜇的时候
+막힘	clogged	堵塞
+아침밥	breakfast	早饭
+투명색	clear	透明
+고속철	high-speed rail	高铁
+없애는	removing	去除
+짜이옌	calm down	冷静点
+귀세정제	ear cleaner	洗耳液
+김치찌개	kimchi stew	泡菜汤
+튀김반죽	frying batter	炸物面糊
+영업허가증	business license	营业执照
+마지막인사	final farewell	最后的道别
+차웽해변	Chaweng Beach	查汶海滩
+도수안경	prescription glasses	度数眼镜
+돈세탁	money laundering	洗钱
+시카다마켓	Cicada Market	蝉夜市
+하이드로겔	hydrogel	水凝胶
+나머지는	the rest	剩下的
+믿어줘제발	Please believe me	求你相信我
+마트상품권	supermarket gift card	超市购物卡
+골프쳐	play golf	打高尔夫
+손잡이	handle	把手
+신나요	It's fun	好开心
+초소형	ultra-compact	超小型
+규칙	rule	规则
+만약	if	如果
+토오픈	open-toe	露趾
+구취	bad breath	口臭
+화상영어	online English lessons	在线英语课
+안마셨어	I didn't drink	没喝
+대사관	embassy	大使馆
+불교	Buddhism	佛教
+수동변속	manual transmission	手动挡
+할인중	on sale	打折中
+가변저항	variable resistor	可变电阻
+보건소	public health center	卫生所
+열두시반에	at 12:30	十二点半
+과외	private tutoring	补习
+락스뿌려	spray bleach	喷漂白水
+진보라	dark purple	深紫色
+공지봤어요	I saw the notice	我看到通知了
+센트럴푸켓	Central Phuket	普吉中央购物中心
+시츄	Shih Tzu	西施犬
+혼다드림	Honda Dream	本田Dream
+무쇠냄비	cast-iron pot	铸铁锅
+국끓였어	I made soup	煮了汤
+찍었어	I took it	拍了
+비닐접착기	bag sealer	封口机
+그만	enough	够了
+캔선물세트	canned food gift set	罐头礼盒
+낚시쿨백	fishing cooler	钓鱼保温箱
+놀자	Let's hang out	一起玩吧
+양복점	tailor shop	西装店
+어린이날	Children's Day	儿童节
+멀다	far	远
+자양강장	tonic	滋补强身
+세단	sedan	轿车
+랜툴	LAN crimping tool	网线钳
+세게조여	tighten it firmly	拧紧
+일본산	made in Japan	日本产
+전략	strategy	战略
+헌팅캡	flat cap	报童帽
+어려움	difficulty	困难
+너희	you all	你们
+방문	room door	房门
+부채	hand fan	扇子
+바가지	water scoop	水瓢
+코인	coin	硬币
+부츠	boots	靴子
+볼트	bolt	螺栓
+플래시	flashlight	手电筒
+화장	makeup	化妆
+충전	charging	充电
+연기	smoke	烟
+코스	travel itinerary	行程
+차	tea	茶
+일	day	天
+눈	eye	眼睛
+다리	leg	腿
+지도	map	地图
+기사	news article	新闻
+관리실	skincare room	美容护理室
+행사	promotion	促销
+재료	material	材料
+신나	paint thinner	稀释剂
+사고	accident	事故
+가면	mask	面具
+하자	defect	瑕疵
+편	slice	片
+면	cotton	棉
+수도	tap water	自来水
+대금	daegeum (bamboo flute)	大笒
+외상	on credit	赊账
+진짜	genuine	正品
+시즌	season	季节
+머리	head	头
+필터	filter	过滤器
+향수	perfume	香水
+장바구니	reusable shopping bag	购物袋
+결석	kidney stone	结石
+지방	fat	脂肪
+전복	abalone	鲍鱼
+자수	embroidery	刺绣
+어머님선물같이고르자	Let's pick a gift for your mom together	我们一起给妈妈挑礼物吧
+한장에얼마야	How much per sheet?	一张多少钱
+나도오늘정신없었어	I was swamped today too	我今天也忙得晕头转向
+오늘저녁뭐먹지	What should I eat tonight?	今晚吃什么呢
+아직모든게낯설어	Everything still feels unfamiliar	一切都还很陌生
+다음달에태국갈거야	I'm going to Thailand next month	我下个月要去泰国
+노래번호찾아줘	Find the song number for me	帮我找一下歌号
+친구들다갔어	My friends all left	朋友们都走了
+나이가몇이야	How old are you?	你多大了
+짐좀맡아줄래	Can you hold my bag for me?	能帮我看一下行李吗
+메시지왔는데뭐라는거야	I got a message, what does it say?	来了条消息，说的是什么
+지금모습보여줘	Show me how you look now	让我看看你现在的样子
+편의점들르자	Let's stop by the convenience store	我们去一下便利店吧
+오래오래함께하자	Let's be together for a long time	我们要一直在一起
+면허시험붙었어	I passed my driving test	驾照考试通过了
+한국어잘썼어	You wrote Korean well	韩语写得很好
+녹음해서보내줘	Record it and send it to me	录下来发给我
+아이가엄마그림그렸어	The kid drew a picture of mom	孩子画了妈妈
+며칠계실거야	How many days will you stay?	您要待几天
+얘기들어줄수있어	Can you listen to me?	能听我说说吗
+잘해주고싶어	I want to treat you well	我想对你好
+운명인것같아	It feels like fate	好像是命中注定
+그법바뀌었어	That law changed	那条法律改了
+만나서반가웠어	It was nice meeting you	很高兴认识你
+나는고기없으면못살아	I can't live without meat	没有肉我活不下去
+여유있게가자	Let's go without rushing	我们慢慢去吧
+주소다시알려줘	Tell me the address again	再告诉我一下地址
+유튜브로공부해	I study with YouTube	我用YouTube学习
+한복입으면예쁠거야	You'll look pretty in a hanbok	穿韩服一定很漂亮
+사정이안좋아	Money is tight right now	经济状况不太好
+귀엽게생겼어	You have a cute face	长得很可爱
+일끝나고데리러갈게	I'll pick you up after work	下班后我去接你
+소리질러서미안해	Sorry for yelling	对不起，我吼你了
+일주일에며칠일해	How many days a week do you work?	你一周工作几天
+케이크사갈게	I'll bring a cake	我买蛋糕过去
+선생님소개해줄수있어	Can you introduce me to a teacher?	能给我介绍个老师吗
+집보러같이갈래	Want to go see the house together?	要一起去看房吗
+언제든전화해	Call me anytime	随时给我打电话
+점심도못먹었어	I didn't even get to eat lunch	午饭都没吃上
+그냥소문일거야	It's probably just a rumor	应该只是谣言
+스토리올렸어	I posted a story	我发了动态
+담배냄새싫어해	I hate the smell of cigarettes	讨厌烟味
+너랑있으면편해	I feel at ease with you	和你在一起很自在
+몸무게많이늘었어	I've gained a lot of weight	体重涨了很多
+생일선물뭐갖고싶어	What do you want for your birthday?	生日想要什么礼物
+한국어할수있어	I can speak Korean	我会说韩语
+너없었으면못했어	I couldn't have done it without you	没有你我做不到
+병원놀이하자	Let's play doctor	来玩医生游戏吧
+내가다준비할게	I'll prepare everything	我来准备一切
+비오니까기분이우울해	The rain is making me feel down	下雨了心情很郁闷
+`;
+  let koEnZh = null;
+  // 물음표 줄은 영어 값이 물음일 때만 쓴다(한국어할수있어=I can speak Korean 을 '할 수 있어?' 에 쓰면 틀린다).
+  function koEnZhLookup(value, id) {
+    if (!koEnZh) {
+      koEnZh = new Map();
+      for (const line of KO_EN_ZH_TSV.split('\n')) {
+        const [k, en, zh] = line.split('\t');
+        if (k && en && zh) koEnZh.set(k, { en, zh });
+      }
+    }
+    const asks = /[?？]\s*$/.test(value);
+    const row = koEnZh.get(squash(value.replace(/[\s.!?~,？！]+$/, '')));
+    if (!row || (asks && !row.en.endsWith('?'))) return '';
+    return id === 'en' ? row.en : row.zh;
+  }
+
   let typeLang = GM_getValue(TYPE_LANG_KEY, '');
   let genericThaiPage = false;
   const genericLang = () => TYPE_LANGS.find((l) => l.id === (typeLang || (genericThaiPage ? 'th' : ''))) || null;
@@ -4208,12 +4416,14 @@
     }
   }
 
-  // 고른 언어로. 태국어는 용어집(+문장 번역), 영어·중국어는 무료 번역.
+  // 고른 언어로. 태국어는 용어집(+문장 번역), 영어·중국어는 샘플 용어집에 통째로 맞으면 그 값, 아니면 무료 번역.
   async function koreanToLang(value, lang) {
     if (lang.id === 'th') {
       await ensureGlossary();
       return koreanToThai(value);
     }
+    const hit = koEnZhLookup(value, lang.id);
+    if (hit) return { thai: hit, via: '용어집' };
     return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: '번역' };
   }
 

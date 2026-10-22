@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.34
+// @version      1.23.35
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4826,6 +4826,30 @@
     return d ? sv + d : '';
   }
 
+  // 아니라고 함: '안 먹었어' → ไม่ได้กิน(먹었어=กินแล้ว 에서), '아직 안 샀어' → ยังไม่ได้ซื้อ, '안 와' → ไม่มา.
+  // 뒤가 한 마디일 때만.
+  function chatNeg(bare, idx) {
+    const m = bare.match(/^(아직\s+)?안\s+(\S+)$/);
+    if (!m) return '';
+    const v = chatWhole(m[2], idx, (x) => !TH_QUESTION.test(x));
+    if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ)/.test(v)) return '';
+    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|มาก)$/.test(v)) return '';
+    const pre = m[2].replace(/요$/, '').slice(-2, -1).charCodeAt(0) - 0xac00;
+    const past = /어요?$/.test(m[2]) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
+    if (past) return v.endsWith('แล้ว') && v.length > 4 ? (m[1] ? 'ยังไม่ได้' : 'ไม่ได้') + v.slice(0, -4) : '';
+    return v.endsWith('แล้ว') ? '' : (m[1] ? 'ยังไม่' : 'ไม่') + v;
+  }
+
+  // '왜 피곤해?' → ทำไมเหนื่อย, '왜 안 와?' → ทำไมไม่มา.
+  function chatWhy(bare, idx) {
+    const m = bare.match(/^왜\s+(.+)$/);
+    if (!m) return '';
+    const v = chatWhole(m[1], idx, (x) => !TH_QUESTION.test(x)) || chatNeg(m[1], idx);
+    if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ)/.test(v)) return '';
+    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง)$/.test(v)) return '';
+    return 'ทำไม' + v.replace(/แล้ว$/, '');
+  }
+
   function chatFromGlossary(core, idx) {
     const one = (s) => {
       const call = CHAT_CALLS[s.replace(/[\s.!?~,？！]+$/, '')]; // '고마워 오빠' 의 오빠 = พี่ (พี่ชาย 아님)
@@ -4850,6 +4874,8 @@
         const dg = chatDegree(bare, idx);
         if (dg) th = !asks ? dg : askable ? thaiAsk(dg, past) : ''; // 많이 아파? → เจ็บไหม
       }
+      if (!th && !asks) th = chatNeg(bare, idx);
+      if (!th) th = chatWhy(bare, idx);
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
       return th && addPoliteParticle(s, th);
     };

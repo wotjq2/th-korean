@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.86
+// @version      1.23.87
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5443,6 +5443,13 @@
         const r5 = one(rs[1] + tail);
         if (r5 && !TH_QUESTION.test(r5) && !/^(อย่า|ช่วย|ขอ(?!ง)|เพราะ)/.test(r5) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)(ครับ|ค่ะ)?$/.test(r5))
           return 'เพราะ' + r5;
+      }
+      // '내일 출근하잖아' → ก็พรุ่งนี้ไปทำงานนี่: ~잖아 = (너도 알다시피) 그렇잖아. 줄기의 ~어 꼴 평서 값을 ก็…นี่ 로.
+      const jn = !th && !asks && bare.match(/^(.+?\S)잖아(?:요)?$/);
+      if (jn) {
+        const [pre, w] = splitLast(jn[1]);
+        const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : koInfinitives(w));
+        if (a && !/^(ก็|อย่า|ช่วย|ขอ(?!ง))/.test(a) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)$/.test(a)) return addPoliteParticle(s, 'ก็' + a + 'นี่');
       }
       // '어제 먹은 게 안 맞았나 봐' → คงไม่…, '바쁜가 봐' → คงยุ่ง: ~나 봐·~(으)ㄴ가 봐 = 그런가 보다.
       const nb = !th && !asks && bare.match(/^(.+?\S)(나|가)\s*봐요?$/);

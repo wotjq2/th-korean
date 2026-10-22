@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.83
+// @version      1.23.84
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4839,7 +4839,7 @@
   ];
   const CHAT_PAY = /^(ค่า|ภาษี|เบี้ยประกัน|ดอกเบี้ย|หนี้|เงินประกัน|เงินผ่อน|เงินดาวน์)/;
   // 틀 앞말 중 용어집 값(쇼핑 뜻)이 대화 뜻과 다른 것: 월세 = เช่ารายเดือน(월세 매물) → ค่าเช่า(월세 냈어?).
-  const CHAT_FRAME_TH = { 월세: 'ค่าเช่า', 집세: 'ค่าเช่าบ้าน' };
+  const CHAT_FRAME_TH = { 월세: 'ค่าเช่า', 집세: 'ค่าเช่าบ้าน', 쌀국수: 'ก๋วยเตี๋ยว' }; // 쌀국수 = เส้นก๋วยเตี๋ยว(쇼핑 면발)
   const CHAT_FRAME_IDIOM = {
     go: new Set(),
     drink: new Set(),
@@ -5426,6 +5426,14 @@
         const [a] = stem ? stateOf(pre, koInfinitives(stem)) : [''];
         if (a && !/^(น่าจะ|คง|จะ)/.test(a)) return addPoliteParticle(s, 'น่าจะ' + a.replace(/แล้ว$/, ''));
       }
+      // '(나도 오늘 정신없었어.) 일이 너무 많아서' → เพราะงานเยอะมาก: 뒤에 홀로 남은 까닭 ~어서.
+      // 서 앞이 ~어 꼴 끝소리일 때만(보고서·계약서·혼자서·집에서 는 아니다).
+      const rs = !th && !asks && bare.match(/^(.+[아어여해와워돼져려쳐켜혀겨펴셔춰봐파빠때내])서$/);
+      if (rs) {
+        const r5 = one(rs[1] + tail);
+        if (r5 && !TH_QUESTION.test(r5) && !/^(อย่า|ช่วย|ขอ(?!ง)|เพราะ)/.test(r5) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)(ครับ|ค่ะ)?$/.test(r5))
+          return 'เพราะ' + r5;
+      }
       // '어제 먹은 게 안 맞았나 봐' → คงไม่…, '바쁜가 봐' → คงยุ่ง: ~나 봐·~(으)ㄴ가 봐 = 그런가 보다.
       const nb = !th && !asks && bare.match(/^(.+?\S)(나|가)\s*봐요?$/);
       if (nb) {
@@ -5444,7 +5452,8 @@
               : nj ? koInfinitives(nj) : [];
         const [a] = stateOf(pre, forms);
         const b = a && one(nd[2] + tail);
-        if (b) return a + (softB(b, nd[2]) ? ' ' : 'แต่') + b;
+        // '시장 갔는데 망고가 싸더라' — 뒤가 겪은 일 ~더라 면 ~는데 는 배경(그랬더니)이라 แต่ 대신 띄어 잇는다.
+        if (b) return a + (softB(b, nd[2]) || /더라(?:고)?(?:요)?$/.test(nd[2]) ? ' ' : 'แต่') + b;
       }
       // '바쁘니까 나중에 전화할게' → ยุ่ง เดี๋ยวโทรไปทีหลัง: ~(으)니까 = 까닭. 뒤가 평서면 เลย.
       const nk = !th && bare.match(/^(.+?)(?:으)?니까\s+(\S.*)$/);

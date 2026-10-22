@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.91
+// @version      1.23.92
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5832,6 +5832,12 @@
         if (pm2 && pm2[1] && !/(ที่|จาก)/.test(pm2[1])) {
           return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : 'ที่') + pv + pm2[2];
         }
+      }
+      // '갈색?'·'내일?' — 낱말 하나에 물음표만 붙은 되묻기 → 값+เหรอ(สีน้ำตาลเหรอ).
+      if (!th && asks && !/\s/.test(bare) && bare.length >= 2) {
+        const v1 = chatWhole(bare, idx, (x) => !TH_QUESTION.test(x));
+        if (v1 && !/\s/.test(v1) && !/^(อย่า|ห้าม|ช่วย|ขอ(?!ง)|ไม่)/.test(v1) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v1))
+          return addPoliteParticle(s, v1 + 'เหรอ');
       }
       // '집에 휴지 있어?' → ที่บ้านมีทิชชู่ไหม, '냉장고에 우유 없어' → ในตู้เย็นไม่มีนม: 곳+에 + 것 + 있어/없어.
       // 관심·재미·약속 있어 처럼 굳은 말은 뺀다. 때 낱말(주말에 시간 있어)은 CHAT_FRAME_TIME 으로 거른다.

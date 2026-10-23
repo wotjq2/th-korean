@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.102
+// @version      1.23.103
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5944,7 +5944,10 @@
         if (okW(va) && okW(vb)) return addPoliteParticle(s, va + 'หรือ' + vb);
       }
       // '갈색?'·'내일?' — 낱말 하나에 물음표만 붙은 되묻기 → 값+เหรอ(สีน้ำตาลเหรอ).
-      if (!th && asks && !/\s/.test(bare) && bare.length >= 2) {
+      // 두 낱말이라도 통째로 용어집 낱말이면('두 명?' = 두명) 같은 되묻기.
+      // 끝이 동사 꼴이면(이거 먹을래 = 이거먹을래 쇼핑 키) 되묻기가 아니다.
+      const twoNoun = bare.split(/\s+/).length === 2 && idx.has(squash(bare)) && !/(래|까|자|지|니|[어아해야요워와봐])$/.test(bare);
+      if (!th && asks && bare.length >= 2 && (!/\s/.test(bare) || twoNoun)) {
         const v1 = chatWhole(bare, idx, (x) => !TH_QUESTION.test(x));
         if (v1 && !/\s/.test(v1) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่)/.test(v1) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v1))
           // '너는?'·'오늘은?' = 그럼 ~는? → แล้วเธอล่ะ

@@ -106,6 +106,23 @@ const ready = (async () => {
   // 용어집 사본이 10분 지나면 다음 번역이 새로 받기를 1.5초까지 기다린다. 9분마다 뒤에서 미리 받아
   // 보내기·말풍선 번역이 기다리지 않게 한다(바뀐 게 없으면 GitHub 이 304 만 준다).
   realSetInterval(() => T.refreshGlossary && T.refreshGlossary().catch(() => {}), 9 * 60 * 1000).unref();
+  // 번역은 크롬과 같은 스크립트 하나로 한다. 새 판이 올라오면 받아 두고 하던 번역을 마친 뒤 끝낸다 —
+  // LineHelper 가 다음 요청 때 엔진을 다시 띄우면서 새 판을 쓴다(Tampermonkey 자동 업데이트와 같은 셈).
+  realSetInterval(async () => {
+    if (process.env.TH_KOREAN_SRC) return;
+    try {
+      const r = await fetch(SCRIPT_URL, { signal: AbortSignal.timeout(8000) });
+      const text = await r.text();
+      const v = (text.match(/@version\s+(\S+)/) || [])[1];
+      if (!r.ok || !v || v === version || !text.includes('==UserScript==')) return;
+      fs.writeFileSync(SCRIPT_CACHE, text);
+      console.error(`스크립트 새 판 ${v} — 엔진을 다시 띄웁니다`);
+      updateReady = true;
+      if (!pending) finish();
+    } catch {
+      /* 다음에 다시 본다 */
+    }
+  }, 20 * 60 * 1000).unref();
 })();
 
 // 한국어 → 고른 언어. 태국어는 메신저 보내기와 같은 길(용어집 → 문장 번역).
@@ -208,6 +225,7 @@ async function handle(req) {
 
 let pending = 0;
 let closed = false;
+let updateReady = false; // 새 스크립트를 받아 두었다 — 하던 번역이 끝나면 끝낸다
 
 function finish() {
   clearTimeout(saveTimer);
@@ -234,7 +252,7 @@ rl.on('line', (line) => {
       (e) => process.stdout.write(JSON.stringify({ id: req.id, ok: false, err: String(e.message || e) }) + '\n')
     )
     .finally(() => {
-      if (--pending === 0 && closed) finish();
+      if (--pending === 0 && (closed || updateReady)) finish();
     });
 });
 // LineHelper.exe 가 꺼지면 입력이 닫힌다 — 하던 번역을 마치고 같이 끝낸다.

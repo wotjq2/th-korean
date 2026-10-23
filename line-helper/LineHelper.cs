@@ -230,8 +230,20 @@ class Engine
         }
     }
 
-    // 성공하면 (결과, 방식), 실패하면 예외.
+    // 성공하면 (결과, 방식), 실패하면 예외. 엔진은 스크립트 새 판이 올라오면 스스로 끝나므로(engine.js),
+    // 그 틈에 걸린 요청은 엔진을 다시 띄워 한 번 더 보낸다.
     public string[] Call(string op, string lang, string text, int timeoutMs)
+    {
+        try { return CallOnce(op, lang, text, timeoutMs); }
+        catch (Exception e)
+        {
+            if (!(e is IOException || e.Message == "엔진이 꺼졌습니다" || (e is AggregateException && e.InnerException != null && e.InnerException.Message == "엔진이 꺼졌습니다"))) throw;
+            Log.Write("엔진 다시 띄워 한 번 더: " + e.Message);
+            return CallOnce(op, lang, text, timeoutMs);
+        }
+    }
+
+    string[] CallOnce(string op, string lang, string text, int timeoutMs)
     {
         TaskCompletionSource<Dictionary<string, object>> t = new TaskCompletionSource<Dictionary<string, object>>();
         lock (lk)

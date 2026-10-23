@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.93
+// @version      1.23.94
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5837,6 +5837,20 @@
         if (pm2 && pm2[1] && !/(ที่|จาก)/.test(pm2[1])) {
           return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : 'ที่') + pv + pm2[2];
         }
+      }
+      // '(수영복 챙겨.) 선글라스도' → แว่นกันแดดด้วย: 낱말 하나 + 도 조각. 포도·온도 처럼 도 까지 한 낱말이면 그대로.
+      const nd2 = !th && bare.match(/^(\S{2,})도$/);
+      if (nd2 && !idx.has(squash(bare)) && !CHAT_FRAME_NOT.has(nd2[1])) {
+        const v2 = CHAT_FRAME_TH[nd2[1]] || idx.get(nd2[1]);
+        if (v2 && !/[\sA-Za-z0-9]/.test(v2) && !TH_QUESTION.test(v2) && !/^(ไม่|อย่า|ช่วย|ขอ(?!ง))/.test(v2))
+          return addPoliteParticle(s, v2 + 'ด้วย');
+      }
+      // '바다 아니면 산?' → ทะเลหรือภูเขา: A 아니면 B (둘 다 낱말).
+      const an = !th && bare.match(/^(\S+)\s+아니면\s+(\S+)$/);
+      if (an) {
+        const [va, vb] = [an[1], an[2]].map((w) => CHAT_FRAME_TH[w] || idx.get(w));
+        const okW = (v) => v && !/[\sA-Za-z0-9]/.test(v) && !TH_QUESTION.test(v);
+        if (okW(va) && okW(vb)) return addPoliteParticle(s, va + 'หรือ' + vb);
       }
       // '갈색?'·'내일?' — 낱말 하나에 물음표만 붙은 되묻기 → 값+เหรอ(สีน้ำตาลเหรอ).
       if (!th && asks && !/\s/.test(bare) && bare.length >= 2) {

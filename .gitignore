@@ -1,2 +1,7 @@
 # Claude Code 로컬 설정 (이 PC 전용)
 .claude/
+
+# LINE 도우미: 빌드 결과와 이 PC 의 설정·용어집 사본
+line-helper/LineHelper.exe
+line-helper/data/
+line-helper/node_modules/

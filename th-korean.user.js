@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.98
+// @version      1.23.99
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5635,7 +5635,7 @@
     [/계셨어/g, '있었어'], [/계셔/g, '있어'],
     [/하셨어/g, '했어'], [/보셨어/g, '봤어'], [/가셨어/g, '갔어'], [/오셨어/g, '왔어'], [/주셨어/g, '줬어'], [/드셨어/g, '먹었어'],
     [/하실/g, '할'], [/보실/g, '볼'], [/가실/g, '갈'], [/오실/g, '올'], [/주실/g, '줄'],
-    [/하셔/g, '해'], [/오셔/g, '와'], [/가셔/g, '가'],
+    [/하셔/g, '해'], [/오셔/g, '와'], [/가셔/g, '가'], [/주셔/g, '줘'],
   ];
   function chatPlainKo(s) {
     let p = s.replace(/드셔/g, /(술|커피|차|물|맥주|음료|우유|주스)/.test(s) ? '마셔' : '먹어');
@@ -5832,7 +5832,9 @@
       const jn = !th && !asks && bare.match(/^(.+?\S)잖아(?:요)?$/);
       if (jn) {
         const [pre, w] = splitLast(jn[1]);
-        const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : koInfinitives(w));
+        // 명사 + 이잖아 = 명사이야('내일 출근이잖아' → 내일 출근이야).
+        const nounJ = w.length >= 2 && w.endsWith('이') ? [w + '야', w.slice(0, -1) + '이야'] : [];
+        const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : [...nounJ, ...koInfinitives(w)]);
         if (a && !/^(ก็|อย่า|ช่วย|ขอ(?!ง))/.test(a) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)$/.test(a)) return addPoliteParticle(s, 'ก็' + a + 'นี่');
       }
       // '어제 먹은 게 안 맞았나 봐' → คงไม่…, '바쁜가 봐' → คงยุ่ง: ~나 봐·~(으)ㄴ가 봐 = 그런가 보다.

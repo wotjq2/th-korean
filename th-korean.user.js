@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.95
+// @version      1.23.96
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5425,6 +5425,47 @@
     return out;
   }
 
+  // 들은 말 ~래: 명사(이)래 = 그렇대('털 뭉치 때문이래' → 때문이야 꼴 값, '오백 바트래') → เขาว่า…,
+  // 동사 + 래 = 하라고 했다('사료 바꾸래' → เขาบอกให้เปลี่ยน…). 할래·먹을래(ㄹ 받침)·노래·그래(앞이 한 글자)는 아니다.
+  function chatHearsayRae(bare, idx, asks) {
+    const m = bare.match(/^(.+?\S)래요?$/);
+    if (!m || m[1].replace(/\s/g, '').length < 2) return '';
+    const body = m[1];
+    const st = (x) => !TH_QUESTION.test(x);
+    const bad = (v) => !v || /^(ห้าม|ช่วย|ขอ(?!ง))/.test(v);
+    // '늦지 말래' → 늦지 마 = อย่ามาสาย → เขาบอกว่าอย่ามาสาย
+    if (/지\s*말$/.test(body)) {
+      const v = chatWhole(body.replace(/말$/, '마'), idx, st);
+      if (v && /^อย่า/.test(v)) return asks ? `เขาบอกว่า${v}เหรอ` : `เขาบอกว่า${v}`;
+      return '';
+    }
+    const L = body.charCodeAt(body.length - 1) - 0xac00;
+    if (L < 0 || L > 11171 || L % 28 === 8 || /을$/.test(body)) return '';
+    const nounForms = body.endsWith('이') ? [body + '야', body.slice(0, -1) + '이야'] : [body + '야', body + '이야'];
+    for (const f of nounForms) {
+      const v = chatWhole(f, idx, st);
+      if (bad(v) || /^อย่า/.test(v)) continue;
+      const s = 'เขาว่า' + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
+      return asks ? s + 'เหรอ' : s;
+    }
+    const [pre, w0] = splitLastWord(body);
+    const w = w0.length >= 2 && w0.endsWith('으') ? w0.slice(0, -1) : w0; // 먹으래 → 먹
+    for (const f of koInfinitives(w)) {
+      if ((pre + f).replace(/\s/g, '').length < 2) continue;
+      const fr = [chatFrame(pre + f, idx), chatHada(pre + f, idx)].find((x) => x && st(x)) || ''; // 약 먹어 = 틀 กินยา
+      const v = chatWhole(pre + f, idx, st) || fr;
+      const core = bad(v) ? '' : v.replace(/\s*(นะ|หน่อย|ด้วย|สิ|เถอะ)$/, ''); // นอนเร็วๆ นะ → นอนเร็วๆ
+      if (!core || /\s/.test(core)) continue;
+      const s = /^อย่า/.test(core) ? 'เขาบอกว่า' + core : 'เขาบอกให้' + core;
+      return asks ? s + 'เหรอ' : s;
+    }
+    return '';
+  }
+  function splitLastWord(s) {
+    const i = s.lastIndexOf(' ');
+    return i < 0 ? ['', s] : [s.slice(0, i + 1), s.slice(i + 1)];
+  }
+
   // 들은 말: '사람 많이 다쳤대' → เขาว่า…, '내일 비 온대' → เขาว่าพรุ่งนี้ฝนตก. 물음표면 …เหรอ.
   // ~었대 → ~었어, ~ㄴ대·~는대 → 줄기, 그 밖(많대) → 줄기의 ~어 꼴로 평서 값을 찾는다. 침대·반대·20대 는 앞이 짧거나 한글이 아니라 건너뛴다.
   // 들은 말의 말한 사람: '의사가 괜찮대' → หมอบอกว่าไม่เป็นไร(เขาว่าหมอโอเค 아님).
@@ -5433,6 +5474,8 @@
     오빠: 'พี่ชาย', 형: 'พี่ชาย', 동생: 'น้อง', 할머니: 'ยาย', 할아버지: 'ตา', 남편: 'สามี', 아내: 'ภรรยา', 걔: 'เขา',
   };
   function chatHearsay(bare, idx, asks) {
+    const rae = chatHearsayRae(bare, idx, asks);
+    if (rae) return rae;
     const m = bare.match(/^(.+?)대요?$/);
     if (!m || m[1].replace(/\s/g, '').length < 2) return '';
     const sm = m[1].match(/^(?:내|우리)?\s*(\S+?)(?:이|가|는|은)\s+(\S.*)$/); // 내 친구가 태국 간대

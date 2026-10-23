@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.101
+// @version      1.23.102
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4773,8 +4773,8 @@
     if (/^ไม่เป็นไร(นะ)?$/.test(v)) return 'โอเคไหม'; // 괜찮아? = โอเคไหม(ไม่เป็นไรไหม 는 어색하다)
     // 우산 가져와? = เอาร่มมาด้วยไหม, 걔도 온대? = เขาบอกว่าจะมาด้วยเหรอ
     const hearsay = /^(?:(?:เขา|หมอ|เพื่อน|แม่|พ่อ)(?:บอก)?|บอก)ว่า(?!ย)/.test(v);
-    if (/มาด้วย$/.test(v) && !/^(อย่า|ห้าม|ช่วย|ขอ(?!พร|ง)|ไม่)/.test(v)) return v + (hearsay ? 'เหรอ' : 'ไหม');
-    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|(?<!โคชู|ทเวน|เทน)จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|ไม่เป็นไร)$/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!พร|ง)|ไม่)/.test(v)) return ''; // ขอพร(소원 빌다)·ของ(물건)은 부탁이 아니다
+    if (/มาด้วย$/.test(v) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!พร|ง)|ไม่)/.test(v)) return v + (hearsay ? 'เหรอ' : 'ไหม');
+    if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|(?<!โคชู|ทเวน|เทน)จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|ไม่เป็นไร)$/.test(v) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!พร|ง)|ไม่)/.test(v)) return ''; // ขอพร(소원 빌다)·ของ(물건)은 부탁이 아니다
     if (/^ยังไม่/.test(v)) return v + 'เหรอ'; // 밥 못 먹었어? = ยังไม่ได้กินข้าวเหรอ (ไหม 아님)
     if (hearsay) return v + 'เหรอ'; // 수술해야 된대? = หมอบอกว่าต้องผ่าตัดเหรอ
     // ~แล้ว 은 한국어가 지난 일(~었어)일 때만 หรือยัง: 맞아요?=ใช่แล้ว 를 ใช่หรือยัง 으로 만들지 않는다.
@@ -5268,7 +5268,7 @@
       const v = CHAT_FRAME_TH[n] || idx.get(n);
       if (!v || /[\sA-Za-z0-9]/.test(v) || TH_QUESTION.test(v) || /^ไม่/.test(v)) return '';
       // 앞말 값이 이미 문장(우산챙겨 = อย่าลืมพกร่มนะ)이면 명사가 아니다: '우산 챙겨 가' ≠ ไปอย่าลืม….
-      if (/^(อย่า|ช่วย|ขอ(?!ง))/.test(v) || /(นะ|สิ|หน่อย|เถอะ|ด้วย|แล้ว|จัง)$/.test(v)) return '';
+      if (/^(อย่า|ช่วย(?!ได้)|ขอ(?!ง))/.test(v) || /(นะ|สิ|หน่อย|เถอะ|ด้วย|แล้ว|จัง)$/.test(v)) return '';
       if (idiom === 'pay' && !CHAT_PAY.test(v)) return '';
       // '모레 어때?'·'토요일 어때?' 는 날을 묻는 말 → สะดวกไหม(그날 괜찮아?).
       if (th === '#เป็นยังไง' && /^(วัน|พรุ่งนี้|มะรืน|เมื่อวาน|คืนนี้|เย็นนี้|พรุ่ง|สัปดาห์|อาทิตย์|เดือน|ปีหน้า|ตอน|ช่วง)/.test(v)) return v + 'สะดวกไหม';
@@ -5432,7 +5432,7 @@
     if (!m || m[1].replace(/\s/g, '').length < 2) return '';
     const body = m[1];
     const st = (x) => !TH_QUESTION.test(x);
-    const bad = (v) => !v || /^(ห้าม|ช่วย|ขอ(?!ง))/.test(v);
+    const bad = (v) => !v || /^(ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v);
     // '늦지 말래' → 늦지 마 = อย่ามาสาย → เขาบอกว่าอย่ามาสาย
     if (/지\s*말$/.test(body)) {
       const v = chatWhole(body.replace(/말$/, '마'), idx, st);
@@ -5493,7 +5493,7 @@
       let v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
       if (!v) { const fr = chatFrame(f, idx); v = fr && !TH_QUESTION.test(fr) ? fr : ''; } // 거기 비싸대 → 틀
       if (!v) v = chatDuration(f, false); // 30분 걸린대 → เขาว่าใช้เวลา 30 นาที
-      if (!v || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) continue;
+      if (!v || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) continue;
       const s = (who ? who + 'บอกว่า' : 'เขาว่า') + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
       return asks ? s + 'เหรอ' : s;
     }
@@ -5513,7 +5513,7 @@
     if ((kv !== undefined && !/(นะ|สิ|เนอะ|ใช่ไหม)$/.test(kv)) || (m[2] === '지' && !asks)) return '';
     for (const f of koInfinitives(m[1])) {
       const v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
-      if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) continue;
+      if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) continue;
       if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง)$/.test(v)) continue;
       if (kind === 'tag') return /ใช่$/.test(v) ? v + 'ไหม' : v + 'ใช่ไหม';
       if (kind === 'see') return v + 'นะ';
@@ -5565,7 +5565,7 @@
       if (/^(그래|그래요|그렇지|그렇죠)$/.test(m[2])) return '';
       if (m[1] === '좀' && !CHAT_ADJ_END.test(m[2].replace(/요$/, '')) && !/(피곤해|힘들어|졸려|무서워|늦어)$/.test(m[2].replace(/요$/, ''))) return '';
       let v = chatWhole(m[2], idx, (x) => !TH_QUESTION.test(x));
-      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
+      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) return '';
       if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|แล้ว|กว่า|ที่สุด|เกินไป)$/.test(v)) return '';
       if (th === '#มาก' && /มาก$/.test(v)) return v;
       v = v.replace(/(.)มาก$/, '$1');
@@ -5597,7 +5597,7 @@
     const mm = bare.match(/^(아직\s+)?못\s+(\S+)$/);
     if (mm) {
       const v = chatWhole(mm[2], idx, (x) => !TH_QUESTION.test(x));
-      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
+      if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) return '';
       if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|มาก|ได้)$/.test(v)) return '';
       const p = mm[2].replace(/요$/, '').slice(-2, -1).charCodeAt(0) - 0xac00;
       if (/어요?$/.test(mm[2]) && p >= 0 && p % 28 === 20) {
@@ -5608,7 +5608,7 @@
     const m = bare.match(/^(아직\s+)?안\s+(\S+)$/);
     if (!m) return '';
     const v = chatWhole(m[2], idx, (x) => !TH_QUESTION.test(x));
-    if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
+    if (!v || /\s/.test(v) || /^(ไม่|อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) return '';
     if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|จัง|ๆ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง|มาก)$/.test(v)) return '';
     const pre = m[2].replace(/요$/, '').slice(-2, -1).charCodeAt(0) - 0xac00;
     const past = /어요?$/.test(m[2]) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
@@ -5622,7 +5622,7 @@
     const m = bare.match(/^왜\s+(.+)$/);
     if (!m) return '';
     const v = chatWhole(m[1], idx, (x) => !TH_QUESTION.test(x)) || chatNeg(m[1], idx);
-    if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย|ขอ(?!ง))/.test(v)) return '';
+    if (!v || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) return '';
     if (/(นะ|สิ|เถอะ|เลย|หน่อย|ด้วย|จ้า|จ้ะ|ค่ะ|คะ|ครับ|นี่|นา|น่ะ|ล่ะ|หรอก|เอง)$/.test(v)) return '';
     return 'ทำไม' + v.replace(/แล้ว$/, '');
   }
@@ -5728,7 +5728,7 @@
       if (give) {
         const g = give[1].trim();
         const plain = (x) => !TH_QUESTION.test(x);
-        const okA = (x) => x && !/\s/.test(x) && !/^(ขอ(?!ง)|ช่วย|อย่า|ว้าว)/.test(x) && !/(หน่อย|นะ|สิ|ด้วย|เถอะ)$/.test(x);
+        const okA = (x) => x && !/\s/.test(x) && !/^(ขอ(?!ง)|ช่วย(?!ได้)|อย่า|ว้าว)/.test(x) && !/(หน่อย|นะ|สิ|ด้วย|เถอะ)$/.test(x);
         const a = [CHAT_GIVE_BASE[squash(g)], chatWhole(g, idx, plain), chatHada(/해$/.test(g) ? g : g + '해', idx)].find(okA);
         if (a) {
           return addPoliteParticle(s, thx + a.replace(/แล้ว$/, ''));
@@ -5749,7 +5749,7 @@
         const oa = one(cz[1]); // 내일 일찍 출근해야 돼(서) — 앞마디도 한 줄처럼(때 낱말·하다 말)
         let a = chatWhole(cz[1], idx, (x) => !TH_QUESTION.test(x)) || chatFrame(cz[1], idx) || (oa && !TH_QUESTION.test(oa) ? oa : '');
         // '와 줘서'·'연락 줘서' 의 값은 부탁 꼴(มาหาหน่อยนะ)이라 이유로 쓸 수 없다.
-        if (/^(ขอ(?!ง)|ช่วย|อย่า)/.test(a) || /(หน่อย|นะ|สิ|ด้วย|เถอะ)$/.test(a)) a = '';
+        if (/^(ขอ(?!ง)|ช่วย(?!ได้)|อย่า)/.test(a) || /(หน่อย|นะ|สิ|ด้วย|เถอะ)$/.test(a)) a = '';
         // '늦어서 미안' → ขอโทษที่มาสาย, '기다려서 고마워' → ขอบคุณที่รอ.
         if (a && !/\s/.test(a) && /^(고마워|고마워요|고맙습니다|감사해요|감사합니다)$/.test(cz[2])) return addPoliteParticle(s, 'ขอบคุณที่' + a.replace(/แล้ว$/, ''));
         if (a && !/\s/.test(a) && /^(미안|미안해|미안해요|죄송해요|죄송합니다)$/.test(cz[2])) return addPoliteParticle(s, 'ขอโทษที่' + a.replace(/แล้ว$/, ''));
@@ -5772,7 +5772,7 @@
           if (!pre && CHAT_VERB_ONE[f]) return [CHAT_VERB_ONE[f], f]; // 와 = มา(감탄사 ว้าว 아님)
           const x = one(pre + f);
           const a = x && !TH_QUESTION.test(x) ? x : chatFrame(pre + f, idx) || chatHada(pre + f, idx);
-          if (a && !TH_QUESTION.test(a) && !/^(ขอ(?!ง)|ช่วย|อย่า)/.test(a) && !/(หน่อย|นะ|สิ|เถอะ)$/.test(a)) return [a, f];
+          if (a && !TH_QUESTION.test(a) && !/^(ขอ(?!ง)|ช่วย(?!ได้)|อย่า)/.test(a) && !/(หน่อย|นะ|สิ|เถอะ)$/.test(a)) return [a, f];
         }
         return ['', ''];
       };
@@ -5803,7 +5803,7 @@
       const by = !th && bare.match(/^((?:(?:너무|진짜|정말|좀|많이|엄청|되게)\s+)*)(\S+)\s+(?:보여요?|보인다|보이네요?)$/);
       if (by && CHAT_ADJ_END.test(by[2])) {
         const r4 = one(by[1] + by[2] + tail);
-        if (r4 && !/^ดู/.test(r4) && !/^(อย่า|ช่วย|ขอ)/.test(r4)) return 'ดู' + r4;
+        if (r4 && !/^ดู/.test(r4) && !/^(อย่า|ช่วย(?!ได้)|ขอ)/.test(r4)) return 'ดู' + r4;
       }
       // '거기 사람 많더라' → ที่นั่นคนเยอะ: 겪어 본 일 ~더라(고) 는 ~어 꼴 평서로 한 번 더.
       const dr = !th && !asks && bare.match(/^(.+?)더라(?:고)?(?:요)?$/);
@@ -5825,7 +5825,7 @@
       const rs = !th && !asks && bare.match(/^(.+[아어여해와워돼져려쳐켜혀겨펴셔춰봐파빠때내])서$/);
       if (rs) {
         const r5 = one(rs[1] + tail);
-        if (r5 && !TH_QUESTION.test(r5) && !/^(อย่า|ช่วย|ขอ(?!ง)|เพราะ)/.test(r5) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)(ครับ|ค่ะ)?$/.test(r5))
+        if (r5 && !TH_QUESTION.test(r5) && !/^(อย่า|ช่วย(?!ได้)|ขอ(?!ง)|เพราะ)/.test(r5) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)(ครับ|ค่ะ)?$/.test(r5))
           return 'เพราะ' + r5;
       }
       // '내일 출근하잖아' → ก็พรุ่งนี้ไปทำงานนี่: ~잖아 = (너도 알다시피) 그렇잖아. 줄기의 ~어 꼴 평서 값을 ก็…นี่ 로.
@@ -5836,7 +5836,7 @@
         const nounJ = w.length >= 2 && w.endsWith('이') ? [w + '야', w.slice(0, -1) + '이야'] : [];
         const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : [...nounJ, ...koInfinitives(w)]);
         // 값에 이미 ก็ 가 있으면(เธอก็ตื่นเต้น) 앞에 또 붙이지 않는다.
-        if (a && !/^(อย่า|ช่วย|ขอ(?!ง))/.test(a) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)$/.test(a))
+        if (a && !/^(อย่า|ช่วย(?!ได้)|ขอ(?!ง))/.test(a) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)$/.test(a))
           return addPoliteParticle(s, (/ก็/.test(a) ? '' : 'ก็') + a + 'นี่');
       }
       // '어제 먹은 게 안 맞았나 봐' → คงไม่…, '바쁜가 봐' → คงยุ่ง: ~나 봐·~(으)ㄴ가 봐 = 그런가 보다.
@@ -5946,7 +5946,7 @@
       // '갈색?'·'내일?' — 낱말 하나에 물음표만 붙은 되묻기 → 값+เหรอ(สีน้ำตาลเหรอ).
       if (!th && asks && !/\s/.test(bare) && bare.length >= 2) {
         const v1 = chatWhole(bare, idx, (x) => !TH_QUESTION.test(x));
-        if (v1 && !/\s/.test(v1) && !/^(อย่า|ห้าม|ช่วย|ขอ(?!ง)|ไม่)/.test(v1) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v1))
+        if (v1 && !/\s/.test(v1) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่)/.test(v1) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v1))
           // '너는?'·'오늘은?' = 그럼 ~는? → แล้วเธอล่ะ
           return addPoliteParticle(s, /[은는]$/.test(bare) ? `แล้ว${v1}ล่ะ` : v1 + 'เหรอ');
       }

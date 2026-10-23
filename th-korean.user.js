@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.97
+// @version      1.23.98
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4920,7 +4920,7 @@
     const words = bare.split(/\s+/);
     if (words.length < 2) return '';
     const stripped = words
-      .map((w, i) => (i < words.length - 1 && w.length >= 2 ? w.replace(/(은|는|이|가|을|를)$/, '') : w))
+      .map((w, i) => (i < words.length - 1 && w.length >= 2 && !CHAT_FRAME_NOT.has(w) ? w.replace(/(은|는|이|가|을|를|도)$/, '') : w))
       .join('');
     const th2 = stripped !== k ? look(stripped) : '';
     if (th2) return th2;
@@ -5905,11 +5905,24 @@
         }
       }
       // '(수영복 챙겨.) 선글라스도' → แว่นกันแดดด้วย: 낱말 하나 + 도 조각. 포도·온도 처럼 도 까지 한 낱말이면 그대로.
-      const nd2 = !th && bare.match(/^(\S{2,})도$/);
-      if (nd2 && !idx.has(squash(bare)) && !CHAT_FRAME_NOT.has(nd2[1])) {
-        const v2 = CHAT_FRAME_TH[nd2[1]] || idx.get(nd2[1]);
+      const nd2 = !th && bare.match(/^(.{2,}?)도$/);
+      // 오렌지 주스도 처럼 띄어 써도 된다. 먹어도·가도(~해도 = 그래도) 는 아니다.
+      const n2 = nd2 && squash(nd2[1]);
+      if (nd2 && !idx.has(squash(bare)) && !CHAT_FRAME_NOT.has(n2) && !/[아어여해]$/.test(n2)) {
+        const v2 = CHAT_FRAME_TH[n2] || idx.get(n2);
         if (v2 && !/[\sA-Za-z0-9]/.test(v2) && !TH_QUESTION.test(v2) && !/^(ไม่|อย่า|ช่วย|ขอ(?!ง))/.test(v2))
           return addPoliteParticle(s, v2 + 'ด้วย');
+      }
+      // '(해열제 먹고 자.) 물도 많이 마시고' → ดื่มน้ำเยอะๆ นะ: 뒤에 덧붙인 ~고 는 ~어 꼴 말(지 말고 → 지 마).
+      const tg = !th && !asks && bare.match(/^(.+?\S)고$/);
+      if (tg) {
+        const [pre, w] = splitLastWord(tg[1]);
+        const forms = w.endsWith('말') && /지$/.test(pre.trim()) ? [w.slice(0, -1) + '마'] : koInfinitives(w);
+        for (const f of forms) {
+          if ((pre + f).replace(/\s/g, '').length < 2) continue;
+          const r6 = one(pre + f + tail);
+          if (r6 && !TH_QUESTION.test(r6)) return r6;
+        }
       }
       // '무슨 드라마?' → ละครอะไร, '무슨 맛?' → รสอะไร: 무슨 + 낱말 하나.
       const ms = !th && bare.match(/^무슨\s+(\S{1,8})$/);

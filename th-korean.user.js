@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.94
+// @version      1.23.95
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5584,6 +5584,22 @@
     return 'ทำไม' + v.replace(/แล้ว$/, '');
   }
 
+  // 높임말 → 예사말. 계셨어 → 있었어 처럼 긴 꼴부터. 드셔 는 마실 것이 앞에 있으면 마셔, 아니면 먹어.
+  const CHAT_HONOR = [
+    [/뵙고/g, '만나고'], [/뵈러/g, '만나러'], [/뵐게/g, '만날게'],
+    [/드릴까/g, '줄까'], [/드리자/g, '주자'], [/드릴게/g, '줄게'], [/드렸어/g, '줬어'], [/드려/g, '줘'],
+    [/드리는/g, '주는'], [/드리면/g, '주면'], [/드리고/g, '주고'],
+    [/계셨어/g, '있었어'], [/계셔/g, '있어'],
+    [/하셨어/g, '했어'], [/보셨어/g, '봤어'], [/가셨어/g, '갔어'], [/오셨어/g, '왔어'], [/주셨어/g, '줬어'], [/드셨어/g, '먹었어'],
+    [/하실/g, '할'], [/보실/g, '볼'], [/가실/g, '갈'], [/오실/g, '올'], [/주실/g, '줄'],
+    [/하셔/g, '해'], [/오셔/g, '와'], [/가셔/g, '가'],
+  ];
+  function chatPlainKo(s) {
+    let p = s.replace(/드셔/g, /(술|커피|차|물|맥주|음료|우유|주스)/.test(s) ? '마셔' : '먹어');
+    for (const [re, to] of CHAT_HONOR) p = p.replace(re, to);
+    return p;
+  }
+
   function chatFromGlossary(core, idx) {
     const one = (s) => {
       const call = CHAT_CALLS[s.replace(/[\s.!?~,？！]+$/, '')]; // '고마워 오빠' 의 오빠 = พี่ (พี่ชาย 아님)
@@ -5733,6 +5749,13 @@
         return L >= 0 && L <= 11171 && L % 28 === j ? w.slice(0, -1) + String.fromCharCode(0xac00 + L - j) : '';
       };
       const tail = s.slice(bare.length);
+      // '엄마가 해산물 좋아하셔' → 좋아해, '물어보셨어' → 물어봤어, '드릴까' → 줄까: 태국어는 높임을 따로 옮기지
+      // 않으니 높임말을 예사말로 풀어 한 번 더 찾는다(예사말 키 하나로 높임말도 잡힌다).
+      const plain = !th && chatPlainKo(bare);
+      if (plain && plain !== bare) {
+        const rp = one(plain + tail);
+        if (rp) return rp;
+      }
       // '너무 예뻐 보여' → ดูสวยมาก: 그림씨 + 보여 = ดู + 값. 앞에는 정도 말만(주어가 있으면 어순이 달라 뺀다).
       const by = !th && bare.match(/^((?:(?:너무|진짜|정말|좀|많이|엄청|되게)\s+)*)(\S+)\s+(?:보여요?|보인다|보이네요?)$/);
       if (by && CHAT_ADJ_END.test(by[2])) {

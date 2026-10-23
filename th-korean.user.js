@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.104
+// @version      1.23.105
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5495,8 +5495,10 @@
       let v = chatWhole(f, idx, (x) => !TH_QUESTION.test(x));
       if (!v) { const fr = chatFrame(f, idx); v = fr && !TH_QUESTION.test(fr) ? fr : ''; } // 거기 비싸대 → 틀
       if (!v) v = chatDuration(f, false); // 30분 걸린대 → เขาว่าใช้เวลา 30 นาที
-      if (!v || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) continue;
-      const s = (who ? who + 'บอกว่า' : 'เขาว่า') + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
+      if (!v || /^(ช่วย(?!ได้)|ขอ(?!ง))/.test(v)) continue;
+      // '중간에 끊으면 안 된대' → ห้ามหยุด… 처럼 금지 값은 'บอกว่า' 로 잇는다(เขาบอกว่าห้าม…).
+      const say = who ? who + 'บอกว่า' : /^(อย่า|ห้าม)/.test(v) ? 'เขาบอกว่า' : 'เขาว่า';
+      const s = say + v.replace(/^(?:เขา|หมอ|เพื่อน)?(?:บอก)?ว่า(?!ย)/, '');
       return asks ? s + 'เหรอ' : s;
     }
     return '';

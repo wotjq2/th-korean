@@ -199,14 +199,14 @@ function cleanOcr(text) {
 
 // 화면 번역(ScreenKorean.cs, Ctrl+Alt+K): 아무 프로그램 창의 글줄 → 한국어. 글줄과 자리는 윈도우에 들어 있는
 // OCR 이 찾는다. 이 PC 의 윈도우 OCR 은 한국어판이라 영어를 대체로 읽지만 0/O·l/I 를 헷갈리고 한자·한글 조각을
-// 끼운다(Welcome → WeIcome, to → t0, All-in-One → AI卜in-One 시, 2026-10-24 Cherry Studio). 그런 줄은
+// 끼운다(Welcome → WeIcome, to → t0, All-in-One → AI卜in-One 시, 2026-10-24 Cherry Studio). 그래서 줄마다
 // 잘라 둔 그림을 영어 OCR 로 다시 읽고, 남은 헷갈림은 글자 모양으로 바로잡아 페이지 번역과 같은 길로 옮긴다.
 const latinCount = (s) => (s.match(/[A-Za-z]/g) || []).length;
 const hangulCount = (s) => (s.match(/[가-힣]/g) || []).length;
 
+// 윈도우 OCR 이 헷갈렸을 법한 줄: 0/1 섞인 낱말, 소문자 사이·옆의 대문자 I/O, II, |, 영어 밖 글자.
 function uiSuspect(s) {
-  return /[A-Za-z][01]|[01][A-Za-z]|[a-z]I[a-z]|[a-z]O\b|[a-z]l[A-Z]|\|/.test(s)
-    || (/[ㄱ-ㆎ가-힣一-鿿]/.test(s) && latinCount(s) >= 3);
+  return /[A-Za-z][01]|[01][A-Za-z]|[a-z]I|I[a-z]{2}|II|[a-z]O\b|[a-z]l[A-Z]|\bl[A-Z]|\|/.test(s) || /[^\x00-\x7F]/.test(s);
 }
 
 const UI_SHORT = { t0: 'to', tO: 'to', '0f': 'of', '0n': 'on', '0r': 'or', '1n': 'in', '1s': 'is', '1t': 'it', '0K': 'OK', Al: 'AI' };
@@ -241,13 +241,19 @@ function uiSkip(s) {
   return latinCount(s) < 2 || hangulCount(s) >= latinCount(s) || /https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s);
 }
 
+// 모든 줄을 영어 OCR 로 한 번 더 읽는다. 헷갈린 표시가 없어도 윈도우 OCR 은 글자를 빠뜨리거나 바꾼다
+// (typing → vping, Spell → SpeII, Use → lJse — 표시만 보고 다시 읽던 때 그대로 번역됐다, 2026-10-24).
+// 글자만 같고 띄어쓰기만 다르면 윈도우 쪽을 쓴다(Setup later ↔ Set up later). 다르면 영어 OCR 이 충분히
+// 확신할 때만 — 윈도우 쪽이 수상하면 덜 확신해도 영어 OCR 을 믿는다.
 async function uiLine(it) {
   const win = uiFix(it.t);
-  if (!it.f || !uiSuspect(it.t)) return win;
+  if (!it.f) return win;
   try {
     const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
     const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
-    if (r.conf >= 70 && latinCount(tess) >= latinCount(win) * 0.7) return tess;
+    const bare = (s) => s.toLowerCase().replace(/[^a-z]/g, '');
+    if (bare(tess) === bare(win)) return win;
+    if (r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7) return tess;
   } catch (e) {
     console.error('화면 글줄 다시 읽기 실패:', e.message);
   }

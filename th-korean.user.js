@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.111
+// @version      1.23.112
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4160,7 +4160,7 @@
       toast(ok ? `용어집을 새로 받았습니다.\n${glossaryStatus()}` : '용어집을 받지 못했습니다. 이 PC의 사본을 계속 씁니다.', 5000);
     });
     GM_registerMenuCommand('용어집 편집 (GitHub)', () => window.open(GLOSSARY_EDIT_URL, '_blank', 'noopener'));
-    GM_registerMenuCommand('설정 열기', togglePanel);
+    if (!GENERIC) GM_registerMenuCommand('설정 열기', togglePanel); // 다른 사이트는 genericBase 가 이미 달았다
     GM_registerMenuCommand('지금 한국어로 번역', translatePage);
     GM_registerMenuCommand('원문 보기', restoreOriginal);
   }
@@ -4647,6 +4647,9 @@
     GM_addStyle(LZK_CSS);
     mountLangBar();
     installGenericSearch();
+    // '한' 버튼은 태국어 페이지에만 다니, 다른 페이지(네이버·구글…)에서도 설정 창(번역 도우미 설치·켜기 등)을
+    // 열 수 있게 Tampermonkey 메뉴에는 늘 둔다(2026-10-24 '한 버튼이 보이지 않습니다').
+    GM_registerMenuCommand('설정 열기', togglePanel);
     window.addEventListener('focus', () => {
       const v = GM_getValue(TYPE_LANG_KEY, '');
       if (v !== typeLang) {

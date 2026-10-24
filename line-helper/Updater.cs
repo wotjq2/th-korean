@@ -37,6 +37,7 @@ static class Updater
         for (DirectoryInfo d = new DirectoryInfo(dir); d != null && !dev; d = d.Parent)
             dev = Directory.Exists(Path.Combine(d.FullName, ".git"));
         if (dev) { Log.Write("업데이트: 저장소 안의 개발판이라 스스로 바꾸지 않습니다"); return; }
+        RegisterLink();
         new Thread(delegate ()
         {
             Thread.Sleep(60 * 1000);
@@ -46,6 +47,26 @@ static class Updater
                 Thread.Sleep(6 * 3600 * 1000);
             }
         }) { IsBackground = true }.Start();
+    }
+
+    // 크롬 스크립트 설정 창의 '번역 도우미 켜기' 는 th-korean-helper://start 주소를 연다. 그 주소를 이 exe 로 이어 둔다
+    // (이 사용자에게만, 관리자 권한 없이). 켤 때마다 다시 적어 exe 가 옮겨져도 맞게 둔다. 설치한 판만 —
+    // 개발판이 가로채지 않게(Start 에서 dev 면 부르지 않는다). 처음 누를 때 크롬이 '열까요?' 를 한 번 묻는다.
+    public const string LinkScheme = "th-korean-helper";
+
+    static void RegisterLink()
+    {
+        try
+        {
+            using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + LinkScheme))
+            {
+                k.SetValue("", "URL:번역 도우미");
+                k.SetValue("URL Protocol", "");
+                using (Microsoft.Win32.RegistryKey icon = k.CreateSubKey("DefaultIcon")) icon.SetValue("", "\"" + Exe + "\",0");
+                using (Microsoft.Win32.RegistryKey cmd = k.CreateSubKey(@"shell\open\command")) cmd.SetValue("", "\"" + Exe + "\" \"%1\"");
+            }
+        }
+        catch (Exception e) { Log.Write("크롬 켜기 주소 등록 실패: " + e.Message); }
     }
 
     static string Exe { get { return Application.ExecutablePath; } }

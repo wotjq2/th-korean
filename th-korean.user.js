@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.110
+// @version      1.23.111
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -365,6 +365,38 @@
     `?name=${encodeURIComponent('th-korean 용어집')}` +
     `&description=${encodeURIComponent('태국 사이트 한국어 - 설정 패널에서 용어집 저장')}` +
     `&target_name=${GLOSSARY_REPO.split('/')[0]}&contents=write`;
+
+  // 번역 도우미(line-helper/, 윈도우 프로그램 — LINE PC·아무 창 Ctrl+Alt+K 화면 번역). 크롬은 PC 에 프로그램을
+  // 깔거나 켤 수 없어서, 설치는 명령 한 줄을 복사해 주고(윈도우 키+R → Ctrl+V → Enter), 켜기는 도우미가 설치될 때
+  // 이어 둔 th-korean-helper:// 주소를 연다(처음 한 번 크롬이 '열까요?' 를 묻는다).
+  const HELPER_LINK = 'th-korean-helper://start';
+  const HELPER_INSTALL =
+    'powershell -NoExit -c "irm https://raw.githubusercontent.com/wotjq2/th-korean/main/line-helper/install.ps1 | iex"';
+  // 번역 도우미 엔진(node)도 이 스크립트를 불러 쓴다 — node 18·20 에는 navigator 가 없다.
+  const IS_WINDOWS = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent || '');
+
+  // 클립보드에 글 넣기. 권한이 막힌 페이지면 옛 방식(execCommand)으로 한 번 더 해 본다.
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* 아래 옛 방식 */
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
   // 패널에서 추가한 새 단어가 모이는 칸. 파일 맨 끝에 한 번 만들고 그 뒤로 이어 붙인다.
   const ADDED_SECTION = '# --- 설정 패널에서 추가한 단어 ---';
 
@@ -3506,6 +3538,17 @@
         </div>
       </details>
 
+      <div id="lzk-helper" ${IS_WINDOWS ? '' : 'hidden'}>
+        <label>번역 도우미 (LINE PC · 화면 번역, 윈도우)</label>
+        <div class="lzk-actions" style="margin-top:0">
+          <button id="lzk-helper-run" type="button">번역 도우미 켜기</button>
+          <button class="lzk-ghost" id="lzk-helper-install" type="button">번역 도우미 설치</button>
+        </div>
+        <div class="lzk-hint">크롬 밖에서 도는 프로그램입니다. LINE PC 메시지를 태국어로 보내고 받고, 아무 프로그램 창에서 <b>Ctrl+Alt+K</b> 를 누르면 영어를 그 자리에 한국어로 덮습니다. 설치는 PC마다 한 번이고, 그 뒤로는 윈도우를 켜면 같이 켜지고 새 판도 스스로 받습니다.</div>
+        <div class="lzk-hint" id="lzk-helper-note" style="white-space:pre-line"></div>
+        <input type="text" id="lzk-helper-cmd" readonly hidden>
+      </div>
+
       <label>페이지 표시 번역 엔진</label>
       <select id="lzk-page-engine">
         <option value="free">무료 API (빠름, 키 불필요)</option>
@@ -3649,6 +3692,28 @@
       } catch (e) {
         toast(`연결 실패: ${githubErrorMessage(e)}`, 7000);
       }
+    });
+
+    // --- 번역 도우미 ---
+    const helperNote = $('#lzk-helper-note');
+    $('#lzk-helper-run').addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = HELPER_LINK;
+      a.click();
+      helperNote.textContent =
+        '크롬이 "번역 도우미 열기?" 를 물으면 "항상 허용"에 체크하고 열기를 누르세요. 켜지면 화면에 알림이 뜹니다.\n' +
+        '아무 반응이 없으면 이 PC에는 아직 설치하지 않은 것입니다 → 번역 도우미 설치.';
+    });
+    $('#lzk-helper-install').addEventListener('click', async () => {
+      const copied = await copyText(HELPER_INSTALL);
+      const cmd = $('#lzk-helper-cmd');
+      cmd.value = HELPER_INSTALL;
+      cmd.hidden = copied;
+      helperNote.textContent =
+        (copied ? '설치 명령을 복사했습니다.' : '복사하지 못했습니다 — 아래 칸의 글을 모두 복사하세요(Ctrl+C).') +
+        '\n① 키보드에서 윈도우 키 + R  ② Ctrl + V  ③ Enter' +
+        '\n파란 창에 "설치 끝!" 이 나오면 그 창을 닫으세요(10초쯤). 이 PC에서 한 번만 하면 됩니다.';
+      if (!copied) cmd.select();
     });
 
     const modelSelect = $('#lzk-model');

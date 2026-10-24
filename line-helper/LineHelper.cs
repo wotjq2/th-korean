@@ -880,6 +880,9 @@ static class App
         }
         // 업데이터가 새 판을 켤 때: 이전 판이 끝나기를 기다렸다 켜지고, 바뀌었다고 알린다.
         bool wait = Array.IndexOf(args, "--wait") >= 0, updated = Array.IndexOf(args, "--updated") >= 0;
+        // 크롬 스크립트 설정 창의 '번역 도우미 켜기' 가 th-korean-helper:// 주소로 부른 것(Updater.RegisterLink).
+        bool fromLink = false;
+        foreach (string a in args) if (a.StartsWith(Updater.LinkScheme + ":", StringComparison.OrdinalIgnoreCase)) fromLink = true;
         bool created;
         using (Mutex m = new Mutex(true, "Local\\th-korean-line-helper-" + target, out created))
         {
@@ -888,7 +891,12 @@ static class App
                 try { created = m.WaitOne(20000); }
                 catch (AbandonedMutexException) { created = true; }
             }
-            if (!created) return;
+            if (!created)
+            {
+                // 이미 켜져 있다 — 아무 일도 없으면 눌러도 안 되는 줄 아니, 켜진 쪽이 알림을 띄우게 한다.
+                if (fromLink) try { EventWaitHandle.OpenExisting(PingName).Set(); } catch { }
+                return;
+            }
             // 모니터마다 배율이 달라도 LINE 을 제 크기로 뜨게(시스템 배율로 맞추면 PrintWindow 그림이 늘어나 흐려져
             // 태국어를 못 읽었다). 윈도우 10 1703 보다 옛것이면 예전 방식으로.
             try { if (!Native.SetProcessDpiAwarenessContext((IntPtr)(-4))) Native.SetProcessDPIAware(); }
@@ -927,6 +935,17 @@ static class App
             ScreenKorean.Start(engine, dataDir, ui, screenTest);
             Updater.Start(dir, engine);
             if (updated) Show("번역 도우미", "새 판으로 바꿨습니다", false, 5000);
+            const string ready = "LINE 보내기·받기, 아무 프로그램 창에서 " + ScreenKorean.HotkeyName + " = 화면 번역";
+            if (fromLink) { Log.Write("크롬 '번역 도우미 켜기' 로 켜짐"); Show("번역 도우미를 켰습니다", ready, false, 6000); }
+            EventWaitHandle ping = new EventWaitHandle(false, EventResetMode.AutoReset, PingName);
+            new Thread(delegate ()
+            {
+                while (ping.WaitOne())
+                {
+                    Log.Write("크롬 '번역 도우미 켜기' — 이미 켜져 있음");
+                    Show("번역 도우미가 켜져 있습니다", ready, false, 6000);
+                }
+            }) { IsBackground = true }.Start();
             ClipWatcher clip = new ClipWatcher();
             clip.Changed += OnClipboard;
             hookProc = HookCallback;
@@ -944,6 +963,9 @@ static class App
             engine.Stop();
         }
     }
+
+    // 크롬 '번역 도우미 켜기' 로 다시 불렸을 때 이미 켜진 판에 알리는 신호.
+    static string PingName { get { return "Local\\th-korean-line-helper-ping-" + target; } }
 
     static void LoadSettings()
     {

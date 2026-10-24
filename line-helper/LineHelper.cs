@@ -4,6 +4,7 @@
 //    그 언어로 바꿔 붙여 넣고 보낸다. 고른 언어는 끌 때까지 유지된다(크롬 막대와 같다).
 //  - 받기: LINE 에서 태국어 메시지를 복사하면 마우스 옆에 한국어를 띄운다. LINE 은 메시지 글자를
 //    다른 프로그램에 보여 주지 않아(접근성 이름이 비어 있다, 2026-10-24 확인) 메신저처럼 저절로 달 수는 없다.
+//  - 화면 번역(ScreenKorean.cs): 아무 프로그램 창이든 Ctrl+Alt+K 로 영어 글자를 그 자리에 한국어로 덮는다.
 // 번역은 engine.js(node)가 th-korean.user.js 를 그대로 불러 메신저와 같은 길로 한다.
 // 빌드: build.cmd (윈도우에 들어 있는 .NET Framework 4 csc, C# 5 문법).
 
@@ -863,7 +864,12 @@ static class App
     [STAThread]
     static void Main(string[] args)
     {
-        for (int i = 0; i + 1 < args.Length; i++) if (args[i] == "--target") target = args[i + 1];
+        string screenTest = null; // 시험용: --screen 프로그램이름 → 그 창을 바로 화면 번역
+        for (int i = 0; i + 1 < args.Length; i++)
+        {
+            if (args[i] == "--target") target = args[i + 1];
+            if (args[i] == "--screen") screenTest = args[i + 1];
+        }
         bool created;
         using (Mutex m = new Mutex(true, "Local\\th-korean-line-helper-" + target, out created))
         {
@@ -901,6 +907,7 @@ static class App
             LoadSent();
             new Thread(OcrLoop) { IsBackground = true }.Start();
             SetupTray();
+            ScreenKorean.Start(engine, dataDir, ui, screenTest);
             ClipWatcher clip = new ClipWatcher();
             clip.Changed += OnClipboard;
             hookProc = HookCallback;
@@ -998,7 +1005,7 @@ static class App
         return Icon.FromHandle(b.GetHicon());
     }
 
-    static void RefreshTray()
+    public static void RefreshTray()
     {
         tray.Text = "LINE 도우미 — " + (Lang == "" ? "보낼 때 그대로" : LangName(Lang) + "로 바꿔 보냄");
         menu.Items.Clear();
@@ -1028,6 +1035,14 @@ static class App
         recv.Checked = Receive;
         recv.Click += delegate { Receive = !Receive; SaveSettings(); RefreshTray(); };
         menu.Items.Add(recv);
+        ToolStripMenuItem screen = new ToolStripMenuItem("화면 번역: 앞 창 영어를 한국어로 덮기 (" + ScreenKorean.HotkeyName + ")");
+        screen.Checked = ScreenKorean.On;
+        screen.Click += delegate
+        {
+            if (ScreenKorean.On) ScreenKorean.Off();
+            else Show("화면 번역", "바꿀 프로그램 창을 앞에 두고 " + ScreenKorean.HotkeyName + " 를 누르세요", false, 6000);
+        };
+        menu.Items.Add(screen);
         ToolStripMenuItem auto = new ToolStripMenuItem("윈도우 켤 때 같이 켜기");
         auto.Checked = AutoStart;
         auto.Click += delegate { AutoStart = !AutoStart; RefreshTray(); };
@@ -1793,7 +1808,7 @@ static class App
     }
 
     // 보내기 알림은 막대 위에 띄운다.
-    static void Show(string top, string main, bool error, int ms)
+    public static void Show(string top, string main, bool error, int ms)
     {
         ui.BeginInvoke((MethodInvoker)delegate
         {

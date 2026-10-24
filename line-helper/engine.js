@@ -157,7 +157,7 @@ async function toKorean(src) {
 let ocrThread = null;
 let ocrNext = 0;
 const ocrWaiting = new Map();
-function ocr(file) {
+function ocr(file, opts) {
   if (!ocrThread) {
     const { Worker } = require('worker_threads');
     ocrThread = new Worker(path.join(__dirname, 'ocr-worker.js'), { workerData: { cachePath: DATA } });
@@ -175,7 +175,7 @@ function ocr(file) {
   const id = ++ocrNext;
   return new Promise((resolve, reject) => {
     ocrWaiting.set(id, { resolve, reject });
-    ocrThread.postMessage({ id, file });
+    ocrThread.postMessage({ id, file, ...opts });
   });
 }
 
@@ -197,6 +197,78 @@ function cleanOcr(text) {
   return out.replace(new RegExp(`(?<=[${THAI_CH}]) (?=[${THAI_CH}])`, 'g'), '').trim();
 }
 
+// 화면 번역(ScreenKorean.cs, Ctrl+Alt+K): 아무 프로그램 창의 글줄 → 한국어. 글줄과 자리는 윈도우에 들어 있는
+// OCR 이 찾는다. 이 PC 의 윈도우 OCR 은 한국어판이라 영어를 대체로 읽지만 0/O·l/I 를 헷갈리고 한자·한글 조각을
+// 끼운다(Welcome → WeIcome, to → t0, All-in-One → AI卜in-One 시, 2026-10-24 Cherry Studio). 그런 줄은
+// 잘라 둔 그림을 영어 OCR 로 다시 읽고, 남은 헷갈림은 글자 모양으로 바로잡아 페이지 번역과 같은 길로 옮긴다.
+const latinCount = (s) => (s.match(/[A-Za-z]/g) || []).length;
+const hangulCount = (s) => (s.match(/[가-힣]/g) || []).length;
+
+function uiSuspect(s) {
+  return /[A-Za-z][01]|[01][A-Za-z]|[a-z]I[a-z]|[a-z]O\b|[a-z]l[A-Z]|\|/.test(s)
+    || (/[ㄱ-ㆎ가-힣一-鿿]/.test(s) && latinCount(s) >= 3);
+}
+
+const UI_SHORT = { t0: 'to', tO: 'to', '0f': 'of', '0n': 'on', '0r': 'or', '1n': 'in', '1s': 'is', '1t': 'it', '0K': 'OK', Al: 'AI' };
+function uiFix(s) {
+  s = s.replace(/\s+/g, ' ').trim();
+  // 영어 줄에 끼어든 한자(영어 글자를 잘못 읽은 것)와 한두 글자짜리 한글 조각은 뺀다.
+  if (latinCount(s) >= 3 && latinCount(s) >= hangulCount(s) * 3) {
+    s = s.replace(/[一-鿿]+/g, '').replace(/(^| )[^A-Za-z0-9가-힣 ]*[ㄱ-ㆎ가-힣]{1,2}[^A-Za-z0-9가-힣 ]*(?= |$)/g, ' ');
+  }
+  s = s.replace(/[•·]+$/, '');
+  let toks = s.split(' ').filter(Boolean).map((w, i, all) => {
+    if (w === '|' && i + 1 < all.length && /^[a-z]/.test(all[i + 1])) return 'I'; // | have → I have
+    const m = /^([^A-Za-z0-9]*)(.*?)([^A-Za-z0-9]*)$/.exec(w);
+    let core = m[2];
+    if (UI_SHORT[core]) core = UI_SHORT[core];
+    else if (/^[A-Za-z01]+$/.test(core) && /[01]/.test(core) && latinCount(core) >= 2) {
+      const upper = core.replace(/[01]/g, '') === core.replace(/[01]/g, '').toUpperCase();
+      core = core.replace(/0/g, upper ? 'O' : 'o').replace(/1/g, upper ? 'I' : 'l'); // Studi0 → Studio, P01icy → Policy
+    }
+    core = core.replace(/(?<=[a-z])I(?=[a-z])/g, 'l').replace(/(?<=[a-z])O(?=[a-z]|$)/g, 'o').replace(/(?<=[a-z])l(?=[A-Z])/g, 'I');
+    return m[1] + core + m[3];
+  });
+  // 줄 양 끝의 기호 조각(아이콘을 글자로 읽은 것: £ @ `/ -)은 뗀다.
+  const junk = (t) => !/[A-Za-z0-9가-힣]/.test(t);
+  while (toks.length && junk(toks[0])) toks.shift();
+  while (toks.length && junk(toks[toks.length - 1])) toks.pop();
+  return toks.join(' ');
+}
+
+// 옮기지 않는 줄: 영어 글자가 거의 없거나, 이미 한국어거나, 주소·경로·메일.
+function uiSkip(s) {
+  return latinCount(s) < 2 || hangulCount(s) >= latinCount(s) || /https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s);
+}
+
+async function uiLine(it) {
+  const win = uiFix(it.t);
+  if (!it.f || !uiSuspect(it.t)) return win;
+  try {
+    const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
+    const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
+    if (r.conf >= 70 && latinCount(tess) >= latinCount(win) * 0.7) return tess;
+  } catch (e) {
+    console.error('화면 글줄 다시 읽기 실패:', e.message);
+  }
+  return win;
+}
+
+// items: [{t: 윈도우 OCR 글자, f: 잘라 낸 그림(흰 바탕 검은 글자), n: 줄 수}] → [{s: 옮긴 원문, k: 한국어 또는 ''}]
+async function screenLines(items) {
+  const src = [];
+  for (const it of items) src.push(await uiLine(it));
+  const todo = src.map((s, i) => (uiSkip(s) ? -1 : i)).filter((i) => i >= 0);
+  const got = todo.length ? await T.translateToKorean(todo.map((i) => src[i])) : [];
+  const out = src.map((s) => ({ s, k: '' }));
+  todo.forEach((i, k) => {
+    const ko = String(got[k] || '').trim();
+    // 바뀌지 않은 것(상표·이름)은 덮지 않는다.
+    if (T.HANGUL.test(ko) && ko.toLowerCase() !== src[i].toLowerCase()) out[i].k = ko;
+  });
+  return out;
+}
+
 async function handle(req) {
   await ready;
   if (req.op === 'ocr') {
@@ -208,6 +280,10 @@ async function handle(req) {
   if (req.op === 'warm') {
     await T.ensureGlossary();
     return { out: '', via: '' };
+  }
+  if (req.op === 'screen') {
+    const out = await screenLines(JSON.parse(req.text));
+    return { out: JSON.stringify(out), via: String(out.filter((o) => o.k).length) };
   }
   const text = String(req.text || '').replace(/\r\n?/g, '\n').trim();
   if (req.op === 'to') {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.109
+// @version      1.23.110
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4738,7 +4738,8 @@
   // 태국어 존댓말 끝(ครับ/ค่ะ). 말하는 사람의 성별로 갈린다. 구글 번역은 성별을 몰라 존댓말
   // 물음에 คะ(여자 말)를 붙이곤 한다 — 설정이 있으면 번역이 붙인 끝말은 떼고, 한국어를
   // 존댓말(~요·~니다)로 썼을 때만 설정한 끝말을 붙인다. 반말에는 붙이지 않는다.
-  const TH_PARTICLE_END = /\s*(ครับผม|ครับ|คับ|ค่ะ|คะ|ค่า)(?=[\s?!.？！]*$)/;
+  // 낱말 끝과 겹치는 꼴은 떼지 않는다: คุ้มค่า·ตั้งค่า(ค่า), บังคับ(คับ), โยคะ(คะ).
+  const TH_PARTICLE_END = /\s*(ครับผม|ครับ|(?<![ก-๙])คับ|ค่ะ|(?<!โย)คะ|(?<![ก-๙])ค่า)(?=[\s?!.？！]*$)/;
   function addPoliteParticle(ko, th) {
     const p = cfg.chatParticle;
     if (!p) return th;
@@ -4747,9 +4748,9 @@
     // สวัสดีค่ะ. สครับ(스크럽)·คะแนน(점수)은 낱말이라 그대로 둔다. 반말에도 적용.
     // 두 끝말이 다 들어 있으면 끝말 자체를 말하는 문장(카랑 크랍 차이가 뭐야)이라 건드리지 않는다.
     const male = /(?<!ส)ครับ/.test(th);
-    const female = /ค่ะ|คะ(?=[\s?!.？！]|$)/.test(th);
+    const female = /ค่ะ|(?<!โย)คะ(?=[\s?!.？！]|$)/.test(th); // โยคะ(요가)는 끝말이 아니다
     if (p === 'ค่ะ' && male && !female) th = th.replace(/(?<!ส)ครับ(?:ผม)?/g, 'ค่ะ').replace(/นะค่ะ/g, 'นะคะ');
-    else if (p === 'ครับ' && female && !male) th = th.replace(/ค่ะ|คะ(?=[\s?!.？！]|$)/g, 'ครับ');
+    else if (p === 'ครับ' && female && !male) th = th.replace(/ค่ะ|(?<!โย)คะ(?=[\s?!.？！]|$)/g, 'ครับ');
     // '~니까' 는 받침 ㅂ 다음(갑니까·입니까·습니까)만 존댓말이다. '그러니까·아프니까' 는 반말.
     const m = ko.match(/(.)니까[\s?!.~？！]*$/);
     const formalAsk = !!m && (m[1] === '습' || (m[1] >= '가' && m[1] <= '힣' && (m[1].charCodeAt(0) - 0xac00) % 28 === 17));
@@ -4765,6 +4766,8 @@
   const CHAT_ASK_END = /(어|아|야|해|워|와|려|여|커|내|돼|나|요|파|뻐|퍼|싸|빠|때|셔|춰|봐|가|져|자|러|라|짜|대|쳐|켜)$/;
   const CHAT_ASK_NOT = /(세요|게요|잖아|잖아요)$/;
   const CHAT_ASK_WORD = /뭐|어디|언제|누구|누가|왜|몇|얼마|어떻게|어때|무슨|어느/;
+  // 물음표 없이도 묻거나 부탁하는 끝(~니·~냐·~까·~래·~나요·~ㄴ가요·~지·~죠, ~줘·~세요·~자·~봐, 있나·했나).
+  const CHAT_PLAIN_NOT = /(니|냐|까|까요|래|래요|나요|[은는인]가요?|지|죠|지요|줘|줘요|주세요|세요|십시오|자|봐|봐요|[있없았었겠했]나)$/;
   // 평서 값 → 예/아니오 물음. 띄어 쓴 값(두 마디)·끝말(นะ·สิ…)·부탁·금지·부정으로 시작하는 값은 '' (번역에 맡김).
   // past: 한국어가 ~었어(요)·~했어(요) 꼴이면 true — ไปหาหมอมา 같은 ~มา 값을 หรือยัง 으로 물을 때만.
   function thaiAsk(v, past) {
@@ -5997,7 +6000,24 @@
       if (th === 'ครับ') return cfg.chatParticle || th; // 네·예 = 끝말 하나(여성 설정이면 ค่ะ)
       return th && addPoliteParticle(s, th);
     };
-    const whole = one(core);
+    // 물음표 없이 끝난 평서 꼴 줄('내일 비가 와요')에 묻는 꼴 값(พรุ่งนี้ฝนตกไหม)이 잡히면 끝의 ไหม·เหรอ 를
+    // 떼고 หรือยัง 은 แล้ว 로(밥을 먹었어 → กินข้าวแล้ว) — 묻는 말은 물음표로 가린다. 물음말(뭐·어디·며칠…)이나
+    // 묻는·부탁하는 끝(CHAT_PLAIN_NOT)이면 그대로. 떼고도 묻는 꼴이거나 부탁 값(ขอ…ได้ไหม)이면 '' (번역에 맡김).
+    const plainStatement = (s, th) => {
+      if (!th || /[?？]\s*$/.test(s)) return th;
+      const ko = s.replace(/[\s.!~,？！]+$/, '');
+      if (CHAT_ASK_WORD.test(ko) || /어떡|어쩌|며칠|혹시/.test(ko) || CHAT_PLAIN_NOT.test(ko)) return th;
+      // เปล่า 홑은 '헛되이'(เสียเงินเปล่า·ว่างเปล่า)라 묻는 끝으로 보지 않는다.
+      const q = th.replace(TH_PARTICLE_END, '').match(/^(.*?)\s*(ใช่ไหม|ใช่มั้ย|หรือเปล่า|รึเปล่า|หรือยัง|รึยัง|ไหม|มั้ย|ป่าว|เหรอ|หรอ|ยัง)$/);
+      // เป็นห่วงนะรู้ไหม — '알지?' 같은 덧말. ถามว่า…ไหม·เช็คว่า…หรือยัง — 물음이 안긴 마디(물어봤어·확인해)의 것.
+      if (!q || /รู้$/.test(q[1]) || /ว่า(?![ยง])/.test(q[1])) return th;
+      const rest = /ยัง$/.test(q[2]) && !/แล้ว$/.test(q[1]) ? q[1] + 'แล้ว' : q[1];
+      // 부탁 값(ช่วย…ได้ไหม·ขอ…ได้ไหม)과 '나 사랑해' = รักฉันไหม 처럼 나 가 목적어인 값은 평서로 못 바꾼다.
+      const req = /ช่วย(?!ได้)|ขอ(?!ง|บ|โทษ)|หน่อย/.test(rest);
+      if (!q[1] || TH_QUESTION.test(rest) || req || (/^(나|난)\s/.test(ko) && /ฉัน(ได้)?$/.test(rest))) return '';
+      return addPoliteParticle(s, rest);
+    };
+    const whole = plainStatement(core, one(core));
     if (whole) return whole;
     // '네 알겠어요'·'응 고마워'·'아니 괜찮아' — 앞의 대답말과 나머지를 따로 찾아 잇는다.
     const lead = core.match(/^([^\s,.!~]+)[\s,.!~]+(.+)$/);
@@ -6008,7 +6028,7 @@
       !/^(네|예)$/.test(l[1]) || /^[^\s]+[,.!~]/.test(core) || /(요|니다|니까|세요)[\s.!?~？！]*$/.test(l[2]);
     if (lead && CHAT_LEADS.has(lead[1]) && yesOk(lead) && !/^(정말|진짜)(로)?[\s.!?~？！]*$/.test(lead[2])) {
       const a = one(lead[1]);
-      const b = a && (one(lead[2]) || chatFromGlossary(lead[2], idx)); // '미안 늦었어. 길이 막혀'
+      const b = a && (plainStatement(lead[2], one(lead[2])) || chatFromGlossary(lead[2], idx)); // '미안 늦었어. 길이 막혀'
       if (b) return `${a} ${b}`;
     }
     const words = core.split(/\s+/);
@@ -6024,7 +6044,7 @@
     }
     const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
     if (parts.length < 2) return '';
-    const out = parts.map((p) => one(p) || chatFromGlossary(p, idx)); // 조각 안의 대답말(미안 늦었어.)도 나눈다
+    const out = parts.map((p) => plainStatement(p, one(p)) || chatFromGlossary(p, idx)); // 조각 안의 대답말(미안 늦었어.)도 나눈다
     return out.every(Boolean) ? out.join(' ') : '';
   }
 

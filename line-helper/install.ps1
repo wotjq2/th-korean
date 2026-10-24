@@ -34,7 +34,8 @@
         if (Test-Path $mine) { $node = $mine }
         elseif ($sys -and [int]((& $sys.Source -v).TrimStart('v').Split('.')[0]) -ge 18) { $node = $sys.Source }
         else {
-            $v = (Invoke-RestMethod 'https://nodejs.org/dist/index.json' | Where-Object { $_.lts } | Select-Object -First 1).version
+            # PS 5.1 의 Invoke-RestMethod 는 JSON 배열을 통째 하나로 흘려보낸다 — 괄호로 감싸야 판마다 나뉜다.
+            $v = ((Invoke-RestMethod 'https://nodejs.org/dist/index.json') | Where-Object { $_.lts } | Select-Object -First 1).version
             Write-Host "   Node.js $v 휴대용을 받는 중… (1~2분)"
             $zip = Join-Path $env:TEMP "node-$v-win-x64.zip"
             Invoke-WebRequest "https://nodejs.org/dist/$v/node-$v-win-x64.zip" -OutFile $zip -UseBasicParsing

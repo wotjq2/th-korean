@@ -106,7 +106,8 @@ static class Updater
         if (deps) Shell(Engine.FindNode(), "\"" + NpmCli() + "\" ci --omit=dev --no-audit --no-fund", 300000);
         if (!source)
         {
-            App.Show("번역 도우미", "새 판으로 바꿨습니다", false, 4000);
+            // install.ps1 처럼 돌고 있는 판과 상관없는 파일만 바뀌었으면 알리지 않는다.
+            if (deps || eng || manual) App.Show("번역 도우미", "새 판으로 바꿨습니다", false, 4000);
             return;
         }
         string fresh = Path.Combine(dir, Path.GetFileNameWithoutExtension(Exe) + ".new.exe");

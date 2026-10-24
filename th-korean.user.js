@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.112
+// @version      1.23.113
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -2055,15 +2055,20 @@
       box-shadow: 0 4px 14px rgba(0,0,0,.28);
     }
     #lzk-fab:hover { background: #1a22a0; }
+    #lzk-fab[data-high] { bottom: 96px; }
     #lzk-langbar {
-      position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px;
+      position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px; align-items: center;
     }
     #lzk-langbar[data-solo] { right: 18px; }
+    #lzk-langbar[data-high] { bottom: 104px; }
+    #lzk-langbar .lzk-langs { display: none; gap: 4px; }
+    #lzk-langbar[data-open] .lzk-langs { display: flex; }
     #lzk-langbar button {
       width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
       border: 1px solid #0f146e; background: #fff; color: #0f146e; opacity: .85;
       font: 600 13px/1 system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.2);
     }
+    #lzk-langbar button.lzk-lang-toggle { width: auto; padding: 0 11px; border-radius: 15px; }
     #lzk-langbar button:hover { opacity: 1; }
     #lzk-langbar button[data-on] { background: #0f146e; color: #fff; opacity: 1; }
     #lzk-badge {
@@ -3923,6 +3928,7 @@
     fab.type = 'button';
     fab.textContent = '한';
     fab.title = `${APP_NAME} 설정 (${SITE.label})`;
+    if (MESSENGER) fab.toggleAttribute('data-high', true); // 메신저는 오른쪽 아래에 보내기 단추가 있다
     fab.addEventListener('click', togglePanel);
     document.body.appendChild(fab);
     refreshLangBar(); // 태·미·중 막대를 '한' 왼쪽으로
@@ -4598,12 +4604,16 @@
     );
   }
 
-  // 태·미·중 막대. '한' 버튼이 있으면 그 왼쪽, 없으면(한국 사이트 등) 오른쪽 끝.
+  // 입력 언어 막대. '한' 버튼 왼쪽에 '번역' 단추 하나만 두고, 누르면 태·미·중·일·러·이·폴이 펼쳐진다
+  // (2026-10-24 사용자: 일곱 개를 늘 띄우지 말고 '번역' 하나로 합쳐 달라). 고르면 접히고, 고른 언어는
+  // '번역·태' 처럼 단추에 남아 켜져 있는 줄 안다. '한' 버튼이 없으면 오른쪽 끝.
   function mountLangBar() {
     if (document.getElementById('lzk-langbar')) return refreshLangBar();
     const bar = document.createElement('div');
     bar.id = 'lzk-langbar';
     markNoTranslate(bar);
+    const langs = document.createElement('div');
+    langs.className = 'lzk-langs';
     for (const l of TYPE_LANGS) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -4611,9 +4621,23 @@
       b.dataset.lang = l.id;
       b.title = `한국어로 쓰고 Enter → ${l.name}로 바꿉니다 (한 번 누르면 계속 켜짐, 다시 누르면 꺼짐)`;
       b.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
-      b.addEventListener('click', () => setTypeLang(typeLang === l.id ? '' : l.id));
-      bar.appendChild(b);
+      b.addEventListener('click', () => {
+        bar.removeAttribute('data-open');
+        setTypeLang(typeLang === l.id ? '' : l.id);
+      });
+      langs.appendChild(b);
     }
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'lzk-lang-toggle';
+    toggle.title = '입력 언어 고르기 — 고르면 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 그 언어로 바꿉니다';
+    toggle.addEventListener('mousedown', (e) => e.preventDefault());
+    toggle.addEventListener('click', () => bar.toggleAttribute('data-open'));
+    bar.append(langs, toggle);
+    // 막대 밖을 누르면 접는다.
+    document.addEventListener('mousedown', (e) => {
+      if (bar.hasAttribute('data-open') && !bar.contains(e.target)) bar.removeAttribute('data-open');
+    }, true);
     document.body.appendChild(bar);
     refreshLangBar();
   }
@@ -4621,8 +4645,14 @@
   function refreshLangBar() {
     const bar = document.getElementById('lzk-langbar');
     if (!bar) return;
-    bar.toggleAttribute('data-solo', !document.getElementById('lzk-fab'));
-    for (const b of bar.children) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
+    const fab = document.getElementById('lzk-fab');
+    bar.toggleAttribute('data-solo', !fab);
+    bar.toggleAttribute('data-high', !!fab && fab.hasAttribute('data-high'));
+    for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
+    const on = TYPE_LANGS.find((l) => l.id === typeLang);
+    const toggle = bar.querySelector('.lzk-lang-toggle');
+    toggle.textContent = on ? `번역·${on.label}` : '번역';
+    toggle.toggleAttribute('data-on', !!on);
   }
 
   function setTypeLang(id) {
@@ -4632,7 +4662,7 @@
     const l = genericLang();
     toast(
       id
-        ? `${l.name} 입력 켬: 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 ${l.name}로 바꿉니다.\n같은 글자를 다시 누르면 끕니다.`
+        ? `${l.name} 입력 켬: 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 ${l.name}로 바꿉니다.\n끄려면 '번역·${l.label}' 을 눌러 같은 글자를 다시 누르세요.`
         : genericThaiPage
           ? '입력 언어 선택을 껐습니다. 이 태국어 페이지에서는 전처럼 태국어로 바꿉니다.'
           : '입력 언어 선택을 껐습니다. 한국어가 그대로 입력됩니다.',
@@ -4645,10 +4675,11 @@
   // 네트워크·용어집은 실제로 바꿀 때까지 쓰지 않는다. 다른 탭에서 바꾼 선택은 이 탭으로 돌아올 때 맞춘다.
   function genericBase() {
     GM_addStyle(LZK_CSS);
+    // '한' 버튼은 모든 사이트에 단다 — 예전에는 태국어 페이지에만 달아서 네이버·구글 같은 데서는 설정 창
+    // (번역 도우미 설치·켜기 등)을 열 길이 없었다(2026-10-24 사용자 요청). Tampermonkey 메뉴에도 둔다.
+    mountFab();
     mountLangBar();
     installGenericSearch();
-    // '한' 버튼은 태국어 페이지에만 다니, 다른 페이지(네이버·구글…)에서도 설정 창(번역 도우미 설치·켜기 등)을
-    // 열 수 있게 Tampermonkey 메뉴에는 늘 둔다(2026-10-24 '한 버튼이 보이지 않습니다').
     GM_registerMenuCommand('설정 열기', togglePanel);
     window.addEventListener('focus', () => {
       const v = GM_getValue(TYPE_LANG_KEY, '');
@@ -7133,6 +7164,7 @@
 
   function messengerInit() {
     GM_addStyle(LZK_CSS);
+    mountFab(); // 메신저 설정(끝말 ครับ/ค่ะ 등)도 '한' 에서 연다
     ensureGlossary();
     registerMenus();
     new MutationObserver(scheduleChatScan).observe(document.body, { childList: true, subtree: true, characterData: true });

@@ -54,9 +54,9 @@
         Push-Location $dir
         $ErrorActionPreference = 'Continue' # npm 이 stderr 에 쓰는 경고를 실패로 보지 않게
         try {
-            if (Test-Path $cli) { & $node $cli install --omit=dev --no-audit --no-fund | Out-Host }
-            else { & npm.cmd install --omit=dev --no-audit --no-fund | Out-Host }
-            if ($LASTEXITCODE -ne 0) { throw "npm install 실패($LASTEXITCODE)" }
+            if (Test-Path $cli) { & $node $cli ci --omit=dev --no-audit --no-fund | Out-Host }
+            else { & npm.cmd ci --omit=dev --no-audit --no-fund | Out-Host }
+            if ($LASTEXITCODE -ne 0) { throw "npm ci 실패($LASTEXITCODE)" }
         }
         finally { Pop-Location; $ErrorActionPreference = 'Stop' }
 

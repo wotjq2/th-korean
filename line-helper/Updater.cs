@@ -2,7 +2,8 @@
 // git 의 파일 지문(blob sha)으로 견줘 바뀐 파일만 받는다.
 //  - 소스(.cs·build.ps1)가 바뀌면 새 exe 를 옆에 만들고, 지금 exe 를 .old.exe 로 비킨 뒤(돌고 있는 exe 도 이름은
 //    바꿀 수 있다) 새 것을 그 이름에 놓고 --wait 로 켠 다음 이 판은 끝낸다. 새 판은 이 판이 끝나기를 기다렸다 켜진다.
-//  - package.json 이 바뀌면 npm install, engine.js·ocr-worker.js 만 바뀌면 엔진만 다시 띄운다.
+//  - package.json·package-lock.json 이 바뀌면 npm ci(잠금 파일을 고쳐 쓰지 않는다 — install 은 고쳐 써서 매번 다시 받았다),
+//    engine.js·ocr-worker.js 만 바뀌면 엔진만 다시 띄운다.
 // 켜고 1분 뒤, 그 뒤로 6시간마다 본다. 트레이 메뉴 '업데이트 확인' 으로 바로 볼 수도 있다.
 // 개발하는 저장소 안(위쪽에 .git 이 있는 곳)에서는 하지 않는다 — 고치던 파일을 GitHub 판으로 덮으면 안 된다.
 // 처음 설치는 install.ps1(명령 한 줄)이 한다.
@@ -102,7 +103,7 @@ static class Updater
             if (n.EndsWith(".js")) eng = true;
         }
         if (deps || eng) engine.Stop(); // 다음 번역 때 새 engine.js·모듈로 다시 뜬다
-        if (deps) Shell(Engine.FindNode(), "\"" + NpmCli() + "\" install --omit=dev --no-audit --no-fund", 300000);
+        if (deps) Shell(Engine.FindNode(), "\"" + NpmCli() + "\" ci --omit=dev --no-audit --no-fund", 300000);
         if (!source)
         {
             App.Show("번역 도우미", "새 판으로 바꿨습니다", false, 4000);

@@ -1,4 +1,4 @@
-// LINE PC 도우미 — 태국 사이트 한국어 스크립트의 메신저 모드를 LINE PC 앱에 옮긴 것.
+// 번역 도우미(번역도우미.exe, 예전 이름 LINE 도우미) — 태국 사이트 한국어 스크립트를 크롬 밖 프로그램에 옮긴 것.
 // LINE PC 는 웹페이지가 아니라 Qt 프로그램이라 스크립트가 들어갈 수 없다. 그래서 이 프로그램이 대신
 //  - 보내기: LINE 입력칸 위의 막대(태·미·중·일·러·이·폴)에서 언어를 고르면, 한국어를 쓰고 Enter 한 번에
 //    그 언어로 바꿔 붙여 넣고 보낸다. 고른 언어는 끌 때까지 유지된다(크롬 막대와 같다).
@@ -22,6 +22,10 @@ using System.Web.Script.Serialization;
 using System.Windows.Automation;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+// 작업 관리자에 보이는 이름.
+[assembly: System.Reflection.AssemblyTitle("번역 도우미")]
+[assembly: System.Reflection.AssemblyProduct("번역 도우미")]
 
 static class Native
 {
@@ -889,10 +893,12 @@ static class App
             settingsFile = Path.Combine(dataDir, "settings.txt");
             if (Engine.FindNode() == null)
             {
-                MessageBox.Show("Node.js 가 없어 번역 엔진을 띄울 수 없습니다.\nhttps://nodejs.org 에서 LTS 를 설치한 뒤 다시 켜 주세요.", "LINE 도우미");
+                MessageBox.Show("Node.js 가 없어 번역 엔진을 띄울 수 없습니다.\nhttps://nodejs.org 에서 LTS 를 설치한 뒤 다시 켜 주세요.", "번역 도우미");
                 return;
             }
             LoadSettings();
+            // 파일 이름을 바꾼 뒤에도(LineHelper.exe → 번역도우미.exe) 윈도우 켤 때 지금 파일로 뜨게 경로를 다시 적는다.
+            try { if (AutoStart) AutoStart = true; } catch { }
             Log.Write("시작 — 대상 " + target + ", 언어 " + (Lang == "" ? "끔" : Lang));
             engine = new Engine(dir);
             ui = new Control();
@@ -1007,7 +1013,7 @@ static class App
 
     public static void RefreshTray()
     {
-        tray.Text = "LINE 도우미 — " + (Lang == "" ? "보낼 때 그대로" : LangName(Lang) + "로 바꿔 보냄");
+        tray.Text = "번역 도우미 — LINE " + (Lang == "" ? "보낼 때 그대로" : LangName(Lang) + "로 바꿔 보냄");
         menu.Items.Clear();
         ToolStripMenuItem langs = new ToolStripMenuItem("보낼 때 바꿀 언어");
         ToolStripMenuItem off = new ToolStripMenuItem("끄기 (한국어 그대로)");

@@ -1,7 +1,7 @@
 {
   "name": "th-korean-line-helper",
   "version": "1.0.0",
-  "description": "LINE PC 도우미 번역 엔진",
+  "description": "번역 도우미(LINE·화면 번역) 번역 엔진",
   "type": "commonjs",
   "dependencies": {
     "tesseract.js": "^5.1.1"

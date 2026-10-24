@@ -5,6 +5,7 @@
 //  - 받기: LINE 에서 태국어 메시지를 복사하면 마우스 옆에 한국어를 띄운다. LINE 은 메시지 글자를
 //    다른 프로그램에 보여 주지 않아(접근성 이름이 비어 있다, 2026-10-24 확인) 메신저처럼 저절로 달 수는 없다.
 //  - 화면 번역(ScreenKorean.cs): 아무 프로그램 창이든 Ctrl+Alt+K 로 영어 글자를 그 자리에 한국어로 덮는다.
+//  - 업데이트(Updater.cs): GitHub 의 새 판을 스스로 받아 바꾼다. 처음 설치는 install.ps1(명령 한 줄).
 // 번역은 engine.js(node)가 th-korean.user.js 를 그대로 불러 메신저와 같은 길로 한다.
 // 빌드: build.cmd (윈도우에 들어 있는 .NET Framework 4 csc, C# 5 문법).
 
@@ -171,6 +172,9 @@ class Engine
 
     public static string FindNode()
     {
+        // install.ps1 이 Node.js 가 없는 PC 에 받아 둔 휴대용 Node 가 먼저.
+        string mine = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "node", "node.exe");
+        if (File.Exists(mine)) return mine;
         foreach (string p in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
         {
             try
@@ -874,9 +878,16 @@ static class App
             if (args[i] == "--target") target = args[i + 1];
             if (args[i] == "--screen") screenTest = args[i + 1];
         }
+        // 업데이터가 새 판을 켤 때: 이전 판이 끝나기를 기다렸다 켜지고, 바뀌었다고 알린다.
+        bool wait = Array.IndexOf(args, "--wait") >= 0, updated = Array.IndexOf(args, "--updated") >= 0;
         bool created;
         using (Mutex m = new Mutex(true, "Local\\th-korean-line-helper-" + target, out created))
         {
+            if (!created && wait)
+            {
+                try { created = m.WaitOne(20000); }
+                catch (AbandonedMutexException) { created = true; }
+            }
             if (!created) return;
             // 모니터마다 배율이 달라도 LINE 을 제 크기로 뜨게(시스템 배율로 맞추면 PrintWindow 그림이 늘어나 흐려져
             // 태국어를 못 읽었다). 윈도우 10 1703 보다 옛것이면 예전 방식으로.
@@ -914,6 +925,8 @@ static class App
             new Thread(OcrLoop) { IsBackground = true }.Start();
             SetupTray();
             ScreenKorean.Start(engine, dataDir, ui, screenTest);
+            Updater.Start(dir, engine);
+            if (updated) Show("번역 도우미", "새 판으로 바꿨습니다", false, 5000);
             ClipWatcher clip = new ClipWatcher();
             clip.Changed += OnClipboard;
             hookProc = HookCallback;
@@ -1053,6 +1066,9 @@ static class App
         auto.Checked = AutoStart;
         auto.Click += delegate { AutoStart = !AutoStart; RefreshTray(); };
         menu.Items.Add(auto);
+        ToolStripMenuItem upd = new ToolStripMenuItem("업데이트 확인");
+        upd.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { Updater.Check(true); }); };
+        menu.Items.Add(upd);
         ToolStripMenuItem logItem = new ToolStripMenuItem("기록 보기");
         logItem.Click += delegate { try { Process.Start("notepad.exe", "\"" + Log.FilePath + "\""); } catch { } };
         menu.Items.Add(logItem);
@@ -1807,6 +1823,9 @@ static class App
     }
 
     // ---- 화면 ----
+
+    // 업데이터가 새 exe 로 갈아 끼운 뒤 이 판을 끝낸다.
+    public static void Quit() { ui.BeginInvoke((MethodInvoker)delegate { Application.Exit(); }); }
 
     static void SetBusy(bool on)
     {

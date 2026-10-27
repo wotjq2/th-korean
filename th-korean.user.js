@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.113
+// @version      1.23.114
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -52,6 +52,8 @@
   const LATIN_WORD = /[A-Za-z]{2,}/;
 
   const FREE_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
+  // gtx 가 막혔을 때 쓰는 같은 서버의 크롬 사전 확장용 주소(freeRaw).
+  const FREE_ALT_ENDPOINT = 'https://translate.googleapis.com/translate_a/t';
 
   // ---------------------------------------------------------------------------
   // 사이트별 설정
@@ -675,7 +677,29 @@
     );
   }
 
+  // 구글이 gtx 를 막으면(429 "Sorry…" 페이지, 2026-10-27 이 PC — 화면 번역이 한 줄도 못 덮고 페이지 번역도 멈췄다)
+  // 같은 서버의 dict-chrome-ex 주소는 그대로 됐다. 줄바꿈으로 이은 글도 줄 순서대로 돌려준다.
+  // 막힌 걸 한 번 보면 10분 동안은 gtx 를 건너뛰고 바로 이쪽으로 묻는다.
+  let gtxBlockedUntil = 0;
+  const isBlocked = (e) => e.rateLimited || /^HTTP 429/.test(e.message);
+
   async function freeRaw(text, from, to, timeout) {
+    if (Date.now() >= gtxBlockedUntil) {
+      try {
+        return await freeGtx(text, from, to, timeout);
+      } catch (e) {
+        if (!isBlocked(e)) throw e;
+        gtxBlockedUntil = Date.now() + 10 * 60 * 1000;
+      }
+    }
+    try {
+      return await freeAlt(text, from, to, timeout);
+    } catch (e) {
+      throw isBlocked(e) ? new RateLimited() : e;
+    }
+  }
+
+  async function freeGtx(text, from, to, timeout) {
     const url = `${FREE_ENDPOINT}?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
     const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
     if (!body.trimStart().startsWith('[')) throw new RateLimited();
@@ -687,6 +711,21 @@
     }
     if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error('응답 형식 오류');
     return data[0].map((seg) => (seg && seg[0]) || '').join('');
+  }
+
+  // 답: sl=auto 면 [["번역", "en"]], 언어를 정해 주면 ["번역"].
+  async function freeAlt(text, from, to, timeout) {
+    const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=${from}&tl=${to}&q=${encodeURIComponent(text)}`;
+    const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      throw new RateLimited();
+    }
+    const first = Array.isArray(data) ? (Array.isArray(data[0]) ? data[0][0] : data[0]) : null;
+    if (typeof first !== 'string') throw new Error('응답 형식 오류');
+    return first;
   }
 
   async function freeTranslateOne(text, from, to) {

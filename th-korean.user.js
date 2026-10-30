@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.124
+// @version      1.23.125
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5726,6 +5726,24 @@
     return '';
   }
 
+  // 까닭 짐작: '비 와서 그런가 봐' → คงเพราะฝนตก, '바빠서 그런 것 같아' → น่าจะเพราะยุ่ง,
+  // '피곤해서 그런 거 아닐까?' → เพราะเหนื่อยหรือเปล่า, '더워서 그래' → เพราะร้อน. ~서 앞은 이미 ~어 꼴이라 평서 값을 그대로 찾는다.
+  function chatBecause(bare, idx, asks) {
+    const m = bare.match(/^(.+?)서\s*(그런가\s*봐요?|그런\s*(?:것|거)\s*같아요?|그런\s*거\s*아닐까요?|그래요?|그런\s*거야)$/);
+    if (!m || m[1].endsWith('에')) return ''; // 집에서 그래 = 까닭 아님
+    // ~서 앞이 ~아·~어 꼴(받침 없는 ㅏ·ㅐ·ㅓ·ㅔ·ㅕ·ㅘ·ㅙ·ㅝ)이어야 한다 — 여기서·어디서 는 뺀다.
+    const L = m[1].charCodeAt(m[1].length - 1) - 0xac00;
+    if (L < 0 || L > 11171 || L % 28 !== 0 || ![0, 1, 4, 5, 6, 9, 10, 14].includes(Math.floor((L % 588) / 28))) return '';
+    const plain = (x) => !TH_QUESTION.test(x);
+    const v = chatWhole(m[1], idx, plain) || chatFrame(m[1], idx);
+    if (!v || TH_QUESTION.test(v) || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ถ้า|เพราะ|คง|น่าจะ)/.test(v)) return '';
+    const b = v.replace(/(นะ|สิ|เลย|จัง|แล้ว)$/, '').replace(/^จะ(?=.)/, ''); // 감기걸려=จะเป็นหวัดนะ → เป็นหวัด
+    if (/^그런가/.test(m[2])) return 'คงเพราะ' + b;
+    if (/같아/.test(m[2])) return 'น่าจะเพราะ' + b;
+    if (/아닐까/.test(m[2])) return 'เพราะ' + b + 'หรือเปล่า';
+    return 'เพราะ' + b + (asks ? 'เหรอ' : '');
+  }
+
   // 'A면 B': '시간 있으면 전화해' → ถ้ามีเวลาก็โทรมา, '비 오면 안 갈래' → ถ้าฝนตกก็ไม่ไป.
   // A 는 ~어 꼴로 바꿔 평서 값을, B 는 줄째 값을 찾는다. 라면·냉면·가면(탈) 처럼 앞마디가 낱말이면 뺀다.
   function chatIf(bare, idx, asks) {
@@ -5874,6 +5892,7 @@
       if (!th) th = chatHearsay(bare, idx, asks);
       if (!th) th = chatEnding(bare, idx, asks);
       if (!th) th = chatIf(bare, idx, asks);
+      if (!th) th = chatBecause(bare, idx, asks);
       if (!th) {
         const dg = chatDegree(bare, idx);
         if (dg) th = !asks ? dg : askable ? thaiAsk(dg, past) : ''; // 많이 아파? → เจ็บไหม

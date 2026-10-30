@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.121
+// @version      1.23.122
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4901,7 +4901,7 @@
   const TH_QUESTION = /ไหม(?!้)|มั้ย|ยัง$|หรือ|เหรอ|หรอ(?!ก)|ป่าว|(?<!ไม่มี|ไม่ได้|ไม่ไป|ไม่)(?:อะไร|ไหน|ใคร)(?!ก็)|เมื่อไ(?!รก็)|ทำไม|อย่างไร|ไง(?!ก็)|กี่|เท่าไ(?!รก็)/;
   // 물음표 붙은 평서 끝(피곤해?·갔어?·좋아요?)과 물음말(이게 있으면 '…ไหม' 를 붙이면 틀린다).
   // ~세요?·~할게요? 는 부탁·약속이라 뺀다(미터기 켜 주세요?·나중에 전화할게요?).
-  const CHAT_ASK_END = /(어|아|야|해|워|와|려|여|커|내|돼|나|요|파|뻐|퍼|싸|빠|때|셔|춰|봐|가|져|자|러|라|짜|대|쳐|켜)$/;
+  const CHAT_ASK_END = /(어|아|야|해|워|와|려|여|커|내|돼|나|요|파|뻐|퍼|싸|빠|때|셔|춰|봐|가|져|자|러|라|짜|대|쳐|켜|[이그저]래)$/;
   const CHAT_ASK_NOT = /(세요|게요|잖아|잖아요)$/;
   const CHAT_ASK_WORD = /뭐|어디|언제|누구|누가|왜|몇|얼마|어떻게|어때|무슨|어느/;
   // 물음표 없이도 묻거나 부탁하는 끝(~니·~냐·~까·~래·~나요·~ㄴ가요·~지·~죠, ~줘·~세요·~자·~봐, 있나·했나).
@@ -5071,8 +5071,9 @@
       // '싸더라'·'맛있더라고' — 겪어 본 일 ~더라 도 같은 평서 값으로.
       const dm = k.length >= 3 && k.match(/^(.+?)(더라고요|더라고|더라|다)$/);
       if (!dm) return '';
-      const plainOf = (st, polite) => {
-        const ys = polite ? koInfinitives(st).flatMap((y) => [y, y + '요']) : koInfinitives(st);
+      // ~어 꼴과 ~어요 꼴 키(무서워요=น่ากลัว)를 함께 본다.
+      const plainOf = (st) => {
+        const ys = koInfinitives(st).flatMap((y) => [y, y + '요']);
         const x = ys.find((y) => y.length >= 2 && get(y) && !TH_QUESTION.test(get(y)));
         return x ? get(x) : '';
       };
@@ -5080,11 +5081,11 @@
       if (f || dm[2] !== '다' || dm[1].length < 2) return f;
       // '비 온다'·'밥 먹는다'·'태국에 산다' — ~ㄴ다·~는다 는 받침 ㄴ·는 을 뗀 줄기(비오 → 비와)로.
       // ㄹ 줄기(살다 → 산다)도 따져 보고, 둘 다 값이 있는데 다르면(사다·살다) 쓰지 않는다.
-      if (dm[1].endsWith('는')) return plainOf(dm[1].slice(0, -1), true);
+      if (dm[1].endsWith('는')) return plainOf(dm[1].slice(0, -1));
       const L = dm[1].charCodeAt(dm[1].length - 1) - 0xac00;
       if (L < 0 || L > 11171 || L % 28 !== 4) return '';
-      const a = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L - 4), true);
-      const b = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L + 4), true);
+      const a = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L - 4));
+      const b = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L + 4));
       return a && b && a !== b ? '' : a || b;
     };
     const k = squash(bare);

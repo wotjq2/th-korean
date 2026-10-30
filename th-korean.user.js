@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.126
+// @version      1.23.127
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6258,6 +6258,10 @@
     const parts = core.split(/(?<=[.!?~,？！])\s*/).map((s) => s.trim()).filter((s) => HANGUL.test(s));
     if (parts.length < 2) return '';
     const out = parts.map((p) => plainStatement(p, one(p)) || chatFromGlossary(p, idx)); // 조각 안의 대답말(미안 늦었어.)도 나눈다
+    // '어디로 갈까? 카오야이 어때?' — 고르는 물음(~할까?) 뒤의 'N 어때?' 는 권하는 말(เขาใหญ่ดีไหม)이다.
+    for (let i = 1; i < out.length; i++)
+      if (/까요?\s*[?？]$/.test(parts[i - 1]) && /어때요?\s*[?？]$/.test(parts[i]) && /เป็นยังไง$/.test(out[i]))
+        out[i] = out[i].replace(/เป็นยังไง$/, 'ดีไหม');
     return out.every(Boolean) ? out.join(' ') : '';
   }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.132
+// @version      1.23.133
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5732,6 +5732,16 @@
   // 까닭 짐작: '비 와서 그런가 봐' → คงเพราะฝนตก, '바빠서 그런 것 같아' → น่าจะเพราะยุ่ง,
   // '피곤해서 그런 거 아닐까?' → เพราะเหนื่อยหรือเปล่า, '더워서 그래' → เพราะร้อน. ~서 앞은 이미 ~어 꼴이라 평서 값을 그대로 찾는다.
   function chatBecause(bare, idx, asks) {
+    // '에어컨 때문인가 봐' → คงเพราะแอร์, '술 때문인 것 같아' → น่าจะเพราะเหล้า, '배달 음식 때문이야' → เพราะอาหารเดลิเวอรี่.
+    const nm = bare.match(/^(.+?)\s*때문(이야|이에요|인가\s*봐요?|인\s*(?:것|거)\s*같아요?|일\s*거야)$/);
+    if (nm) {
+      const n = squash(nm[1]);
+      const nv = CHAT_PRON[n] || CHAT_SUBJ_TH[n] || { 비: 'ฝน', 돈: 'เงิน' }[n] || CHAT_FRAME_TH[n] || idx.get(n) || chatWhole(nm[1], idx, (x) => !TH_QUESTION.test(x));
+      if (!nv || TH_QUESTION.test(nv) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ถ้า|เพราะ|คง|น่าจะ|ไม่)/.test(nv) || /(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(nv)) return '';
+      if (/^인가/.test(nm[2])) return 'คงเพราะ' + nv;
+      if (/같아|거야/.test(nm[2])) return 'น่าจะเพราะ' + nv;
+      return 'เพราะ' + nv + (asks ? 'เหรอ' : '');
+    }
     const m = bare.match(/^(.+?)서\s*(그런가\s*봐요?|그런\s*(?:것|거)\s*같아요?|그런\s*거\s*아닐까요?|그래요?|그런\s*거야)$/);
     if (!m || m[1].endsWith('에')) return ''; // 집에서 그래 = 까닭 아님
     // ~서 앞이 ~아·~어 꼴(받침 없는 ㅏ·ㅐ·ㅓ·ㅔ·ㅕ·ㅘ·ㅙ·ㅝ)이어야 한다 — 여기서·어디서 는 뺀다.
@@ -6076,7 +6086,10 @@
         const [pre, w] = splitLast(jn[1]);
         // 명사 + 이잖아 = 명사이야('내일 출근이잖아' → 내일 출근이야).
         const nounJ = w.length >= 2 && w.endsWith('이') ? [w + '야', w.slice(0, -1) + '이야'] : [];
-        const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : [...nounJ, ...koInfinitives(w)]);
+        // 받침 없는 명사 + 잖아 = 명사야('다시 쓰는 거잖아' → 쓰는 거야, '친구잖아' → 친구야) — 움직씨 꼴 다음 후보.
+        const Lw = w.charCodeAt(w.length - 1) - 0xac00;
+        const nounV = Lw >= 0 && Lw <= 11171 && Lw % 28 === 0 && !w.endsWith('이') ? [w + '야'] : [];
+        const [a] = stateOf(pre, w.endsWith('았') || w.endsWith('었') || w.endsWith('했') ? [w + '어'] : [...nounJ, ...koInfinitives(w), ...nounV]);
         // 값에 이미 ก็ 가 있으면(เธอก็ตื่นเต้น) 앞에 또 붙이지 않는다.
         if (a && !/^(อย่า|ช่วย(?!ได้)|ขอ(?!ง))/.test(a) && !/(นะ|สิ|หน่อย|เถอะ|ด้วย)$/.test(a))
           return addPoliteParticle(s, (/ก็/.test(a) ? '' : 'ก็') + a + 'นี่');
@@ -6240,7 +6253,8 @@
       const rest = /ยัง$/.test(q[2]) && !/แล้ว$/.test(q[1]) ? q[1] + 'แล้ว' : q[1];
       // 부탁 값(ช่วย…ได้ไหม·ขอ…ได้ไหม)과 '나 사랑해' = รักฉันไหม 처럼 나 가 목적어인 값은 평서로 못 바꾼다.
       const req = /ช่วย(?!ได้)|ขอ(?!ง|บ|โทษ)|หน่อย/.test(rest);
-      if (!q[1] || TH_QUESTION.test(rest) || req || (/^(나|난)\s/.test(ko) && /ฉัน(ได้)?$/.test(rest))) return '';
+      // '나 때문이야' = เพราะฉัน 은 목적어가 아니다.
+      if (!q[1] || TH_QUESTION.test(rest) || req || (/^(나|난)\s/.test(ko) && /ฉัน(ได้)?$/.test(rest) && !/^เพราะ/.test(rest))) return '';
       return addPoliteParticle(s, rest);
     };
     const whole = plainStatement(core, one(core));

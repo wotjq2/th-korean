@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.133
+// @version      1.23.134
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5748,7 +5748,14 @@
     const L = m[1].charCodeAt(m[1].length - 1) - 0xac00;
     if (L < 0 || L > 11171 || L % 28 !== 0 || ![0, 1, 4, 5, 6, 9, 10, 14].includes(Math.floor((L % 588) / 28))) return '';
     const plain = (x) => !TH_QUESTION.test(x);
-    const v = chatWhole(m[1], idx, plain) || chatFrame(m[1], idx);
+    let v = chatWhole(m[1], idx, plain) || chatFrame(m[1], idx);
+    // '덥고 습해서 그래' → เพราะร้อนและชื้น: A고 B 는 A 의 ~어 꼴 값과 B 값을 และ 로 잇는다.
+    const ab = !v && m[1].match(/^(.+?)고\s+(\S.*)$/);
+    if (ab) {
+      const va = koInfinitives(ab[1]).map((f) => chatWhole(f, idx, plain)).find(Boolean);
+      const vb = chatWhole(ab[2], idx, plain);
+      if (va && vb && !/\s/.test(va + vb) && !/(นะ|สิ|เลย|จัง|แล้ว)$/.test(va)) v = va + 'และ' + vb;
+    }
     if (!v || TH_QUESTION.test(v) || /\s/.test(v) || /^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ถ้า|เพราะ|คง|น่าจะ)/.test(v)) return '';
     const b = v.replace(/(นะ|สิ|เลย|จัง|แล้ว)$/, '').replace(/^จะ(?=.)/, ''); // 감기걸려=จะเป็นหวัดนะ → เป็นหวัด
     if (/^그런가/.test(m[2])) return 'คงเพราะ' + b;

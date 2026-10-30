@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.131
+// @version      1.23.132
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6057,7 +6057,10 @@
         const [pre, w] = splitLast(gt[1]);
         const stem = /을$/.test(w) && w.length >= 2 ? w.slice(0, -1) : dropJong(w, 8);
         const [a] = stem ? stateOf(pre, koInfinitives(stem)) : [''];
-        if (a && !/^(น่าจะ|คง|จะ)/.test(a)) return addPoliteParticle(s, 'น่าจะ' + a.replace(/แล้ว$/, ''));
+        // '맞으면 아플 것 같아' — 조건 마디(ถ้า…ก็…)면 น่าจะ 는 ก็ 뒤로(ถ้า…ก็น่าจะ…), 아니면 맨 앞.
+        const ac = a && a.match(/^(ถ้า[^\s]*?ก็)(.+)$/);
+        if (ac && !/^(น่าจะ|คง|จะ)/.test(ac[2])) return addPoliteParticle(s, ac[1] + 'น่าจะ' + ac[2].replace(/แล้ว$/, ''));
+        if (a && !ac && !/^(น่าจะ|คง|จะ|ถ้า)/.test(a)) return addPoliteParticle(s, 'น่าจะ' + a.replace(/แล้ว$/, ''));
       }
       // '(나도 오늘 정신없었어.) 일이 너무 많아서' → เพราะงานเยอะมาก: 뒤에 홀로 남은 까닭 ~어서.
       // 서 앞이 ~어 꼴 끝소리일 때만(보고서·계약서·혼자서·집에서 는 아니다).

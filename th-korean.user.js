@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.120
+// @version      1.23.121
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5431,12 +5431,16 @@
       let demo = '';
       const dm = !idx.has(n) && head.match(/^(이|그|저)\s+(\S.*)$/);
       if (dm) [n, demo] = [squash(dm[2]), dm[1] === '이' ? 'นี้' : 'นั้น'];
-      if (!idx.has(n) && /[이가을를은는도]$/.test(n)) n = n.slice(0, -1);
+      // 조사는 앞말에 붙은 것만 뗀다 — '치과 가 봐' 의 띄어 쓴 가 는 동사(가다)라 '치과' 를 보는 말이 아니다.
+      if (!idx.has(n) && /[이가을를은는도]$/.test(n)) {
+        if (/\s\S$/.test(head)) return '';
+        n = n.slice(0, -1);
+      }
       if (CHAT_FRAME_NOT.has(n) || (n.length < 2 && !CHAT_FRAME_ONE.includes(n))) return '';
       if (idiom && (CHAT_FRAME_IDIOM[idiom].has(n) || CHAT_FRAME_TIME.test(idx.get(n) || ''))) return '';
       // 보내 줘·하러 = 동사. 한국어·영어(ภาษา…) 는 ~어 로 끝나도 명사다.
       if (/(게|러|요|[아어여워와해봐려])$/.test(n) && !/^ภาษา/.test(idx.get(n) || '')) return '';
-      if (/(에|번|씩|만|부터|까지)$/.test(n)) return ''; // 이틀에 한 번 주세요·반 킬로만 주세요 = 명사 아님
+      if (/(에|번|씩|만|부터|까지|보다)$/.test(n)) return ''; // 이틀에 한 번 주세요·반 킬로만 주세요·생각보다 괜찮아 = 명사 아님
       // 할 수·먹을 거·간 데·본 적 — ㄹ/ㄴ 받침 뒤 매인 말은 명사가 아니다(쌀국수·매운탕 은 괜찮다).
       const jong = n.length >= 2 ? (n.charCodeAt(n.length - 2) - 0xac00) % 28 : 0;
       if (/(수|거|것|데|적|줄)$/.test(n) && (jong === 8 || jong === 4) && n !== '자전거') return '';

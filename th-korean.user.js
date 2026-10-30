@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.130
+// @version      1.23.131
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5625,6 +5625,7 @@
     if (j === 0 && v === 11) out.push(head + syl(c, 10, 0)); // 되 → 돼
     if (j === 0 && [0, 1, 4, 5, 6].includes(v)) out.push(stem); // 가·내·서
     if (j !== 0) out.push(stem + (v === 0 || v === 8 ? '아' : '어'));
+    if (j === 19) out.push(head + syl(c, v, 0) + (v === 0 || v === 8 ? '아' : '어')); // ㅅ 불규칙(낫→나아, 붓→부어) — 웃어·씻어 다음
     return out;
   }
 

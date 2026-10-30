@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.127
+// @version      1.23.128
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6132,6 +6132,9 @@
         const pv = CHAT_SUBJ_TH[ps[1]] || idx.get(ps[1]);
         const pOk = pv && !/[\sA-Za-z0-9]/.test(pv) && !TH_QUESTION.test(pv) && !CHAT_FRAME_TIME.test(pv);
         const r = pOk && predB('', ps[2]) ? one(ps[2] + tail) : '';
+        // '침대에서 일하면 허리 아파' → ถ้าทำงานที่เตียงก็ปวดหลัง: 곳은 조건 마디(ถ้า…) 안, ก็ 앞에.
+        const rc = r && r.match(/^(ถ้า[^\s]*?)(ก็.+)$/);
+        if (rc && !/(ที่|จาก)/.test(rc[1])) return rc[1] + 'ที่' + pv + rc[2];
         const pm2 = r && r.match(/^(.*?)((?:ไหม|หรือยัง|หรือเปล่า|(?<!ห)ยัง|แล้ว|(?<!เจอ)กัน|อยู่)?(?:นะ|เถอะ|ด้วย)?(?:ครับ|ค่ะ|คะ)?)$/);
         if (pm2 && pm2[1] && !/(ที่|จาก)/.test(pm2[1])) {
           return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : 'ที่') + pv + pm2[2];

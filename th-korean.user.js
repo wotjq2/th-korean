@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.135
+// @version      1.23.136
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5777,6 +5777,10 @@
     const plain = (x) => !TH_QUESTION.test(x);
     let a = known || '';
     if (!a) for (const f of koInfinitives(m[1])) if ((a = chatWhole(f, idx, plain) || chatFrame(f, idx))) break;
+    if (!known) a = a.replace(/(นะ|สิ|หน่อย|เถอะ)$/, ''); // 창문열어=เปิดหน้าต่างนะ → เปิดหน้าต่าง
+    // '창문 열면 안 돼' = 열지 마라 → ห้ามเปิดหน้าต่าง (ถ้า…ก็ไม่ได้ 아님). 부탁·부정 값은 뺀다.
+    if (!known && !asks && /^안\s*(?:돼|되)(?:요)?$/.test(m[3]) && a && !/\s/.test(a) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่|จะ)/.test(a))
+      return 'ห้าม' + a.replace(/แล้ว$/, '');
     const b = a && (chatWhole(m[3], idx, asks ? (x) => TH_QUESTION.test(x) : plain) || (!asks && chatFrame(m[3], idx)));
     if (!b || /ถ้า/.test(b) || (!known && /ถ้า/.test(a))) return '';
     const lead = known || `ถ้า${a}`;
@@ -6169,10 +6173,11 @@
         const r = pOk && predB('', ps[2]) ? one(ps[2] + tail) : '';
         // '침대에서 일하면 허리 아파' → ถ้าทำงานที่เตียงก็ปวดหลัง: 곳은 조건 마디(ถ้า…) 안, ก็ 앞에.
         const rc = r && r.match(/^(ถ้า[^\s]*?)(ก็.+)$/);
-        if (rc && !/(ที่|จาก)/.test(rc[1])) return rc[1] + 'ที่' + pv + rc[2];
+        if (rc && !/(ที่|จาก)/.test(rc[1])) return rc[1] + (/^ที่/.test(pv) ? '' : 'ที่') + pv + rc[2];
         const pm2 = r && r.match(/^(.*?)((?:ไหม|หรือยัง|หรือเปล่า|(?<!ห)ยัง|แล้ว|(?<!เจอ)กัน|อยู่)?(?:นะ|เถอะ|ด้วย)?(?:ครับ|ค่ะ|คะ)?)$/);
         if (pm2 && pm2[1] && !/(ที่|จาก)/.test(pm2[1])) {
-          return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : 'ที่') + pv + pm2[2];
+          // 곳 값이 이미 ที่… 이면(그늘=ที่ร่ม) ที่ 를 또 붙이지 않는다.
+          return pm2[1] + (/^(왔|와|오|출발|떠나|나와|나왔|돌아|보내|보냈|가져)/.test(ps[2]) ? 'จาก' : /^ที่/.test(pv) ? '' : 'ที่') + pv + pm2[2];
         }
       }
       // '(수영복 챙겨.) 선글라스도' → แว่นกันแดดด้วย: 낱말 하나 + 도 조각. 포도·온도 처럼 도 까지 한 낱말이면 그대로.

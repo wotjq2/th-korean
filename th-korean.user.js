@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.114
+// @version      1.23.115
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5068,8 +5068,21 @@
       // '싸더라'·'맛있더라고' — 겪어 본 일 ~더라 도 같은 평서 값으로.
       const dm = k.length >= 3 && k.match(/^(.+?)(더라고요|더라고|더라|다)$/);
       if (!dm) return '';
-      const f = koInfinitives(dm[1]).find((x) => x.length >= 2 && get(x) && !TH_QUESTION.test(get(x)));
-      return f ? get(f) : '';
+      const plainOf = (st, polite) => {
+        const ys = polite ? koInfinitives(st).flatMap((y) => [y, y + '요']) : koInfinitives(st);
+        const x = ys.find((y) => y.length >= 2 && get(y) && !TH_QUESTION.test(get(y)));
+        return x ? get(x) : '';
+      };
+      const f = plainOf(dm[1]);
+      if (f || dm[2] !== '다' || dm[1].length < 2) return f;
+      // '비 온다'·'밥 먹는다'·'태국에 산다' — ~ㄴ다·~는다 는 받침 ㄴ·는 을 뗀 줄기(비오 → 비와)로.
+      // ㄹ 줄기(살다 → 산다)도 따져 보고, 둘 다 값이 있는데 다르면(사다·살다) 쓰지 않는다.
+      if (dm[1].endsWith('는')) return plainOf(dm[1].slice(0, -1), true);
+      const L = dm[1].charCodeAt(dm[1].length - 1) - 0xac00;
+      if (L < 0 || L > 11171 || L % 28 !== 4) return '';
+      const a = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L - 4), true);
+      const b = plainOf(dm[1].slice(0, -1) + String.fromCharCode(0xac00 + L + 4), true);
+      return a && b && a !== b ? '' : a || b;
     };
     const k = squash(bare);
     if (CHAT_WORDS[k] && ok(CHAT_WORDS[k])) return CHAT_WORDS[k];

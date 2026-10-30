@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.116
+// @version      1.23.117
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6176,8 +6176,11 @@
     // 뒤가 '정말·진짜' 뿐이면 꾸밈말이라(감사합니다 정말 = 정말 감사합니다) 나누지 않는다.
     // '네 생일 언제야'·'네 차례야' 의 네 는 '너의' — 대답 네·예 는 뒤가 존댓말(네 알겠어요)이거나
     // 문장부호가 붙었을 때(네, 고마워)만 뗀다.
+    // '진짜 잘됐다'·'정말 미안하대' 의 진짜·정말 은 꾸밈말(จริงๆ)이라 문장부호가 붙었을 때(진짜, 대박)만 뗀다.
     const yesOk = (l) =>
-      !/^(네|예)$/.test(l[1]) || /^[^\s]+[,.!~]/.test(core) || /(요|니다|니까|세요)[\s.!?~？！]*$/.test(l[2]);
+      /^(진짜|정말)$/.test(l[1])
+        ? /^[^\s]+[,.!~]/.test(core)
+        : !/^(네|예)$/.test(l[1]) || /^[^\s]+[,.!~]/.test(core) || /(요|니다|니까|세요)[\s.!?~？！]*$/.test(l[2]);
     if (lead && CHAT_LEADS.has(lead[1]) && yesOk(lead) && !/^(정말|진짜)(로)?[\s.!?~？！]*$/.test(lead[2])) {
       const a = one(lead[1]);
       const b = a && (plainStatement(lead[2], one(lead[2])) || chatFromGlossary(lead[2], idx)); // '미안 늦었어. 길이 막혀'

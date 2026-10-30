@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.128
+// @version      1.23.129
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5893,6 +5893,13 @@
       if (!th) th = chatEnding(bare, idx, asks);
       if (!th) th = chatIf(bare, idx, asks);
       if (!th) th = chatBecause(bare, idx, asks);
+      // '허리 아파 죽겠어' → ปวดหลังจะตายแล้ว: 앞말 평서 값 + จะตายแล้ว(용어집엔 배고파죽겠어 같은 것만 있다).
+      const dz = !th && !asks && bare.match(/^(.+?)\s*죽겠(?:어요?|다)$/);
+      if (dz) {
+        const v = chatWhole(dz[1], idx, (x) => !TH_QUESTION.test(x));
+        if (v && !/\s/.test(v) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่|จะ)/.test(v) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว|จัง|เลย|ตาย)$/.test(v))
+          th = v.replace(/(.)มาก$/, '$1') + 'จะตายแล้ว';
+      }
       if (!th) {
         const dg = chatDegree(bare, idx);
         if (dg) th = !asks ? dg : askable ? thaiAsk(dg, past) : ''; // 많이 아파? → เจ็บไหม

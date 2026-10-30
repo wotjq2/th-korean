@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.125
+// @version      1.23.126
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6181,6 +6181,15 @@
         if (v1 && !/\s/.test(v1) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่)/.test(v1) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v1))
           // '너는?'·'오늘은?' = 그럼 ~는? → แล้วเธอล่ะ
           return addPoliteParticle(s, /[은는]$/.test(bare) ? `แล้ว${v1}ล่ะ` : v1 + 'เหรอ');
+      }
+      // '송끄란이야?'·'학생이야?' — 낱말 + (이)야 되묻기도 같은 값+เหรอ.
+      // 고양이야 = 고양이 + 야 이므로 ~이야 를 뗀 꼴과 ~야 만 뗀 꼴을 다 본다. 진심=ความจริงใจ 같은 ความ·การ 명사는 뺀다.
+      const cop = !th && asks && !/\s/.test(bare) && /야$/.test(bare) &&
+        [bare.replace(/이야$/, ''), bare.slice(0, -1)].find((n) => n.length >= 2 && !CHAT_WORDS[n] && (CHAT_FRAME_TH[n] || idx.has(n)));
+      if (cop) {
+        const v2 = CHAT_FRAME_TH[cop] || idx.get(cop);
+        if (v2 && !/[\sA-Za-z0-9]/.test(v2) && !TH_QUESTION.test(v2) && !/^(อย่า|ห้าม|ช่วย(?!ได้)|ขอ(?!ง)|ไม่|ความ|การ)/.test(v2) && !/(นะ|สิ|เถอะ|หน่อย|ด้วย|แล้ว)$/.test(v2))
+          return addPoliteParticle(s, v2 + 'เหรอ');
       }
       // '집에 휴지 있어?' → ที่บ้านมีทิชชู่ไหม, '냉장고에 우유 없어' → ในตู้เย็นไม่มีนม: 곳+에 + 것 + 있어/없어.
       // 관심·재미·약속 있어 처럼 굳은 말은 뺀다. 때 낱말(주말에 시간 있어)은 CHAT_FRAME_TIME 으로 거른다.

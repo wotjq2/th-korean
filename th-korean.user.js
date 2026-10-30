@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.122
+// @version      1.23.123
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5581,6 +5581,24 @@
     return `ใช้เวลา${m[2] ? 'ประมาณ' : ''} ${out}${asks ? 'เหรอ' : ''}`;
   }
 
+  // 돈: '삼천오백 바트' → 3500 บาท, '만 이천 원' → 12000 วอน, '오백 바트 정도' → ประมาณ 500 บาท.
+  // 용어집엔 자주 쓰는 액수만 있어서(천오백바트) 한자어 수를 셈해 숫자로 쓴다.
+  function chatMoney(bare, asks) {
+    const m = bare.match(/^([일이삼사오육칠팔구십백천만\s]+?)\s*(바트|밧|원)\s*(정도|쯤)?\s*(?:이야|이에요|예요|야|요)?$/);
+    if (!m || !/[십백천만]/.test(m[1]) && m[1].replace(/\s/g, '').length > 1) return '';
+    const DIG = { 일: 1, 이: 2, 삼: 3, 사: 4, 오: 5, 육: 6, 칠: 7, 팔: 8, 구: 9 };
+    const UNIT = { 십: 10, 백: 100, 천: 1000 };
+    let [total, part, d] = [0, 0, 0];
+    for (const ch of m[1].replace(/\s/g, '')) {
+      if (DIG[ch]) d = DIG[ch];
+      else if (UNIT[ch]) [part, d] = [part + (d || 1) * UNIT[ch], 0];
+      else [total, part, d] = [total + (part + d || 1) * 10000, 0, 0]; // 만
+    }
+    const n = total + part + d;
+    if (!n) return '';
+    return `${m[3] ? 'ประมาณ ' : ''}${n} ${m[2] === '원' ? 'วอน' : 'บาท'}${asks ? 'เหรอ' : ''}`;
+  }
+
   // 줄기 → ~아/어 꼴 후보: 덥→더워, 예쁘→예뻐, 졸리→졸려, 오→와, 모르→몰라, 피곤하→피곤해, 먹었→먹었어.
   function koInfinitives(stem) {
     const L = stem.charCodeAt(stem.length - 1) - 0xac00;
@@ -5841,6 +5859,7 @@
       const past = /어요?$/.test(bare) && pre >= 0 && pre % 28 === 20; // ㅆ 받침 + 어
       if (!th && askable) th = thaiAsk(chatWhole(bare, idx), past);
       if (!th) th = chatDuration(bare, asks);
+      if (!th) th = chatMoney(bare, asks);
       if (!th) {
         const fr = chatFrame(bare, idx);
         // 물 있어? → มีน้ำไหม, 밥 먹었어? → กินข้าวหรือยัง. 어때·먹을래 틀은 값이 이미 묻는 꼴이다.

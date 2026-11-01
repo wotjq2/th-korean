@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.4
+// @version      1.27.5
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5228,6 +5228,12 @@
     const d = dub;
     if (!d || d.failed) return;
     const v = d.video;
+    // 다른 사이트: 이 영상은 멈췄거나 사라졌고 다른 영상이 재생 중이면(넘겼다) 이 자막은 끈다. 새 영상의 'play' 가
+    // 앞 영상이 멈추기 전에 오면 남아서, 마지막 문장이 새 영상 위에 그대로 떠 있었다.
+    if (!YOUTUBE && (v.paused || !v.isConnected)) {
+      const now = livePlayingVideo();
+      if (now && now !== v) return dubStop();
+    }
     dubPlaceSub();
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains('ad-showing')) {
       if (d.cur !== -2) {
@@ -5590,7 +5596,7 @@
     toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!on);
     const cc = dubPanel.querySelector('.lzk-dub-cc');
-    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet'));
+    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet' || (liveState === 'ok' && liveKoreanEars())));
     if (!on)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
@@ -5793,7 +5799,10 @@
   const LIVE_URL = 'http://127.0.0.1:38291/caption';
   const LIVE_MAX_AGE = 6000; // 이만큼 새 말이 없으면 자막을 내린다
   let liveVideo = null;
-  let liveBusy = false;
+  // 묻기 시작한 시각(0 = 쉬는 중). 확장 뒤쪽이 막 깨어나는 사이에 보낸 요청은 답이 영영 안 올 때가 있어(시험 크롬에서
+  // 두 번에 한 번 꼴로 이 탭의 실시간 자막이 끝까지 멈췄다), 5초가 지나면 그 요청은 버리고 다시 묻는다.
+  let liveBusy = 0;
+  let liveSeq = 0;
   let liveFails = 0;
   let liveNext = 0;
   // ok: 띄우는 중, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠,
@@ -5805,8 +5814,14 @@
   const LIVE_SETTINGS = 'chrome://settings/accessibility';
   // 크롬 실시간 자막이 꺼져 있으면 탭마다 한 번, 재생 중인 영상 아래에 잠깐 알린다(창을 열지 않아도 보이게).
   const LIVE_CC_HINT = "크롬 '실시간 자막' 이 꺼져 있어 한국어 자막을 만들 수 없습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기";
+  // 크롬이 한국어로 듣고 있으면 외국어 말은 거의 못 받아 적는다(사용자 2026-11-01, 라자다 영어 홍보 영상 — 소리를
+  // 켜도 자막이 없었다). 외국어 영상을 보려고 쓰는 기능이라 이것도 탭마다 한 번 영상 아래에 알린다.
+  const LIVE_KO_HINT =
+    "크롬 실시간 자막이 '한국어' 로 듣고 있어 외국어 말을 못 받아 적습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기 › 언어를 태국어·영어 등으로";
   let liveHinted = false;
   let liveHintUntil = 0;
+  let liveHintText = '';
+  const liveKoreanEars = () => /^ko/i.test(liveCc.lang || '');
 
   function livePlayingVideo() {
     let best = null;
@@ -5841,10 +5856,14 @@
   function liveNote() {
     const lang = liveCc.lang ? LIVE_LANGS[liveCc.lang.split('-')[0]] || liveCc.lang : '';
     const why = {
-      ok: `크롬 실시간 자막을 한국어로 띄우는 중 (${liveCc.tr ? "크롬이 번역 — 단어집을 쓰려면 크롬 '자막 번역' 끄기" : '단어집 먼저'})`,
+      ok:
+        `크롬 실시간 자막을 한국어로 띄우는 중 (${liveCc.tr ? "크롬이 번역 — 단어집을 쓰려면 크롬 '자막 번역' 끄기" : '단어집 먼저'})` +
+        (liveKoreanEars() ? " · 크롬이 '한국어' 로 듣는 중 — 외국어 영상이면 아래 단추로 언어를 바꾸세요" : ''),
       // 크롬은 소리가 꺼진 영상은 받아 적지 않는다(라자다 상품 영상은 소리 꺼진 채로 돈다 — 사용자 2026-11-01).
       muted: '영상 소리가 꺼져 있습니다. 영상의 소리를 켜야 크롬이 말을 받아 적습니다',
-      quiet: `크롬이 받아 적은 말이 없습니다. 음악만 있는 영상이거나, 크롬이 받아 적는 언어${lang ? `(지금 ${lang})` : ''}가 영상 언어와 다를 수 있습니다`,
+      quiet: liveKoreanEars()
+        ? "크롬이 받아 적은 말이 없습니다. 크롬이 '한국어' 로 듣고 있어 외국어 말은 못 받아 적습니다 — 아래 단추로 크롬 설정을 열어 언어(태국어·영어 등)를 바꾸세요"
+        : `크롬이 받아 적은 말이 없습니다. 음악만 있는 영상이거나, 크롬이 받아 적는 언어${lang ? `(지금 ${lang})` : ''}가 영상 언어와 다를 수 있습니다`,
       ccoff: "크롬 '실시간 자막' 이 꺼져 있습니다 — 아래 단추로 크롬 설정을 열어 '실시간 자막' 을 켜 주세요",
       off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
       none: '번역 도우미가 꺼져 있습니다',
@@ -5866,23 +5885,26 @@
 
   function liveTick() {
     if (!YOUTUBE && !dubCfg.pageSubs) return liveHide();
-    if (liveBusy || document.visibilityState !== 'visible' || Date.now() < liveNext) return;
+    if ((liveBusy && Date.now() - liveBusy < 5000) || document.visibilityState !== 'visible' || Date.now() < liveNext) return;
     const v = livePlayingVideo();
     if (!v) return liveHide();
     if (dubOwns(v)) {
       liveVideo = null;
       return;
     }
-    liveBusy = true;
+    liveBusy = Date.now();
+    const seq = ++liveSeq;
     const done = (text, state) => {
-      liveBusy = false;
+      if (seq !== liveSeq) return; // 버린 요청의 늦은 답
+      liveBusy = 0;
       liveSetState(state);
       if (dubOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
-      if (state === 'ccoff' && !liveHinted) {
+      if (!liveHinted && (state === 'ccoff' || ((state === 'quiet' || state === 'ok') && liveKoreanEars()))) {
         liveHinted = true;
-        liveHintUntil = Date.now() + 8000;
+        liveHintUntil = Date.now() + 9000;
+        liveHintText = state === 'ccoff' ? LIVE_CC_HINT : LIVE_KO_HINT;
       }
-      if (!text && Date.now() < liveHintUntil) text = LIVE_CC_HINT;
+      if (Date.now() < liveHintUntil) text = liveHintText;
       if (!text) return liveHide();
       liveVideo = v;
       dubShowSub(text);
@@ -5906,7 +5928,10 @@
           j = null;
         }
         const text = j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '';
-        if (j) liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
+        if (j && (j.ccLang || '') + !!j.ccTr !== (liveCc.lang || '') + !!liveCc.tr) {
+          liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
+          dubStatus();
+        }
         done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
       },
       onerror: fail,

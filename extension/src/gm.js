@@ -109,6 +109,11 @@ function GM_xmlhttpRequest(d) {
   };
 }
 
+// 새 탭 열기. 크롬 설정(chrome://settings/…)은 페이지에서 못 열어 background.js 가 연다.
+function GM_openInTab(url) {
+  chrome.runtime.sendMessage({ t: 'open-tab', url }).catch(() => {});
+}
+
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;

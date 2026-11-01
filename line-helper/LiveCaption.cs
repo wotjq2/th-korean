@@ -10,6 +10,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Automation;
@@ -90,6 +91,7 @@ static class LiveCaption
                         d["text"] = latest;
                         d["age"] = (int)(DateTime.Now - latestAt).TotalMilliseconds;
                     }
+                    d["cc"] = ChromeCc();
                     lastPolled = DateTime.Now;
                     byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
@@ -100,6 +102,46 @@ static class LiveCaption
             }
             catch (Exception) { /* 끊긴 연결 */ }
         }
+    }
+
+    // 크롬 설정의 '실시간 자막' 이 켜져 있는가("on"/"off", 모르면 ""). 꺼져 있으면 옮길 글자가 없다 — 사용자
+    // (2026-11-01)가 설정 화면에서 그 스위치를 끈 채 '번역 자막이 없다' 고 했다. 확장이 영상 위·창에 알린다.
+    // 마지막으로 쓴 프로필의 Preferences 를, 파일이 바뀌었을 때만 다시 읽는다(키가 없으면 기본값 = 꺼짐).
+    static string ccState = "";
+    static DateTime ccChecked = DateTime.MinValue;
+    static DateTime ccFileTime = DateTime.MinValue;
+    static string ccFile = "";
+    static DateTime stateTime = DateTime.MinValue;
+
+    static string ChromeCc()
+    {
+        if ((DateTime.Now - ccChecked).TotalMilliseconds < 2000) return ccState;
+        ccChecked = DateTime.Now;
+        try
+        {
+            string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google\\Chrome\\User Data");
+            string localState = Path.Combine(root, "Local State");
+            if (!File.Exists(localState)) return ccState = "";
+            DateTime lt = File.GetLastWriteTime(localState);
+            if (lt != stateTime || ccFile.Length == 0)
+            {
+                stateTime = lt;
+                Match p = Regex.Match(File.ReadAllText(localState), "\"last_used\":\"([^\"]+)\"");
+                ccFile = Path.Combine(root, p.Success ? Regex.Unescape(p.Groups[1].Value) : "Default", "Preferences");
+                ccFileTime = DateTime.MinValue;
+            }
+            if (!File.Exists(ccFile)) return ccState = "";
+            DateTime ft = File.GetLastWriteTime(ccFile);
+            if (ft == ccFileTime) return ccState;
+            ccFileTime = ft;
+            string text;
+            using (FileStream f = new FileStream(ccFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader r = new StreamReader(f, System.Text.Encoding.UTF8))
+                text = r.ReadToEnd();
+            ccState = Regex.IsMatch(text, "\"live_caption_enabled\":\\s*true") ? "on" : "off";
+        }
+        catch (Exception) { ccFileTime = DateTime.MinValue; } // 크롬이 쓰는 중 — 다음에 다시
+        return ccState;
     }
 
     static void Loop()

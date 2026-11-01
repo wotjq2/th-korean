@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.1
+// @version      1.27.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -27,6 +27,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
+// @grant        GM_openInTab
 // @run-at       document-start
 // @noframes
 // ==/UserScript==
@@ -2245,6 +2246,11 @@
       background: #0f146e; color: #fff; font: 600 13px/1 system-ui, sans-serif;
     }
     .lzk-dubpanel .lzk-dub-toggle[data-on] { background: #b42318; }
+    .lzk-dubpanel .lzk-dub-cc {
+      width: 100%; margin: -4px 0 10px; padding: 7px; border: 1px solid #0f146e; border-radius: 6px; cursor: pointer;
+      background: #fff; color: #0f146e; font: 600 12px/1 system-ui, sans-serif;
+    }
+    .lzk-dubpanel .lzk-dub-cc[hidden] { display: none; }
     .lzk-dubpanel label { display: block; margin-top: 11px; color: #111; font-size: 12px; font-weight: 600; }
     .lzk-dubpanel input[type=range] { display: block; width: 100%; margin: 5px 0 0; }
     .lzk-dubpanel .lzk-dub-check { display: flex; gap: 6px; align-items: center; font-weight: 500; }
@@ -5578,6 +5584,8 @@
     const on = YOUTUBE ? mine : dubCfg.pageSubs;
     toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!on);
+    const cc = dubPanel.querySelector('.lzk-dub-cc');
+    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet'));
     if (!on)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
@@ -5647,7 +5655,11 @@
       else if (dub && dub.video === video) dubStop();
       else dubStart(video);
     });
-    p.append(head, el('div', 'lzk-dub-status'), toggle);
+    // 크롬 '실시간 자막' 이 꺼져 있거나 받아 적힌 말이 없을 때만 보인다.
+    const cc = el('button', 'lzk-dub-cc', '크롬 실시간 자막 설정 열기');
+    cc.hidden = true;
+    cc.addEventListener('click', () => GM_openInTab(LIVE_SETTINGS));
+    p.append(head, el('div', 'lzk-dub-status'), cc, toggle);
     const check = (text, k, onChange) => {
       const lab = el('label', 'lzk-dub-check');
       const cb = el('input');
@@ -5779,7 +5791,13 @@
   let liveBusy = false;
   let liveFails = 0;
   let liveNext = 0;
-  let liveState = ''; // ok: 띄우는 중, quiet: 받아 적힌 말 없음, off: 도우미에서 꺼 둠, none: 도우미 없음
+  // ok: 띄우는 중, quiet: 받아 적힌 말 없음, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, off: 도우미에서 꺼 둠, none: 도우미 없음
+  let liveState = '';
+  const LIVE_SETTINGS = 'chrome://settings/accessibility';
+  // 크롬 실시간 자막이 꺼져 있으면 탭마다 한 번, 재생 중인 영상 아래에 잠깐 알린다(창을 열지 않아도 보이게).
+  const LIVE_CC_HINT = "크롬 '실시간 자막' 이 꺼져 있어 한국어 자막을 만들 수 없습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기";
+  let liveHinted = false;
+  let liveHintUntil = 0;
 
   function livePlayingVideo() {
     let best = null;
@@ -5814,11 +5832,12 @@
   function liveNote() {
     const why = {
       ok: '크롬 실시간 자막을 한국어로 띄우는 중',
+      ccoff: "크롬 '실시간 자막' 이 꺼져 있습니다 — 아래 단추로 크롬 설정을 열어 '실시간 자막' 을 켜 주세요",
       quiet: '지금 받아 적힌 말이 없습니다(크롬 설정 › 접근성 › 실시간 자막을 켜고 영상 소리를 켜 주세요)',
       off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
       none: '번역 도우미가 꺼져 있습니다',
     }[liveState];
-    return liveState === 'ok' ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
+    return liveState === 'ok' || liveState === 'ccoff' ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
   }
 
   // 다른 사이트의 '한국어 자막 켜기·끄기' — 영상 하나가 아니라 켜 둔 동안 재생하는 영상마다.
@@ -5847,6 +5866,11 @@
       liveBusy = false;
       liveSetState(state);
       if (dubOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
+      if (state === 'ccoff' && !liveHinted) {
+        liveHinted = true;
+        liveHintUntil = Date.now() + 8000;
+      }
+      if (!text && Date.now() < liveHintUntil) text = LIVE_CC_HINT;
       if (!text) return liveHide();
       liveVideo = v;
       dubShowSub(text);
@@ -5870,7 +5894,7 @@
           j = null;
         }
         const text = j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '';
-        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : 'quiet');
+        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.cc === 'off' ? 'ccoff' : 'quiet');
       },
       onerror: fail,
       ontimeout: fail,

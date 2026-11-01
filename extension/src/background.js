@@ -15,6 +15,13 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     helperCall(m.cmd, m.manual).then(reply);
     return true;
   }
+  if (m && m.t === 'open-tab' && /^(https:\/\/|chrome:\/\/settings\/)/.test(String(m.url))) {
+    chrome.tabs.create({ url: m.url, index: sender.tab ? sender.tab.index + 1 : undefined }).then(
+      () => reply(true),
+      () => reply(false)
+    );
+    return true;
+  }
   return undefined;
 });
 

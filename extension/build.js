@@ -89,7 +89,10 @@ async function main() {
     icons[s] = `icon${s}.png`;
   }
 
-  const hosts = [...new Set([...h.connect, ...EXTRA_HOSTS])].map((d) => `https://*.${d}/*`);
+  // 127.0.0.1 = 번역 도우미가 크롬 실시간 자막을 한국어로 놓아 두는 통로(http, 이 PC 안).
+  const hosts = [...new Set([...h.connect, ...EXTRA_HOSTS])].map((d) =>
+    /^\d+\.\d+\.\d+\.\d+$/.test(d) ? `http://${d}/*` : `https://*.${d}/*`
+  );
   const manifest = {
     manifest_version: 3,
     name: NAME,

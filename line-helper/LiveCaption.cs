@@ -39,6 +39,67 @@ static class LiveCaption
         cover = new CaptionCover();
         IntPtr force = cover.Handle;
         new Thread(Loop) { IsBackground = true }.Start();
+        new Thread(Serve) { IsBackground = true }.Start();
+    }
+
+    // ---- 확장에 내주기 ----
+    // 사용자(2026-11-01, 페이스북 릴스): 크롬 자막 창 대신 유튜브처럼 영상 위에 자막으로. 크롬 확장은 이 도우미에게
+    // 먼저 말을 걸 수 없어서(네이티브 메시징은 확장이 부를 때만), 이 PC 안에서만 열리는 통로(127.0.0.1:38291)에
+    // 지금 한국어 자막을 놓아 두고, 영상이 재생 중인 탭의 확장이 0.7초마다 가져가 그 영상 위에 띄운다.
+    // 확장이 가져가는 동안에는 크롬 자막 창을 덮지 않는다. 내주는 것은 자막 글자뿐이다(명령은 받지 않는다).
+    public const int Port = 38291;
+    static string latest = "";
+    static DateTime latestAt = DateTime.Now;
+    static DateTime lastPolled = DateTime.MinValue;
+
+    static void Publish(string text)
+    {
+        lock (lk)
+        {
+            if (text == latest) return;
+            latest = text;
+            latestAt = DateTime.Now;
+        }
+    }
+
+    static void Serve()
+    {
+        System.Net.Sockets.TcpListener l;
+        try
+        {
+            l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, Port);
+            l.Start();
+        }
+        catch (Exception e) { Log.Write("실시간 자막: 확장에 내줄 통로를 못 열었습니다 — " + e.Message); return; }
+        System.Web.Script.Serialization.JavaScriptSerializer json = new System.Web.Script.Serialization.JavaScriptSerializer();
+        while (true)
+        {
+            try
+            {
+                using (System.Net.Sockets.TcpClient c = l.AcceptTcpClient())
+                {
+                    c.ReceiveTimeout = 1000;
+                    c.SendTimeout = 1000;
+                    System.IO.Stream s = c.GetStream();
+                    byte[] req = new byte[2048];
+                    s.Read(req, 0, req.Length); // GET /caption — 무엇을 물어도 같은 답
+                    Dictionary<string, object> d = new Dictionary<string, object>();
+                    lock (lk)
+                    {
+                        d["on"] = On;
+                        d["text"] = latest;
+                        d["age"] = (int)(DateTime.Now - latestAt).TotalMilliseconds;
+                    }
+                    lastPolled = DateTime.Now;
+                    byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
+                    byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                        + "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.Length + "\r\n\r\n");
+                    s.Write(head, 0, head.Length);
+                    s.Write(body, 0, body.Length);
+                }
+            }
+            catch (Exception) { /* 끊긴 연결 */ }
+        }
     }
 
     static void Loop()
@@ -47,7 +108,7 @@ static class LiveCaption
         {
             int wait = 350;
             try { wait = Tick(); }
-            catch (Exception) { label = null; Hide(); } // 자막 창이 닫혔다
+            catch (Exception) { label = null; Publish(""); Hide(); } // 자막 창이 닫혔다
             Thread.Sleep(wait);
         }
     }
@@ -55,17 +116,18 @@ static class LiveCaption
     // 다음 볼 때까지 쉴 시간(ms)을 돌려준다. 자막 창이 없으면 천천히 찾는다.
     static int Tick()
     {
-        if (!On) { Hide(); return 1000; }
+        if (!On) { Publish(""); Hide(); return 1000; }
         if (label == null) label = Find();
-        if (label == null) { Hide(); return 1500; }
+        if (label == null) { Publish(""); Hide(); return 1500; }
         System.Windows.Rect b = label.Current.BoundingRectangle;
         if (b.IsEmpty || b.Width < 30 || b.Height < 10) { Hide(); return 500; }
         if (!seen) { seen = true; Log.Write("실시간 자막: 크롬 자막 창을 찾음 — 한국어로 덮습니다"); }
         List<string> lines = Lines(label);
+        if (lines.Count == 0) { Publish(""); Hide(); return 350; }
         string all = string.Join(" ", lines.ToArray());
-        // 비었거나, 크롬 '자막 번역' 으로 모두 한국어면 덮지 않는다.
-        if (lines.Count == 0 || (Hangul.IsMatch(all) && !Foreign.IsMatch(all))) { Hide(); return 350; }
-        for (int i = 0; i < lines.Count; i++)
+        // 크롬 '자막 번역' 으로 모두 한국어면 옮길 것 없이 그대로 내준다.
+        bool allKorean = Hangul.IsMatch(all) && !Foreign.IsMatch(all);
+        for (int i = 0; i < lines.Count && !allKorean; i++)
         {
             string line = lines[i];
             lock (lk) { if (done.ContainsKey(line) || asking.Contains(line)) continue; }
@@ -86,16 +148,21 @@ static class LiveCaption
             }
             Ask(line);
         }
-        List<string> ko = new List<string>();
-        lock (lk)
+        List<string> ko = allKorean ? lines : new List<string>();
+        if (!allKorean)
         {
-            foreach (string l in lines)
+            lock (lk)
             {
-                string k;
-                if (done.TryGetValue(l, out k) && k.Length > 0) ko.Add(k);
+                foreach (string l in lines)
+                {
+                    string k;
+                    if (done.TryGetValue(l, out k) && k.Length > 0) ko.Add(k);
+                }
             }
         }
-        if (ko.Count == 0) { Hide(); return 350; }
+        Publish(string.Join("\n", ko.ToArray()));
+        // 확장이 이 한국어를 받아 영상 위에 띄우고 있으면(2초 안에 받아 갔으면) 크롬 자막 창은 덮지 않는다.
+        if (ko.Count == 0 || allKorean || (DateTime.Now - lastPolled).TotalMilliseconds < 2000) { Hide(); return 350; }
         Rectangle r = new Rectangle((int)b.X, (int)b.Y, (int)b.Width, (int)b.Height);
         cover.BeginInvoke((MethodInvoker)delegate { cover.Set(r, ko); });
         return 350;

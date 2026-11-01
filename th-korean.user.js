@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.26.2
+// @version      1.27.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -16,6 +16,7 @@
 // @connect      integrate.api.nvidia.com
 // @connect      translate.googleapis.com
 // @connect      api.github.com
+// @connect      127.0.0.1
 // @connect      raw.githubusercontent.com
 // @connect      lazcdn.com
 // @connect      slatic.net
@@ -5192,11 +5193,12 @@
     document.documentElement.toggleAttribute('data-lzk-dubsubs', !!(dub && dubCfg.subs));
   }
 
-  function dubPlaceSub() {
-    if (!dub || !dubSubEl) return;
-    const host = dubHost(dub.video);
+  // video: 자막을 붙일 영상(우리 자막이면 dub.video, 크롬 실시간 자막이면 지금 재생 중인 영상).
+  function dubPlaceSub(video = (dub && dub.video) || liveVideo) {
+    if (!video || !dubSubEl) return;
+    const host = dubHost(video);
     if (dubSubEl.parentNode !== host) host.appendChild(dubSubEl);
-    const r = dub.video.getBoundingClientRect();
+    const r = video.getBoundingClientRect();
     dubSubEl.style.left = `${r.left + r.width * 0.06}px`;
     dubSubEl.style.width = `${r.width * 0.88}px`;
     // 세로 영상(쇼츠)은 폭이 좁아 높이로만 정하면 글자가 커서 다섯 줄이 됐다 — 폭으로도 줄이고, 아래쪽 채널 이름·
@@ -5751,7 +5753,82 @@
     dubSyncButton();
   }
 
+  // --- 크롬 실시간 자막 → 영상 위 (자막 파일이 없는 영상: 페이스북·틱톡·자막 없는 유튜브) ---
+  // 크롬이 소리를 받아 적은 실시간 자막을 번역 도우미(line-helper/LiveCaption.cs)가 용어집 + 번역으로 옮겨
+  // 127.0.0.1:38291 에 놓아 둔다. 영상이 재생 중인 보이는 탭이 0.7초마다 가져가 그 영상 위에 유튜브 자막처럼
+  // 띄운다(사용자 2026-11-01: 크롬 자막 창 말고 영상에 합쳐서). 우리 자막(dub)이 켜져 있으면 쓰지 않는다.
+  // 도우미가 없으면 점점 드물게(최대 30초) 묻는다.
+  const LIVE_URL = 'http://127.0.0.1:38291/caption';
+  const LIVE_MAX_AGE = 6000; // 이만큼 새 말이 없으면 자막을 내린다
+  let liveVideo = null;
+  let liveBusy = false;
+  let liveFails = 0;
+  let liveNext = 0;
+
+  function livePlayingVideo() {
+    let best = null;
+    let area = 0;
+    for (const v of document.querySelectorAll('video')) {
+      if (v.paused || v.ended || v.readyState < 2) continue;
+      const r = v.getBoundingClientRect();
+      if (r.width < 160 || r.height < 120 || r.bottom < 0 || r.top > window.innerHeight) continue;
+      if (r.width * r.height > area) {
+        area = r.width * r.height;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  function liveHide() {
+    if (!liveVideo) return;
+    liveVideo = null;
+    if (!dub) dubShowSub('');
+  }
+
+  function liveTick() {
+    if (dub) {
+      liveVideo = null;
+      return;
+    }
+    if (liveBusy || document.visibilityState !== 'visible' || Date.now() < liveNext) return;
+    const v = livePlayingVideo();
+    if (!v) return liveHide();
+    liveBusy = true;
+    const done = (text) => {
+      liveBusy = false;
+      if (dub) return;
+      if (!text) return liveHide();
+      liveVideo = v;
+      dubShowSub(text);
+      dubPlaceSub(v);
+    };
+    const fail = () => {
+      liveFails++;
+      liveNext = Date.now() + Math.min(30000, 1500 * liveFails);
+      done('');
+    };
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: LIVE_URL,
+      timeout: 1500,
+      onload: (r) => {
+        liveFails = 0;
+        let j = null;
+        try {
+          j = JSON.parse(r.responseText);
+        } catch {
+          j = null;
+        }
+        done(j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '');
+      },
+      onerror: fail,
+      ontimeout: fail,
+    });
+  }
+
   function videoDubInit() {
+    setInterval(liveTick, 700);
     try {
       speechSynthesis.getVoices(); // 목록을 미리 불러 둔다
       speechSynthesis.addEventListener('voiceschanged', dubFillVoices);

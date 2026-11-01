@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.3
+// @version      1.27.4
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -278,6 +278,10 @@
   let glossaryStore = GM_getValue(GLOSSARY_STORE, null);
   let glossaryParsed = null; // 처음 쓸 때 해석한다 (normKey 가 쓰는 상수가 아직 정의 전이라)
   let glossaryLoading = null;
+  // 받기에 실패하면 1분은 오래된 사본으로 그냥 쓴다. 쇼츠를 넘길 때마다·번역 묶음마다 다시 받으려 해서 실패가
+  // 수십 줄 쌓였다(2026-11-01). 사본이 아예 없을 때(처음 설치)와 설정 창의 '새로 받기' 는 그대로 받는다.
+  let glossaryFailedAt = 0;
+  const GLOSSARY_RETRY_MS = 60 * 1000;
 
   function parsedGlossary() {
     if (!glossaryParsed) glossaryParsed = parseGlossary(glossaryStore && glossaryStore.text);
@@ -319,6 +323,7 @@
           console.warn(`[${APP_NAME}] 용어집 받기 실패 (${src.url}):`, e.message);
         }
       }
+      glossaryFailedAt = Date.now();
       return false;
     })().finally(() => {
       glossaryLoading = null;
@@ -339,7 +344,7 @@
     // 새 표시(예: @꾸밈말)에 기대는데 옛 사본을 쓰면 업데이트가 안 된 것처럼 보인다
     // (1.12.0 에서 실제로 그랬다: 돼지막창 냉동 → แช่แข็ง ไส้ใหญ่หมู 가 그대로).
     const stale = Date.now() - glossaryStore.at > GLOSSARY_TTL || glossaryStore.ver !== SCRIPT_VERSION;
-    if (stale) {
+    if (stale && Date.now() - glossaryFailedAt > GLOSSARY_RETRY_MS) {
       await Promise.race([refreshGlossary(), new Promise((r) => setTimeout(r, 1500))]);
     }
   }

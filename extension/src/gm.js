@@ -36,11 +36,55 @@ function GM_getValue(key, def) {
   return v !== null && typeof v === 'object' ? structuredClone(v) : v;
 }
 
+// 확장을 새로 고치거나 업데이트하면 이미 열려 있던 탭의 이 스크립트는 확장과 끊긴다('Extension context
+// invalidated'). 끊긴 뒤에도 확장에 물으면 오류만 쌓인다 — 2026-11-01 쇼츠 탭이 넘길 때마다 '용어집 받기 실패'
+// 를 수십 줄 남겼다. 그래서 끊긴 것을 알면 더 묻지 않고, 이 탭을 새로 고치라고 한 번만 알린다.
+let gmDead = false;
+
+function gmAlive() {
+  if (gmDead) return false;
+  try {
+    if (chrome.runtime && chrome.runtime.id) return true;
+  } catch {
+    /* 끊겼다 */
+  }
+  gmDead = true;
+  gmDeadNotice();
+  return false;
+}
+
+function gmDeadNotice() {
+  const show = () => {
+    const box = document.createElement('div');
+    box.className = 'notranslate';
+    box.setAttribute('translate', 'no');
+    box.style.cssText =
+      'position:fixed;left:16px;bottom:16px;z-index:2147483647;max-width:360px;padding:10px 34px 10px 14px;' +
+      'border-radius:8px;background:#202124;color:#fff;font:500 13px/1.5 system-ui,sans-serif;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.35)';
+    box.textContent = '통합 번역이 새로 고쳐졌습니다. 이 탭을 새로 고침(F5)하면 다시 번역합니다.';
+    const x = document.createElement('button');
+    x.textContent = '×';
+    x.title = '닫기';
+    x.style.cssText = 'position:absolute;right:6px;top:4px;border:none;background:none;color:#bbb;font-size:18px;cursor:pointer';
+    x.addEventListener('click', () => box.remove());
+    box.appendChild(x);
+    document.body.appendChild(box);
+  };
+  if (document.body) show();
+  else document.addEventListener('DOMContentLoaded', show, { once: true });
+}
+
 function GM_setValue(key, value) {
   gmStore.set(key, value);
-  chrome.storage.local.set({ [GM_PREFIX + key]: value }).catch((e) => {
-    console.warn('[통합 번역] 저장 실패:', key, e && e.message);
-  });
+  if (!gmAlive()) return; // 끊긴 탭 — 이 탭 안에서만 기억한다
+  try {
+    chrome.storage.local.set({ [GM_PREFIX + key]: value }).catch((e) => {
+      if (gmAlive()) console.warn('[통합 번역] 저장 실패:', key, e && e.message);
+    });
+  } catch {
+    gmAlive();
+  }
 }
 
 function GM_addStyle(css) {
@@ -63,7 +107,21 @@ function GM_xmlhttpRequest(d) {
     timeout: d.timeout || 0,
     responseType: d.responseType || '',
   };
-  chrome.runtime.sendMessage(msg).then(
+  const handle = {
+    abort() {
+      aborted = true;
+    },
+  };
+  // 끊긴 탭: 답하지 않고 둔다. 실패로 답하면 스크립트가 곧바로 다시 받으려 하며 같은 오류를 계속 남긴다.
+  if (!gmAlive()) return handle;
+  let sent;
+  try {
+    sent = chrome.runtime.sendMessage(msg);
+  } catch {
+    gmAlive();
+    return handle;
+  }
+  sent.then(
     (r) => {
       if (aborted) return;
       if (!r || r.error === 'network') {
@@ -98,20 +156,22 @@ function GM_xmlhttpRequest(d) {
       }
     },
     (e) => {
-      // 확장을 새로 고친 뒤 예전 탭에서 부르면 'Extension context invalidated' 가 난다.
+      // 보내는 사이에 확장이 새로 고쳐졌으면 'Extension context invalidated' — 끊긴 탭이라 답하지 않는다.
+      if (!gmAlive()) return;
       if (!aborted && d.onerror) d.onerror({ status: 0, error: String((e && e.message) || e) });
     }
   );
-  return {
-    abort() {
-      aborted = true;
-    },
-  };
+  return handle;
 }
 
 // 새 탭 열기. 크롬 설정(chrome://settings/…)은 페이지에서 못 열어 background.js 가 연다.
 function GM_openInTab(url) {
-  chrome.runtime.sendMessage({ t: 'open-tab', url }).catch(() => {});
+  if (!gmAlive()) return;
+  try {
+    chrome.runtime.sendMessage({ t: 'open-tab', url }).catch(() => {});
+  } catch {
+    gmAlive();
+  }
 }
 
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.

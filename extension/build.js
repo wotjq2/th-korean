@@ -22,7 +22,7 @@ const ICONS = path.join(__dirname, 'icons');
 
 const NAME = '통합 번역';
 const DESCRIPTION =
-  '외국어 사이트와 메신저를 한국어로 — 태국 쇼핑몰 검색·읽기, 페이스북 메신저, 입력칸 한국어→외국어, 사진 속 글자 번역';
+  '외국어 사이트·메신저·영상을 한국어로 — 태국 쇼핑몰 검색·읽기, 페이스북 메신저, 유튜브·웹 영상 더빙(자막+목소리), 입력칸 한국어→외국어, 사진 속 글자';
 // @connect 에 없지만 스크립트가 확장 권한으로 부르는 주소(사진 글자 읽기 Vision).
 const EXTRA_HOSTS = ['vision.googleapis.com'];
 // 압축해제로 불러와도 확장 id 가 폴더 위치와 상관없이 늘 같게(agcbmglciepeobcgkniefahkaiigjkjk).

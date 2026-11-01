@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.23.137
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
+// @version      1.24.0
+// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 더빙(자막 + 목소리) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
@@ -2205,6 +2205,49 @@
       max-width: none; max-height: none; pointer-events: none;
     }
     #lzk-imgbtn[data-busy], #lzk-imgall[data-busy] { cursor: progress; background: rgba(60, 60, 70, .9); }
+    .lzk-dub-btn.ytp-button {
+      width: auto !important; min-width: 36px; padding: 0 6px !important; vertical-align: top;
+      color: #fff !important; font: 700 16px/1 system-ui, sans-serif !important; opacity: .92;
+    }
+    .lzk-dub-btn.ytp-button[data-on] { color: #ffd54a !important; }
+    .lzk-dubsub {
+      position: fixed; z-index: 2147483001; pointer-events: none; text-align: center;
+      color: #fff; font-weight: 600; line-height: 1.4; white-space: pre-wrap; word-break: keep-all;
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+      text-shadow: 0 0 2px #000, 0 0 5px #000;
+    }
+    .lzk-dubsub span {
+      background: rgba(0, 0, 0, .58); padding: .06em .4em; border-radius: 4px;
+      -webkit-box-decoration-break: clone; box-decoration-break: clone;
+    }
+    .lzk-dubsub[hidden], #lzk-dubchip[hidden] { display: none !important; }
+    html[data-lzk-dubsubs] #movie_player .ytp-caption-window-container { display: none !important; }
+    #lzk-dubchip {
+      position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
+      background: rgba(15, 20, 110, .92); color: #fff; padding: 7px 11px; cursor: pointer;
+      font: 600 12px/1 system-ui, sans-serif; box-shadow: 0 3px 10px rgba(0,0,0,.3);
+    }
+    #lzk-dubchip:hover { background: #1a22a0; }
+    .lzk-dubpanel {
+      position: fixed; z-index: 2147483003; width: 270px; box-sizing: border-box; padding: 12px 14px 14px;
+      background: #fff; color: #111; border: 1px solid #d8d8e0; border-radius: 10px; text-align: left;
+      font: 400 13px/1.5 system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.3);
+    }
+    .lzk-dubpanel .lzk-dub-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+    .lzk-dubpanel .lzk-dub-x { border: none; background: none; color: #888; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
+    .lzk-dubpanel .lzk-dub-status { color: #555; font-size: 12px; margin: 4px 0 10px; min-height: 18px; }
+    .lzk-dubpanel .lzk-dub-toggle {
+      width: 100%; padding: 9px; border: none; border-radius: 6px; cursor: pointer;
+      background: #0f146e; color: #fff; font: 600 13px/1 system-ui, sans-serif;
+    }
+    .lzk-dubpanel .lzk-dub-toggle[data-on] { background: #b42318; }
+    .lzk-dubpanel label { display: block; margin-top: 11px; color: #111; font-size: 12px; font-weight: 600; }
+    .lzk-dubpanel input[type=range] { display: block; width: 100%; margin: 5px 0 0; }
+    .lzk-dubpanel .lzk-dub-check { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+    .lzk-dubpanel select {
+      display: block; width: 100%; margin-top: 5px; padding: 5px; box-sizing: border-box;
+      border: 1px solid #ccc; border-radius: 5px; background: #fff; color: #111; font: 400 12px/1.3 system-ui, sans-serif;
+    }
   `;
 
   // 우리가 만든 UI 는 이미 한국어다. 크롬 자동번역이 이걸 태국어로 착각해
@@ -4750,6 +4793,759 @@
         activateGeneric();
       } else if (++n >= 6) clearInterval(t);
     }, 2500);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 영상 더빙 — 유튜브와 웹 페이지의 영상을 한국어 자막 + 한국어 목소리(TTS)로.
+  //
+  // 대본(자막)을 미리 통째로 받아 문장으로 묶고 옮겨 둔 뒤, 영상 시간에 맞춰 한 문장씩 읽는다.
+  //  - 유튜브: 영상의 자막 목록에서 고른다. 사람이 만든 한국어 자막이 있으면 그대로(번역 없음), 아니면 말한
+  //    언어의 자막(사람이 만든 것 > 자동 생성). 자막 주소에는 유튜브 보안 표(pot)가 붙어야 받히는데 그 표는
+  //    영상마다 다르다(다른 영상 주소에 붙이면 거절, 2026-11-01 확인). 그래서 그 영상의 자막(CC)을 잠깐 켜서
+  //    플레이어가 부른 주소를 PerformanceObserver 로 잡는다 — 유튜브는 요청 기록을 수시로 비워서
+  //    performance.getEntries 로는 못 찾았다. 같은 영상이면 lang·kind·tlang 만 바꿔 다른 자막도 받힌다.
+  //  - 다른 사이트: <video> 의 자막 트랙(textTracks — WebVTT·HLS 자막)을 읽는다. 자막이 없는 영상은 소리를
+  //    알아들어야 해서(음성 인식) 아직 못 한다.
+  // 번역은 메신저 받는 쪽과 같은 길: 태국어는 손질 → 대화 표(TH_CHAT_KO) → 용어집 거꾸로 → 구글 → 뒷손질,
+  // 다른 언어는 구글. 구글이 막히면(429) 유튜브가 옮긴 한국어 자막(tlang=ko)을 시간으로 맞춰 쓴다.
+  // 목소리는 브라우저에 든 한국어 음성(speechSynthesis — 엣지는 SunHi·InJoon 자연 음성, 크롬은 Google 한국의,
+  // 윈도우는 Heami). 문장 사이 시간에 맞춰 빠르기를 1~2배로 올린다. 영상 소리와 번역 소리는 따로 조절한다.
+  // ---------------------------------------------------------------------------
+
+  const YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
+  const DUB_KEY = 'videoDub'; // { videoVol, dubVol, subs, voice }
+  const DUB_DEFAULTS = { videoVol: 0.25, dubVol: 1, subs: true, voice: '' };
+  const DUB_GAP_MS = 700; // 이만큼 쉬면 문장을 끊는다
+  const DUB_MAX_MS = 7000; // 자동 자막은 마침표가 없어 길이로도 끊는다
+  const DUB_MAX_CHARS = 90;
+  const DUB_BATCH = 40; // 한 번에 옮기는 문장 수 — 지금 보는 곳부터
+  const DUB_KO_PER_SEC = 5.8; // 한국어 음성이 1배 빠르기로 1초에 읽는 글자 수(대략)
+  const DUB_MALE = /InJoon|Hyunsu|Bong|Gook|남성/i;
+  let dubCfg = { ...DUB_DEFAULTS, ...GM_getValue(DUB_KEY, {}) };
+  let dub = null; // 더빙 중인 영상 { video, sentences, cur, lang, ... }
+  let dubWanted = false; // 유튜브에서 켜 두면 다음 영상도 이어서 더빙한다
+  let dubPanel = null;
+  let dubSubEl = null;
+  let dubChip = null;
+  let dubReverse = null; // 용어집 거꾸로: 태국어(띄어쓰기 없앤 꼴) → 한국어
+  let dubVolumeTouchedAt = 0; // 사람이 사이트의 소리 막대·키를 만진 때
+  const ytTimedtext = new Map(); // 유튜브 영상 id → 플레이어가 부른 자막 주소(보안 표 포함)
+
+  const saveDubCfg = () => GM_setValue(DUB_KEY, dubCfg);
+
+  function dubVoices() {
+    try {
+      return speechSynthesis.getVoices().filter((v) => /^ko/i.test(v.lang));
+    } catch {
+      return [];
+    }
+  }
+
+  // 고른 목소리가 없으면 자연 음성 > 구글 > 윈도우 순. 태국어 말끝(ครับ)으로 남자라고 보이면 남자 목소리가
+  // 있을 때(엣지 InJoon) 그것으로.
+  function dubVoice(gender) {
+    const all = dubVoices();
+    const chosen = dubCfg.voice && all.find((v) => v.name === dubCfg.voice);
+    if (chosen) return chosen;
+    const score = (v) => (/Natural|Neural|Online/i.test(v.name) ? 4 : /Google/i.test(v.name) ? 2 : 0);
+    const male = all.filter((v) => DUB_MALE.test(v.name));
+    const female = all.filter((v) => !DUB_MALE.test(v.name));
+    const pool = gender === 'm' && male.length ? male : female.length ? female : all;
+    return pool.sort((a, b) => score(b) - score(a))[0] || null;
+  }
+
+  function dubEndsSentence(src, lang) {
+    return lang === 'th' ? TH_END_PARTICLES.test(src) : /[.!?。！？…]["'”’)\]]*$/.test(src);
+  }
+
+  // 태국어 자동 자막은 한 줄에 문장 여럿이 붙어 오기도 한다(…ร้านกาแฟนะคะเป็นบ้านหมาครบวงจรนะคะใครยัง…).
+  // 말끝(ค่ะ·ครับ…) 뒤에서 나누고 시간은 글자 수로 나눈다. คะแนน(점수) 같은 낱말 속 คะ 는 두고.
+  const TH_SPLIT = /(?<=ค่ะ|คะ(?!แนน|เน|น้า)|ครับ|คับ|จ้า)(?=[฀-๿])/;
+  function dubSplitThai(cues) {
+    const out = [];
+    for (const c of cues) {
+      const parts = String(c.text || '').split(TH_SPLIT).filter(Boolean);
+      if (parts.length < 2) {
+        out.push(c);
+        continue;
+      }
+      const total = parts.reduce((n, p) => n + p.length, 0);
+      let t = c.start;
+      for (const p of parts) {
+        const dur = ((c.end - c.start) * p.length) / total;
+        out.push({ start: Math.round(t), end: Math.round(t + dur), text: p });
+        t += dur;
+      }
+    }
+    return out;
+  }
+
+  // 자막 조각(cue)들을 읽을 문장으로 묶는다. [음악]·[เพลง] 같은 표시는 버리고, >> (말하는 사람 바뀜)·쉼·말끝·
+  // 길이에서 끊는다. 태국어는 줄이 낱말 가운데서 갈리기도 해서 띄어쓰기 없이 잇는다.
+  function dubSentences(cues, lang) {
+    if (lang === 'th') cues = dubSplitThai(cues);
+    const out = [];
+    let cur = null;
+    let gender = '';
+    const flush = () => {
+      if (cur) out.push(cur);
+      cur = null;
+    };
+    for (const c of cues) {
+      let text = String(c.text || '')
+        .replace(/\[[^\]]*\]|♪+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const turn = /^(?:>>|-\s)/.test(text);
+      text = text.replace(/^(?:>>\s*|-\s+)/, '').replace(/\s*>>\s*/g, ' ').trim();
+      if (!text) {
+        flush(); // 음악·효과음 사이
+        continue;
+      }
+      if (turn) {
+        flush();
+        gender = '';
+      }
+      if (
+        cur &&
+        (c.start - cur.end > DUB_GAP_MS ||
+          c.start - cur.start > DUB_MAX_MS ||
+          cur.src.length + text.length > DUB_MAX_CHARS ||
+          dubEndsSentence(cur.src, lang))
+      ) {
+        flush();
+      }
+      if (!cur) cur = { start: c.start, end: c.end, src: text, gender: '' };
+      else {
+        const glue = lang === 'th' && THAI.test(cur.src.slice(-1)) && THAI.test(text[0]) ? '' : ' ';
+        cur.src += glue + text;
+        cur.end = Math.max(cur.end, c.end);
+      }
+      if (lang === 'th') gender = thaiSpeakerGender(cur.src) || gender;
+      cur.gender = gender;
+    }
+    flush();
+    out.forEach((s, i) => {
+      s.next = i + 1 < out.length ? out[i + 1].start : s.end + 1500;
+      s.ko = null;
+    });
+    return out;
+  }
+
+  // 용어집(한국어=태국어)을 거꾸로 — 문장 전체가 어느 값과 같을 때만(먼저 적힌 한국어).
+  function dubFromGlossary(th) {
+    if (!dubReverse && glossaryStore) {
+      dubReverse = new Map();
+      for (const [ko, v] of Object.entries(remoteGlossary())) {
+        const k = String(v).replace(/\s+/g, '');
+        if (HANGUL.test(ko) && THAI.test(k) && !dubReverse.has(k)) dubReverse.set(k, ko);
+      }
+    }
+    const key = th.replace(TH_END_PARTICLES, '').replace(/\s+/g, '');
+    return (dubReverse && key && dubReverse.get(key)) || '';
+  }
+
+  async function dubTranslateBatch(d, batch) {
+    const ask = [];
+    for (const s of batch) {
+      s.tried = true;
+      if (d.lang === 'ko') {
+        s.ko = s.src;
+        continue;
+      }
+      if (d.lang === 'th') {
+        // 영상은 나에게 하는 말이 아니라서 호칭(พี่→오빠)은 바꾸지 않는다(mine = true).
+        s.prep = chatPrepThai(s.src, true, '');
+        const hit = chatThaiWhole(s.prep) || dubFromGlossary(s.prep);
+        if (hit) {
+          s.ko = hit;
+          continue;
+        }
+      }
+      ask.push(s);
+    }
+    if (!ask.length) return;
+    let got = [];
+    try {
+      got = await translateToKorean(ask.map((s) => s.prep || s.src));
+    } catch (e) {
+      console.warn(`[${APP_NAME}] 더빙 번역 실패:`, e.message);
+    }
+    ask.forEach((s, i) => {
+      let ko = got[i];
+      if (ko && d.lang === 'th') ko = THAI.test(ko) ? null : chatFixKorean(ko, s.prep);
+      s.ko = ko || null;
+    });
+  }
+
+  // 지금 보는 곳부터 차례로 옮긴다(앞부분이 먼저 준비돼야 바로 들린다). 못 옮긴 것은 유튜브 한국어 자막으로.
+  async function dubTranslate(d) {
+    if (d.translating) return;
+    d.translating = true;
+    try {
+      while (d === dub) {
+        const now = d.video.currentTime * 1000;
+        const todo = d.sentences.filter((s) => s.ko == null && !s.tried);
+        if (!todo.length) break;
+        todo.sort((a, b) => (a.next < now) - (b.next < now) || a.start - b.start);
+        await dubTranslateBatch(d, todo.slice(0, DUB_BATCH));
+        dubStatus();
+      }
+      if (d === dub && d.koFallback && d.sentences.some((s) => !s.ko)) await dubUseFallback(d);
+    } finally {
+      d.translating = false;
+      dubStatus();
+    }
+  }
+
+  async function dubUseFallback(d) {
+    let ko;
+    try {
+      ko = await d.koFallback();
+    } catch {
+      return;
+    }
+    for (const s of d.sentences) {
+      if (s.ko) continue;
+      const text = ko
+        .filter((c) => c.start < s.end && c.end > s.start)
+        .map((c) => c.text)
+        .join(' ')
+        .replace(/\[[^\]]*\]|>>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      s.ko = text || null;
+    }
+  }
+
+  // 새 자막 조각으로 문장을 다시 묶는다(HLS 자막처럼 보면서 늘어나는 것도). 이미 옮긴 문장은 그대로 둔다.
+  function dubSetCues(d, cues) {
+    if (!d.lang) {
+      const all = cues.map((c) => c.text).join(' ');
+      d.lang = THAI.test(all) ? 'th' : HANGUL.test(all) && !/[A-Za-z]{3}/.test(all) ? 'ko' : '';
+    }
+    const old = new Map(d.sentences.map((s) => [`${s.start}|${s.src}`, s]));
+    d.sentences = dubSentences(cues, d.lang).map((s) => {
+      const o = old.get(`${s.start}|${s.src}`);
+      return o ? Object.assign(s, { ko: o.ko, tried: o.tried, prep: o.prep }) : s;
+    });
+    d.cueCount = cues.length;
+    d.cur = -1;
+    dubStatus();
+    dubTranslate(d);
+  }
+
+  function dubFind(list, t) {
+    let lo = 0;
+    let hi = list.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid].start <= t) {
+        ans = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return ans;
+  }
+
+  function dubSpeak(d, s) {
+    try {
+      speechSynthesis.cancel();
+      if (!(dubCfg.dubVol > 0)) return;
+      const u = new SpeechSynthesisUtterance(s.ko);
+      const voice = dubVoice(s.gender);
+      if (voice) u.voice = voice;
+      u.lang = voice ? voice.lang : 'ko-KR';
+      // 다음 문장이 시작하기 전에 끝나도록. 영상을 빨리 돌리면 그만큼 남는 시간이 준다.
+      const room = Math.max(0.8, (s.next - s.start) / 1000 / (d.video.playbackRate || 1));
+      const need = (s.ko.match(/[가-힣0-9]/g) || []).length / DUB_KO_PER_SEC + 0.2;
+      u.rate = Math.min(2, Math.max(1, need / (room * 0.92)));
+      u.volume = dubCfg.dubVol;
+      speechSynthesis.speak(u);
+    } catch (e) {
+      console.warn(`[${APP_NAME}] 더빙 목소리 실패:`, e.message);
+    }
+  }
+
+  // 자막·창은 화면 맨 위(position: fixed)에 영상 자리를 따라 둔다. 영상을 감싼 상자가 전체 화면이면
+  // (유튜브) 그 안에 넣어야 보인다. <video> 자체가 전체 화면이면 자막은 못 보이고 목소리만 나온다.
+  function dubHost(v) {
+    const fs = document.fullscreenElement;
+    return fs && v && fs !== v && fs.contains(v) ? fs : document.body;
+  }
+
+  function dubShowSub(text) {
+    if (!dubSubEl) {
+      dubSubEl = markNoTranslate(document.createElement('div'));
+      dubSubEl.className = 'lzk-dubsub';
+      dubSubEl.appendChild(document.createElement('span'));
+    }
+    const t = dubCfg.subs ? text || '' : '';
+    if (dubSubEl.firstChild.textContent !== t) dubSubEl.firstChild.textContent = t;
+    dubSubEl.hidden = !t;
+    // 우리 한국어 자막을 보이는 동안에는 유튜브 원래 자막(태국어 등)을 가린다 — 두 줄이 겹쳤다.
+    document.documentElement.toggleAttribute('data-lzk-dubsubs', !!(dub && dubCfg.subs));
+  }
+
+  function dubPlaceSub() {
+    if (!dub || !dubSubEl) return;
+    const host = dubHost(dub.video);
+    if (dubSubEl.parentNode !== host) host.appendChild(dubSubEl);
+    const r = dub.video.getBoundingClientRect();
+    dubSubEl.style.left = `${r.left + r.width * 0.06}px`;
+    dubSubEl.style.width = `${r.width * 0.88}px`;
+    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * 0.13}px`;
+    dubSubEl.style.fontSize = `${Math.round(Math.max(15, Math.min(36, r.height / 17)))}px`;
+  }
+
+  function dubTick() {
+    const d = dub;
+    if (!d) return;
+    const v = d.video;
+    dubPlaceSub();
+    if (YOUTUBE && document.getElementById('movie_player')?.classList.contains('ad-showing')) {
+      if (d.cur !== -2) {
+        d.cur = -2;
+        speechSynthesis.cancel();
+        dubShowSub('');
+      }
+      return;
+    }
+    // 영상 소리는 더빙 창의 값으로 둔다. 유튜브는 광고가 끝나거나 다음 영상이 뜰 때 제 값으로 되돌리므로
+    // 다시 맞추고, 사람이 플레이어의 소리 막대·키를 막 만졌을 때만 그 값을 따른다.
+    if (Math.abs(v.volume - dubCfg.videoVol) > 0.005) {
+      if (Date.now() - dubVolumeTouchedAt < 2500) {
+        dubCfg.videoVol = v.volume;
+        saveDubCfg();
+        dubSyncPanel();
+      } else v.volume = dubCfg.videoVol;
+    }
+    if (v.paused || v.seeking) return;
+    const t = v.currentTime * 1000;
+    const i = dubFind(d.sentences, t);
+    const s = d.sentences[i];
+    if (i !== d.cur) {
+      d.cur = i;
+      if (s && s.ko && t - s.start < 1500) dubSpeak(d, s);
+    }
+    dubShowSub(s && t < Math.min(s.next, s.end + 1500) ? s.ko || '' : '');
+  }
+
+  async function dubStart(video) {
+    if (!video) return;
+    if (dub) dubStop();
+    const d = { video, sentences: [], cur: -1, lang: '', status: '대본 받는 중…', origVolume: video.volume, startedAt: Date.now() };
+    dub = d;
+    if (YOUTUBE) dubWanted = true;
+    ensureGlossary();
+    video.volume = dubCfg.videoVol;
+    d.onSeek = () => {
+      speechSynthesis.cancel();
+      d.cur = -1;
+    };
+    video.addEventListener('seeking', d.onSeek);
+    video.addEventListener('pause', d.onSeek);
+    d.timer = setInterval(dubTick, 150);
+    dubStatus();
+    dubSyncButton();
+    try {
+      const cues = YOUTUBE && video.closest('#movie_player') ? await ytLoadCues(d) : dubTrackCues(d);
+      if (d !== dub) return;
+      if (cues) dubSetCues(d, cues);
+    } catch (e) {
+      d.status = `자막을 받지 못했습니다: ${e.message}`;
+    }
+    dubStatus();
+  }
+
+  function dubStop() {
+    const d = dub;
+    if (!d) return;
+    dub = null;
+    dubWanted = false;
+    clearInterval(d.timer);
+    clearInterval(d.trackPoll);
+    d.video.removeEventListener('seeking', d.onSeek);
+    d.video.removeEventListener('pause', d.onSeek);
+    try {
+      speechSynthesis.cancel();
+    } catch {
+      /* 목소리를 못 쓰는 브라우저 */
+    }
+    if (d.video.isConnected) d.video.volume = d.origVolume;
+    dubShowSub('');
+    dubStatus();
+    dubSyncButton();
+  }
+
+  // --- 다른 사이트의 <video>: 자막 트랙 ---
+  function dubTrackList(t) {
+    return [...(t.cues || [])].map((c) => ({
+      start: c.startTime * 1000,
+      end: c.endTime * 1000,
+      text: String(c.text || '').replace(/<[^>]+>/g, ''),
+    }));
+  }
+
+  function dubTrackCues(d) {
+    const tracks = [...(d.video.textTracks || [])].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
+    if (!tracks.length) {
+      d.status = '이 영상에는 자막이 없습니다. 자막 없는 영상(음성 인식)은 아직 못 합니다.';
+      return null;
+    }
+    const t = tracks.find((x) => /^ko/i.test(x.language)) || tracks.find((x) => x.mode === 'showing') || tracks[0];
+    if (t.mode === 'disabled') t.mode = 'hidden'; // 화면에 띄우지 않고 내용만 읽는다
+    d.track = t;
+    d.lang = (t.language || '').slice(0, 2).toLowerCase();
+    // 자막을 조금씩 받는 영상(HLS)도 있어 늘어나는지 계속 본다.
+    d.trackPoll = setInterval(() => {
+      if (d !== dub) return;
+      const cues = dubTrackList(t);
+      if (cues.length !== d.cueCount) dubSetCues(d, cues);
+    }, 2000);
+    d.status = '자막 읽는 중…';
+    return dubTrackList(t);
+  }
+
+  // --- 유튜브 ---
+  const ytVideoId = () => new URL(location.href).searchParams.get('v') || '';
+
+  function ytCues(j) {
+    const out = [];
+    for (const e of (j && j.events) || []) {
+      if (!e.segs) continue;
+      const text = e.segs
+        .map((s) => s.utf8 || '')
+        .join('')
+        .replace(/\s*\n\s*/g, ' ')
+        .trim();
+      if (text) out.push({ start: e.tStartMs || 0, end: (e.tStartMs || 0) + (e.dDurationMs || 0), text });
+    }
+    // 자동 자막은 줄이 겹쳐 흘러가므로(두 줄 표시) 다음 줄이 나오면 앞 줄은 끝난 것으로 본다.
+    for (let i = 0; i + 1 < out.length; i++) {
+      if (out[i + 1].start > out[i].start) out[i].end = Math.min(out[i].end, out[i + 1].start);
+    }
+    return out;
+  }
+
+  async function ytCaptureTimedtext(id, d) {
+    const got = () => ytTimedtext.get(id);
+    if (got()) return got();
+    const player = document.getElementById('movie_player');
+    for (let i = 0; i < 180 && player && player.classList.contains('ad-showing'); i++) {
+      if (d !== dub) return null;
+      d.status = '광고가 끝나면 시작합니다…';
+      dubStatus();
+      await sleep(1000);
+    }
+    const btn = player && player.querySelector('.ytp-subtitles-button');
+    if (!btn || btn.offsetParent === null) return null;
+    const wasOn = btn.getAttribute('aria-pressed') === 'true';
+    if (wasOn) {
+      btn.click();
+      await sleep(300);
+    }
+    btn.click(); // 켜면 플레이어가 이 영상의 자막 주소를 부른다
+    for (let i = 0; i < 40 && !got(); i++) await sleep(250);
+    if (!wasOn) btn.click(); // 원래대로 끈다 — 우리 한국어 자막만 보이게
+    return got() || null;
+  }
+
+  async function ytLoadCues(d) {
+    const id = ytVideoId();
+    d.videoId = id;
+    const html = await (await fetch(`/watch?v=${encodeURIComponent(id)}`, { credentials: 'include' })).text();
+    const m = /"captionTracks":(\[.*?\])/.exec(html);
+    const tracks = m ? JSON.parse(m[1]) : [];
+    if (!tracks.length) {
+      d.status = '이 영상에는 자막이 없습니다. 자막 없는 영상(음성 인식)은 아직 못 합니다.';
+      return null;
+    }
+    const manual = tracks.filter((t) => t.kind !== 'asr');
+    const asr = tracks.find((t) => t.kind === 'asr');
+    const ko = manual.find((t) => /^ko/i.test(t.languageCode));
+    const spoken = asr ? asr.languageCode : manual[0].languageCode;
+    const pick = ko || manual.find((t) => t.languageCode === spoken) || asr || manual[0];
+    d.lang = ko ? 'ko' : pick.languageCode.slice(0, 2).toLowerCase();
+    d.status = '자막 주소 받는 중…';
+    dubStatus();
+    let base = await ytCaptureTimedtext(id, d);
+    if (d !== dub) return null;
+    if (!base) {
+      d.status = '자막을 받지 못했습니다. 자막(CC)을 한 번 켜고 다시 눌러 주세요.';
+      return null;
+    }
+    const pickUrl = new URL(pick.baseUrl, location.origin);
+    const url = (tlang) => {
+      const u = new URL(base);
+      for (const p of ['lang', 'kind', 'name']) {
+        if (pickUrl.searchParams.get(p)) u.searchParams.set(p, pickUrl.searchParams.get(p));
+        else u.searchParams.delete(p);
+      }
+      if (tlang) u.searchParams.set('tlang', tlang);
+      else u.searchParams.delete('tlang');
+      u.searchParams.set('fmt', 'json3');
+      return u.href;
+    };
+    const load = async (u) => {
+      const text = await (await fetch(u, { credentials: 'include' })).text();
+      if (!text) throw new Error('유튜브가 빈 자막을 줬습니다');
+      return ytCues(JSON.parse(text));
+    };
+    if (d.lang !== 'ko' && pick.isTranslatable !== false) d.koFallback = () => load(url('ko'));
+    d.status = '대본 받는 중…';
+    dubStatus();
+    try {
+      return await load(url(''));
+    } catch {
+      // 잡아 둔 주소가 낡았다(보안 표 만료 등) — 자막을 다시 켜서 새 주소로 한 번 더.
+      ytTimedtext.delete(id);
+      base = (await ytCaptureTimedtext(id, d)) || base;
+      return load(url(''));
+    }
+  }
+
+  function ytMountButton() {
+    if (!/^\/watch/.test(location.pathname)) return;
+    const bar = document.querySelector('#movie_player .ytp-right-controls');
+    if (!bar || bar.querySelector('.lzk-dub-btn')) return;
+    const b = markNoTranslate(document.createElement('button'));
+    b.className = 'ytp-button lzk-dub-btn';
+    b.title = '한국어 더빙 (자막 + 목소리)';
+    b.textContent = '한';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dubTogglePanel(document.querySelector('#movie_player video'), b);
+    });
+    bar.prepend(b);
+    dubSyncButton();
+  }
+
+  function ytOnNavigate() {
+    const keep = dubWanted;
+    if (dub && dub.videoId !== ytVideoId()) dubStop();
+    dubWanted = keep;
+    if (dubWanted && !dub && ytVideoId()) dubStart(document.querySelector('#movie_player video'));
+    else if (!ytVideoId()) dubWanted = false;
+  }
+
+  function ytDubInit() {
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          if (!e.name.includes('/api/timedtext')) continue;
+          // 보안 표(pot)가 없는 주소(미리 받기 등)는 빈 답이 온다.
+          const u = new URL(e.name);
+          if (u.searchParams.get('v') && u.searchParams.get('pot')) ytTimedtext.set(u.searchParams.get('v'), e.name);
+        }
+      }).observe({ type: 'resource', buffered: true });
+    } catch {
+      /* 옛 브라우저 */
+    }
+    ytMountButton();
+    setInterval(ytMountButton, 1500);
+    document.addEventListener('yt-navigate-finish', () => setTimeout(ytOnNavigate, 800));
+  }
+
+  // --- 창: 켜기·끄기, 영상 소리·번역 소리, 자막, 목소리 ---
+  function dubSyncButton() {
+    const on = !!dub;
+    document.querySelectorAll('.lzk-dub-btn').forEach((b) => b.toggleAttribute('data-on', on));
+    if (dubChip) dubChip.textContent = on && dub.video === dubChip.lzkVideo ? '더빙 중' : '한국어 더빙';
+  }
+
+  function dubStatus() {
+    if (!dubPanel) return;
+    const st = dubPanel.querySelector('.lzk-dub-status');
+    const toggle = dubPanel.querySelector('.lzk-dub-toggle');
+    const mine = dub && dub.video === dubPanel.lzkVideo;
+    toggle.textContent = mine ? '더빙 끄기' : '더빙 켜기';
+    toggle.toggleAttribute('data-on', !!mine);
+    if (!mine) st.textContent = '꺼짐 — 자막을 미리 받아 한국어로 옮긴 뒤 읽어 줍니다';
+    else if (!dub.sentences.length) st.textContent = dub.status;
+    else {
+      const n = dub.sentences.length;
+      const done = dub.sentences.filter((s) => s.ko).length;
+      const lang = { th: '태국어', en: '영어', zh: '중국어', ja: '일본어', ko: '한국어' }[dub.lang] || dub.lang || '?';
+      const waiting = dub.translating || dub.sentences.some((s) => !s.ko && !s.tried);
+      st.textContent =
+        waiting && done < n
+          ? `${lang} → 한국어 번역 중 ${done}/${n}`
+          : `더빙 중 · ${lang} ${n}문장` + (done < n ? ` (못 옮긴 ${n - done})` : '');
+    }
+  }
+
+  function dubSyncPanel() {
+    if (!dubPanel) return;
+    for (const r of dubPanel.querySelectorAll('input[type=range]')) {
+      r.value = Math.round(dubCfg[r.dataset.k] * 100);
+      r.previousSibling.textContent = `${r.dataset.label} ${r.value}%`;
+    }
+  }
+
+  function dubFillVoices() {
+    const sel = dubPanel && dubPanel.querySelector('select');
+    if (!sel) return;
+    sel.textContent = '';
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = '자동 (가장 좋은 것)';
+    sel.appendChild(auto);
+    for (const v of dubVoices()) {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name.replace(/^Microsoft /, '') + (v.localService ? '' : ' (온라인)');
+      sel.appendChild(o);
+    }
+    sel.value = dubVoices().some((v) => v.name === dubCfg.voice) ? dubCfg.voice : '';
+  }
+
+  function dubBuildPanel(video) {
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text) e.textContent = text;
+      return e;
+    };
+    const p = markNoTranslate(el('div', 'lzk-dubpanel'));
+    p.lzkVideo = video;
+    const head = el('div', 'lzk-dub-head');
+    const close = el('button', 'lzk-dub-x', '×');
+    close.title = '닫기';
+    close.addEventListener('click', () => {
+      p.remove();
+      dubPanel = null;
+    });
+    head.append(el('b', '', '한국어 더빙'), close);
+    const toggle = el('button', 'lzk-dub-toggle');
+    toggle.addEventListener('click', () => (dub && dub.video === video ? dubStop() : dubStart(video)));
+    p.append(head, el('div', 'lzk-dub-status'), toggle);
+    const range = (label, k, apply) => {
+      const lab = el('label');
+      const r = el('input');
+      r.type = 'range';
+      r.min = '0';
+      r.max = '100';
+      r.dataset.k = k;
+      r.dataset.label = label;
+      r.addEventListener('input', () => {
+        dubCfg[k] = r.value / 100;
+        lab.firstChild.textContent = `${label} ${r.value}%`;
+        if (apply) apply(dubCfg[k]);
+      });
+      r.addEventListener('change', saveDubCfg);
+      lab.append(document.createTextNode(''), r);
+      return lab;
+    };
+    p.append(
+      range('영상 소리', 'videoVol', (v) => {
+        if (dub && dub.video === video) video.volume = v;
+      }),
+      range('번역 소리', 'dubVol')
+    );
+    const subs = el('label', 'lzk-dub-check');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = dubCfg.subs;
+    cb.addEventListener('change', () => {
+      dubCfg.subs = cb.checked;
+      saveDubCfg();
+      if (!cb.checked) dubShowSub('');
+    });
+    subs.append(cb, document.createTextNode(' 한국어 자막 보이기'));
+    const vl = el('label', '', '목소리');
+    const sel = el('select');
+    sel.addEventListener('change', () => {
+      dubCfg.voice = sel.value;
+      saveDubCfg();
+    });
+    vl.appendChild(sel);
+    p.append(subs, vl);
+    // 창 안의 클릭·키가 영상(재생·멈춤, 화살표 = 앞뒤로 감기)으로 새지 않게.
+    for (const t of ['click', 'mousedown', 'keydown', 'keyup', 'wheel']) p.addEventListener(t, (e) => e.stopPropagation());
+    return p;
+  }
+
+  function dubTogglePanel(video, anchor) {
+    if (dubPanel && dubPanel.isConnected && dubPanel.lzkVideo === video) {
+      dubPanel.remove();
+      dubPanel = null;
+      return;
+    }
+    dubPanel?.remove();
+    dubPanel = dubBuildPanel(video);
+    dubHost(video).appendChild(dubPanel);
+    dubFillVoices();
+    dubSyncPanel();
+    dubStatus();
+    const r = anchor.getBoundingClientRect();
+    const h = dubPanel.offsetHeight || 300;
+    dubPanel.style.left = `${Math.max(8, Math.min(window.innerWidth - 288, r.right - 270))}px`;
+    dubPanel.style.top = `${r.top - h - 10 > 8 ? r.top - h - 10 : Math.min(window.innerHeight - h - 8, r.bottom + 8)}px`;
+  }
+
+  // 다른 사이트: 영상 위에 마우스를 올리면 왼쪽 위에 '한국어 더빙' 단추.
+  function dubChipAt(x, y) {
+    if (dubChip && dubChip.matches(':hover')) return;
+    const v = [...document.querySelectorAll('video')].find((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width >= 240 && r.height >= 135 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    });
+    if (!v) {
+      if (dubChip) dubChip.hidden = true;
+      return;
+    }
+    if (!dubChip) {
+      dubChip = markNoTranslate(document.createElement('button'));
+      dubChip.id = 'lzk-dubchip';
+      dubChip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        dubTogglePanel(dubChip.lzkVideo, dubChip);
+      });
+    }
+    dubChip.lzkVideo = v;
+    const host = dubHost(v);
+    if (dubChip.parentNode !== host) host.appendChild(dubChip);
+    const r = v.getBoundingClientRect();
+    dubChip.style.left = `${r.left + 8}px`;
+    dubChip.style.top = `${r.top + 8}px`;
+    dubChip.hidden = false;
+    dubSyncButton();
+  }
+
+  function videoDubInit() {
+    try {
+      speechSynthesis.getVoices(); // 목록을 미리 불러 둔다
+      speechSynthesis.addEventListener('voiceschanged', dubFillVoices);
+    } catch {
+      /* 목소리를 못 쓰는 브라우저 — 자막만 */
+    }
+    document.addEventListener('fullscreenchange', () => {
+      dubPanel?.remove();
+      dubPanel = null;
+      dubPlaceSub();
+    });
+    const touched = (e) => {
+      const t = e.target;
+      const onBar = t && t.closest && t.closest('.ytp-volume-area, .ytp-volume-panel, .ytp-mute-button, [class*=volume i]');
+      const key = e.type === 'keydown' && /^(ArrowUp|ArrowDown|m|M)$/.test(e.key) && !(t && t.closest && t.closest('input, textarea, [contenteditable]'));
+      if (onBar || key) dubVolumeTouchedAt = Date.now();
+    };
+    for (const type of ['pointerdown', 'wheel', 'keydown', 'input']) document.addEventListener(type, touched, { capture: true, passive: true });
+    if (YOUTUBE) return ytDubInit(); // 유튜브는 플레이어 단추(미리보기 영상에는 달지 않는다)
+    let last = 0;
+    document.addEventListener(
+      'mousemove',
+      (e) => {
+        const now = Date.now();
+        if (now - last < 250) return;
+        last = now;
+        dubChipAt(e.clientX, e.clientY);
+      },
+      { passive: true, capture: true }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -7362,7 +8158,12 @@
   }
 
   if (!GENERIC) registerMenus();
-  const start = MESSENGER ? messengerInit : GENERIC ? genericInit : init;
+  const siteStart = MESSENGER ? messengerInit : GENERIC ? genericInit : init;
+  // 영상 더빙은 모든 사이트에서(라자다 상품 영상·메신저 영상도). 번역 도우미 엔진(node)에는 영상이 없다.
+  const start = () => {
+    siteStart();
+    if (typeof HTMLVideoElement !== 'undefined') videoDubInit();
+  };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
   } else {

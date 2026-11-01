@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.24.1
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 더빙(자막 + 목소리) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
+// @version      1.25.0
+// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
@@ -2244,6 +2244,8 @@
     .lzk-dubpanel label { display: block; margin-top: 11px; color: #111; font-size: 12px; font-weight: 600; }
     .lzk-dubpanel input[type=range] { display: block; width: 100%; margin: 5px 0 0; }
     .lzk-dubpanel .lzk-dub-check { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+    .lzk-dubpanel .lzk-dub-voicebox { margin: 0 0 4px 22px; }
+    .lzk-dubpanel .lzk-dub-voicebox[hidden] { display: none; }
     .lzk-dubpanel select {
       display: block; width: 100%; margin-top: 5px; padding: 5px; box-sizing: border-box;
       border: 1px solid #ccc; border-radius: 5px; background: #fff; color: #111; font: 400 12px/1.3 system-ui, sans-serif;
@@ -4814,7 +4816,9 @@
 
   const YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
   const DUB_KEY = 'videoDub'; // { videoVol, dubVol, subs, voice }
-  const DUB_DEFAULTS = { videoVol: 0.25, dubVol: 1, subs: true, voice: '' };
+  // 한국어 자막이 기본이고 목소리(더빙)는 고를 때만(사용자 요청 2026-11-01). autoSubs: 외국어 영상이면
+  // 사람이 만든 한국어 자막이 없을 때 우리 한국어 자막을 저절로 켠다.
+  const DUB_DEFAULTS = { videoVol: 0.25, dubVol: 1, subs: true, voice: '', voiceOn: false, autoSubs: true };
   const DUB_GAP_MS = 700; // 이만큼 쉬면 문장을 끊는다
   const DUB_MAX_MS = 7000; // 자동 자막은 마침표가 없어 길이로도 끊는다
   const DUB_MAX_CHARS = 90;
@@ -4823,7 +4827,8 @@
   const DUB_MALE = /InJoon|Hyunsu|Bong|Gook|남성/i;
   let dubCfg = { ...DUB_DEFAULTS, ...GM_getValue(DUB_KEY, {}) };
   let dub = null; // 더빙 중인 영상 { video, sentences, cur, lang, ... }
-  let dubWanted = false; // 유튜브에서 켜 두면 다음 영상도 이어서 더빙한다
+  let dubWanted = false; // 유튜브에서 손으로 켜 두면 다음 영상도 이어서
+  let dubAutoTried = ''; // 저절로 켜 본 유튜브 영상 id
   let dubPanel = null;
   let dubSubEl = null;
   let dubChip = null;
@@ -5052,7 +5057,7 @@
   function dubSpeak(d, s) {
     try {
       speechSynthesis.cancel();
-      if (!(dubCfg.dubVol > 0)) return;
+      if (!dubCfg.voiceOn || !(dubCfg.dubVol > 0)) return;
       const u = new SpeechSynthesisUtterance(s.ko);
       const voice = dubVoice(s.gender);
       if (voice) u.voice = voice;
@@ -5112,9 +5117,9 @@
       }
       return;
     }
-    // 영상 소리는 더빙 창의 값으로 둔다. 유튜브는 광고가 끝나거나 다음 영상이 뜰 때 제 값으로 되돌리므로
-    // 다시 맞추고, 사람이 플레이어의 소리 막대·키를 막 만졌을 때만 그 값을 따른다.
-    if (Math.abs(v.volume - dubCfg.videoVol) > 0.005) {
+    // 목소리를 켠 동안 영상 소리는 창의 값으로 둔다. 유튜브는 광고가 끝나거나 다음 영상이 뜰 때 제 값으로
+    // 되돌리므로 다시 맞추고, 사람이 플레이어의 소리 막대·키를 막 만졌을 때만 그 값을 따른다.
+    if (d.ducked && Math.abs(v.volume - dubCfg.videoVol) > 0.005) {
       if (Date.now() - dubVolumeTouchedAt < 2500) {
         dubCfg.videoVol = v.volume;
         saveDubCfg();
@@ -5132,14 +5137,39 @@
     dubShowSub(s && t < Math.min(s.next, s.end + 1500) ? s.ko || '' : '');
   }
 
-  async function dubStart(video) {
+  // 목소리를 켜면 영상 소리를 창의 값으로 줄이고, 끄면 원래대로 돌린다.
+  function dubDuck(d, on) {
+    if (on && !d.ducked) {
+      d.origVolume = d.video.volume;
+      d.video.volume = dubCfg.videoVol;
+      d.ducked = true;
+    } else if (!on && d.ducked) {
+      if (d.video.isConnected) d.video.volume = d.origVolume;
+      d.ducked = false;
+    }
+  }
+
+  function dubSetVoice(on) {
+    dubCfg.voiceOn = on;
+    saveDubCfg();
+    if (!dub) return;
+    dubDuck(dub, on);
+    if (on) dub.cur = -1; // 지금 문장부터 읽는다
+    else speechSynthesis.cancel();
+    dubStatus();
+  }
+
+  // auto: 사람이 누른 것이 아니라 외국어 영상이라 저절로 켠 것 — 한국어 자막이 있는 영상·한국어 영상·자막이
+  // 없는 영상이면 조용히 그만둔다.
+  async function dubStart(video, auto = false) {
     if (!video) return;
     if (dub) dubStop();
-    const d = { video, sentences: [], cur: -1, lang: '', status: '대본 받는 중…', origVolume: video.volume, startedAt: Date.now() };
+    const d = { video, sentences: [], cur: -1, lang: '', status: '대본 받는 중…', auto, startedAt: Date.now() };
+    if (YOUTUBE) d.videoId = ytVideoId();
     dub = d;
-    if (YOUTUBE) dubWanted = true;
+    if (YOUTUBE && !auto) dubWanted = true;
     ensureGlossary();
-    video.volume = dubCfg.videoVol;
+    dubDuck(d, dubCfg.voiceOn);
     d.onSeek = () => {
       speechSynthesis.cancel();
       d.cur = -1;
@@ -5153,7 +5183,9 @@
       const cues = YOUTUBE && video.closest('#movie_player') ? await ytLoadCues(d) : dubTrackCues(d);
       if (d !== dub) return;
       if (cues) dubSetCues(d, cues);
+      else if (auto) return dubStop();
     } catch (e) {
+      if (auto && d === dub) return dubStop();
       d.status = `자막을 받지 못했습니다: ${e.message}`;
     }
     dubStatus();
@@ -5173,7 +5205,7 @@
     } catch {
       /* 목소리를 못 쓰는 브라우저 */
     }
-    if (d.video.isConnected) d.video.volume = d.origVolume;
+    dubDuck(d, false);
     dubShowSub('');
     dubStatus();
     dubSyncButton();
@@ -5299,6 +5331,7 @@
         const p = new URL(base).searchParams;
         const spoken = p.get('lang') || '';
         const asr = p.get('kind') === 'asr';
+        if (d.auto && /^ko/i.test(spoken)) return null; // 한국어 영상 — 저절로 켤 까닭이 없다
         const tries = [];
         if (!/^ko/i.test(spoken)) tries.push(['ko', '']);
         if (asr) tries.push([spoken, '']);
@@ -5312,6 +5345,8 @@
           }
           if (d !== dub) return null;
           if (cues && cues.length) {
+            // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
+            if (d.auto && lang === 'ko') return null;
             d.lang = lang.slice(0, 2).toLowerCase();
             if (d.lang !== 'ko') d.koFallback = async () => (await get(mk(base, lang, kind, 'ko'))) || [];
             return cues;
@@ -5349,7 +5384,7 @@
     if (!bar || bar.querySelector('.lzk-dub-btn')) return;
     const b = markNoTranslate(document.createElement('button'));
     b.className = 'ytp-button lzk-dub-btn';
-    b.title = '한국어 더빙 (자막 + 목소리)';
+    b.title = '한국어 자막 · 더빙';
     b.textContent = '한';
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -5359,12 +5394,19 @@
     dubSyncButton();
   }
 
+  // 영상이 바뀌면: 손으로 켜 두었으면 이어서, 아니면 '외국어 영상은 자동' 일 때 저절로.
   function ytOnNavigate() {
+    const id = ytVideoId();
     const keep = dubWanted;
-    if (dub && dub.videoId !== ytVideoId()) dubStop();
-    dubWanted = keep;
-    if (dubWanted && !dub && ytVideoId()) dubStart(document.querySelector('#movie_player video'));
-    else if (!ytVideoId()) dubWanted = false;
+    if (dub && dub.videoId !== id) dubStop();
+    dubWanted = keep && !!id;
+    if (!id || dub) return;
+    const v = document.querySelector('#movie_player video');
+    if (dubWanted) dubStart(v);
+    else if (dubCfg.autoSubs && dubAutoTried !== id) {
+      dubAutoTried = id; // 한 영상에 한 번만 — 손으로 끈 뒤 다시 켜지지 않게
+      dubStart(v, true);
+    }
   }
 
   function ytDubInit() {
@@ -5386,13 +5428,14 @@
     ytMountButton();
     setInterval(ytMountButton, 1500);
     document.addEventListener('yt-navigate-finish', () => setTimeout(ytOnNavigate, 800));
+    setTimeout(ytOnNavigate, 2500); // 처음 열린 영상(이미 켜져 있으면 두 번 켜지 않는다)
   }
 
-  // --- 창: 켜기·끄기, 영상 소리·번역 소리, 자막, 목소리 ---
+  // --- 창: 한국어 자막 켜기·끄기, 목소리(더빙), 자동, 영상 소리·번역 소리, 목소리 고르기 ---
   function dubSyncButton() {
     const on = !!dub;
     document.querySelectorAll('.lzk-dub-btn').forEach((b) => b.toggleAttribute('data-on', on));
-    if (dubChip) dubChip.textContent = on && dub.video === dubChip.lzkVideo ? '더빙 중' : '한국어 더빙';
+    if (dubChip) dubChip.textContent = on && dub.video === dubChip.lzkVideo ? '한국어 자막 중' : '한국어 자막';
   }
 
   function dubStatus() {
@@ -5400,19 +5443,20 @@
     const st = dubPanel.querySelector('.lzk-dub-status');
     const toggle = dubPanel.querySelector('.lzk-dub-toggle');
     const mine = dub && dub.video === dubPanel.lzkVideo;
-    toggle.textContent = mine ? '더빙 끄기' : '더빙 켜기';
+    toggle.textContent = mine ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!mine);
-    if (!mine) st.textContent = '꺼짐 — 자막을 미리 받아 한국어로 옮긴 뒤 읽어 줍니다';
+    if (!mine) st.textContent = '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다';
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
       const n = dub.sentences.length;
       const done = dub.sentences.filter((s) => s.ko).length;
       const lang = { th: '태국어', en: '영어', zh: '중국어', ja: '일본어', ko: '한국어' }[dub.lang] || dub.lang || '?';
       const waiting = dub.translating || dub.sentences.some((s) => !s.ko && !s.tried);
+      const mode = dubCfg.voiceOn ? '자막 + 목소리' : '한국어 자막';
       st.textContent =
         waiting && done < n
           ? `${lang} → 한국어 번역 중 ${done}/${n}`
-          : `더빙 중 · ${lang} ${n}문장` + (done < n ? ` (못 옮긴 ${n - done})` : '');
+          : `${mode} · ${lang} ${n}문장` + (done < n ? ` (못 옮긴 ${n - done})` : '') + (dub.auto ? ' · 자동' : '');
     }
   }
 
@@ -5422,6 +5466,8 @@
       r.value = Math.round(dubCfg[r.dataset.k] * 100);
       r.previousSibling.textContent = `${r.dataset.label} ${r.value}%`;
     }
+    for (const c of dubPanel.querySelectorAll('input[type=checkbox]')) c.checked = !!dubCfg[c.dataset.k];
+    dubPanel.querySelector('.lzk-dub-voicebox').hidden = !dubCfg.voiceOn;
   }
 
   function dubFillVoices() {
@@ -5457,10 +5503,25 @@
       p.remove();
       dubPanel = null;
     });
-    head.append(el('b', '', '한국어 더빙'), close);
+    head.append(el('b', '', '한국어 자막 · 더빙'), close);
     const toggle = el('button', 'lzk-dub-toggle');
     toggle.addEventListener('click', () => (dub && dub.video === video ? dubStop() : dubStart(video)));
     p.append(head, el('div', 'lzk-dub-status'), toggle);
+    const check = (text, k, onChange) => {
+      const lab = el('label', 'lzk-dub-check');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.dataset.k = k;
+      cb.addEventListener('change', () => {
+        if (onChange) onChange(cb.checked);
+        else {
+          dubCfg[k] = cb.checked;
+          saveDubCfg();
+        }
+      });
+      lab.append(cb, document.createTextNode(` ${text}`));
+      return lab;
+    };
     const range = (label, k, apply) => {
       const lab = el('label');
       const r = el('input');
@@ -5478,22 +5539,8 @@
       lab.append(document.createTextNode(''), r);
       return lab;
     };
-    p.append(
-      range('영상 소리', 'videoVol', (v) => {
-        if (dub && dub.video === video) video.volume = v;
-      }),
-      range('번역 소리', 'dubVol')
-    );
-    const subs = el('label', 'lzk-dub-check');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = dubCfg.subs;
-    cb.addEventListener('change', () => {
-      dubCfg.subs = cb.checked;
-      saveDubCfg();
-      if (!cb.checked) dubShowSub('');
-    });
-    subs.append(cb, document.createTextNode(' 한국어 자막 보이기'));
+    // 목소리(더빙)는 고를 때만. 켜면 영상 소리·번역 소리·목소리 고르기가 보인다.
+    const voiceBox = el('div', 'lzk-dub-voicebox');
     const vl = el('label', '', '목소리');
     const sel = el('select');
     sel.addEventListener('change', () => {
@@ -5501,7 +5548,26 @@
       saveDubCfg();
     });
     vl.appendChild(sel);
-    p.append(subs, vl);
+    voiceBox.append(
+      range('영상 소리', 'videoVol', (v) => {
+        if (dub && dub.video === video && dub.ducked) video.volume = v;
+      }),
+      range('번역 소리', 'dubVol'),
+      vl
+    );
+    p.append(
+      check('목소리로 읽기 (더빙)', 'voiceOn', (on) => {
+        dubSetVoice(on);
+        voiceBox.hidden = !on;
+      }),
+      voiceBox,
+      check('화면에 한국어 자막 보이기', 'subs', (on) => {
+        dubCfg.subs = on;
+        saveDubCfg();
+        if (!on) dubShowSub('');
+      }),
+      check(YOUTUBE ? '외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)' : '자막 있는 외국어 영상은 자동으로', 'autoSubs')
+    );
     // 창 안의 클릭·키가 영상(재생·멈춤, 화살표 = 앞뒤로 감기)으로 새지 않게.
     for (const t of ['click', 'mousedown', 'keydown', 'keyup', 'wheel']) p.addEventListener(t, (e) => e.stopPropagation());
     return p;
@@ -5525,7 +5591,7 @@
     dubPanel.style.top = `${r.top - h - 10 > 8 ? r.top - h - 10 : Math.min(window.innerHeight - h - 8, r.bottom + 8)}px`;
   }
 
-  // 다른 사이트: 영상 위에 마우스를 올리면 왼쪽 위에 '한국어 더빙' 단추.
+  // 다른 사이트: 영상 위에 마우스를 올리면 왼쪽 위에 '한국어 자막' 단추.
   function dubChipAt(x, y) {
     if (dubChip && dubChip.matches(':hover')) return;
     const v = [...document.querySelectorAll('video')].find((el) => {
@@ -5575,6 +5641,21 @@
     };
     for (const type of ['pointerdown', 'wheel', 'keydown', 'input']) document.addEventListener(type, touched, { capture: true, passive: true });
     if (YOUTUBE) return ytDubInit(); // 유튜브는 플레이어 단추(미리보기 영상에는 달지 않는다)
+    // 자막 트랙이 있는 외국어 영상을 틀면 저절로 한국어 자막(한국어 트랙이 있으면 그대로 둔다).
+    document.addEventListener(
+      'play',
+      (e) => {
+        const v = e.target;
+        if (!dubCfg.autoSubs || dub || !(v instanceof HTMLVideoElement) || v.lzkAutoTried) return;
+        const r = v.getBoundingClientRect();
+        if (r.width < 240 || r.height < 135) return;
+        const tracks = [...v.textTracks].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
+        if (!tracks.length || tracks.some((t) => /^ko/i.test(t.language))) return;
+        v.lzkAutoTried = true;
+        dubStart(v, true);
+      },
+      true
+    );
     let last = 0;
     document.addEventListener(
       'mousemove',

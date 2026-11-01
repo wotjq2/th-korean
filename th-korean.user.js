@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.0
+// @version      1.27.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4834,6 +4834,9 @@
     autoSubs: true,
     maxSpeed: 1.6,
     subScale: 1,
+    // 유튜브 밖(페이스북 등): 켜 두면 재생하는 영상마다 한국어 자막 — 자막 파일이 있으면 그것을, 없으면 크롬
+    // 실시간 자막(번역 도우미)을. 사용자(2026-11-01): 릴스를 넘길 때마다 꺼져서 다시 켜야 했다.
+    pageSubs: true,
   };
   const DUB_GAP_MS = 700; // 이만큼 쉬면 문장을 끊는다
   const DUB_MAX_MS = 7000; // 자동 자막은 마침표가 없어 길이로도 끊는다
@@ -5190,11 +5193,11 @@
     if (dubSubEl.firstChild.textContent !== t) dubSubEl.firstChild.textContent = t;
     dubSubEl.hidden = !t;
     // 우리 한국어 자막을 보이는 동안에는 유튜브 원래 자막(태국어 등)을 가린다 — 두 줄이 겹쳤다.
-    document.documentElement.toggleAttribute('data-lzk-dubsubs', !!(dub && dubCfg.subs));
+    document.documentElement.toggleAttribute('data-lzk-dubsubs', !!(dub && !dub.failed && dubCfg.subs));
   }
 
-  // video: 자막을 붙일 영상(우리 자막이면 dub.video, 크롬 실시간 자막이면 지금 재생 중인 영상).
-  function dubPlaceSub(video = (dub && dub.video) || liveVideo) {
+  // video: 자막을 붙일 영상(크롬 실시간 자막이면 지금 재생 중인 영상, 아니면 우리 자막의 dub.video).
+  function dubPlaceSub(video = liveVideo || (dub && dub.video)) {
     if (!video || !dubSubEl) return;
     const host = dubHost(video);
     if (dubSubEl.parentNode !== host) host.appendChild(dubSubEl);
@@ -5212,7 +5215,7 @@
 
   function dubTick() {
     const d = dub;
-    if (!d) return;
+    if (!d || d.failed) return;
     const v = d.video;
     dubPlaceSub();
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains('ad-showing')) {
@@ -5289,9 +5292,11 @@
       if (d !== dub) return;
       if (cues) dubSetCues(d, cues);
       else if (auto) return dubStop();
+      else d.failed = true; // 자막이 없다 — 이 영상 자리는 크롬 실시간 자막에 내준다
     } catch (e) {
       if (auto && d === dub) return dubStop();
       d.status = `자막을 받지 못했습니다: ${e.message}`;
+      d.failed = true;
     }
     dubStatus();
   }
@@ -5560,7 +5565,8 @@
   function dubSyncButton() {
     const on = !!dub;
     document.querySelectorAll('.lzk-dub-btn').forEach((b) => b.toggleAttribute('data-on', on));
-    if (dubChip) dubChip.textContent = on && dub.video === dubChip.lzkVideo ? '한국어 자막 중' : '한국어 자막';
+    const chipOn = YOUTUBE ? on && dub.video === dubChip?.lzkVideo : dubCfg.pageSubs;
+    if (dubChip) dubChip.textContent = chipOn ? '한국어 자막 중' : '한국어 자막';
   }
 
   function dubStatus() {
@@ -5568,9 +5574,13 @@
     const st = dubPanel.querySelector('.lzk-dub-status');
     const toggle = dubPanel.querySelector('.lzk-dub-toggle');
     const mine = dub && dub.video === dubPanel.lzkVideo;
-    toggle.textContent = mine ? '한국어 자막 끄기' : '한국어 자막 켜기';
-    toggle.toggleAttribute('data-on', !!mine);
-    if (!mine) st.textContent = '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다';
+    // 유튜브는 영상마다(다음 영상은 dubWanted 로 잇는다), 다른 사이트는 켜 두면 넘겨도 계속.
+    const on = YOUTUBE ? mine : dubCfg.pageSubs;
+    toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
+    toggle.toggleAttribute('data-on', !!on);
+    if (!on)
+      st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
+    else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
       const n = dub.sentences.length;
@@ -5632,7 +5642,11 @@
     });
     head.append(el('b', '', '한국어 자막 · 더빙'), close);
     const toggle = el('button', 'lzk-dub-toggle');
-    toggle.addEventListener('click', () => (dub && dub.video === video ? dubStop() : dubStart(video)));
+    toggle.addEventListener('click', () => {
+      if (!YOUTUBE) pageSubsSet(!dubCfg.pageSubs, video);
+      else if (dub && dub.video === video) dubStop();
+      else dubStart(video);
+    });
     p.append(head, el('div', 'lzk-dub-status'), toggle);
     const check = (text, k, onChange) => {
       const lab = el('label', 'lzk-dub-check');
@@ -5697,7 +5711,8 @@
         if (!on) dubShowSub('');
       }),
       range('자막 크기', 'subScale', dubPlaceSub, 50, 150),
-      check(YOUTUBE ? '외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)' : '자막 있는 외국어 영상은 자동으로', 'autoSubs')
+      // 다른 사이트는 '한국어 자막 켜기' 자체가 자동(켜 두면 영상마다)이라 따로 두지 않는다.
+      ...(YOUTUBE ? [check('외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)', 'autoSubs')] : [])
     );
     // 창 안의 클릭·키가 영상(재생·멈춤, 화살표 = 앞뒤로 감기)으로 새지 않게.
     for (const t of ['click', 'mousedown', 'keydown', 'keyup', 'wheel']) p.addEventListener(t, (e) => e.stopPropagation());
@@ -5756,14 +5771,15 @@
   // --- 크롬 실시간 자막 → 영상 위 (자막 파일이 없는 영상: 페이스북·틱톡·자막 없는 유튜브) ---
   // 크롬이 소리를 받아 적은 실시간 자막을 번역 도우미(line-helper/LiveCaption.cs)가 용어집 + 번역으로 옮겨
   // 127.0.0.1:38291 에 놓아 둔다. 영상이 재생 중인 보이는 탭이 0.7초마다 가져가 그 영상 위에 유튜브 자막처럼
-  // 띄운다(사용자 2026-11-01: 크롬 자막 창 말고 영상에 합쳐서). 우리 자막(dub)이 켜져 있으면 쓰지 않는다.
-  // 도우미가 없으면 점점 드물게(최대 30초) 묻는다.
+  // 띄운다(사용자 2026-11-01: 크롬 자막 창 말고 영상에 합쳐서). 그 영상에 우리 자막(자막 파일·유튜브 대본)이
+  // 나오고 있으면 쓰지 않는다. 도우미가 없으면 점점 드물게(최대 30초) 묻는다.
   const LIVE_URL = 'http://127.0.0.1:38291/caption';
   const LIVE_MAX_AGE = 6000; // 이만큼 새 말이 없으면 자막을 내린다
   let liveVideo = null;
   let liveBusy = false;
   let liveFails = 0;
   let liveNext = 0;
+  let liveState = ''; // ok: 띄우는 중, quiet: 받아 적힌 말 없음, off: 도우미에서 꺼 둠, none: 도우미 없음
 
   function livePlayingVideo() {
     let best = null;
@@ -5783,21 +5799,54 @@
   function liveHide() {
     if (!liveVideo) return;
     liveVideo = null;
-    if (!dub) dubShowSub('');
+    dubShowSub(''); // 우리 자막이 나오는 영상이면 다음 dubTick(0.15초)에 다시 쓴다
+  }
+
+  // 이 영상의 자막 자리를 우리 자막이 쓰고 있는가 — 자막을 못 받은 것(failed)은 실시간 자막에 내준다.
+  const dubOwns = (v) => !!(dub && !dub.failed && dub.video === v);
+
+  function liveSetState(state) {
+    if (state === liveState) return;
+    liveState = state;
+    dubStatus();
+  }
+
+  function liveNote() {
+    const why = {
+      ok: '크롬 실시간 자막을 한국어로 띄우는 중',
+      quiet: '지금 받아 적힌 말이 없습니다(크롬 설정 › 접근성 › 실시간 자막을 켜고 영상 소리를 켜 주세요)',
+      off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
+      none: '번역 도우미가 꺼져 있습니다',
+    }[liveState];
+    return liveState === 'ok' ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
+  }
+
+  // 다른 사이트의 '한국어 자막 켜기·끄기' — 영상 하나가 아니라 켜 둔 동안 재생하는 영상마다.
+  function pageSubsSet(on, video) {
+    dubCfg.pageSubs = on;
+    saveDubCfg();
+    if (!on) {
+      dubStop();
+      liveHide();
+    } else if (video && [...(video.textTracks || [])].some((t) => t.kind === 'subtitles' || t.kind === 'captions')) dubStart(video);
+    dubStatus();
+    dubSyncButton();
   }
 
   function liveTick() {
-    if (dub) {
-      liveVideo = null;
-      return;
-    }
+    if (!YOUTUBE && !dubCfg.pageSubs) return liveHide();
     if (liveBusy || document.visibilityState !== 'visible' || Date.now() < liveNext) return;
     const v = livePlayingVideo();
     if (!v) return liveHide();
+    if (dubOwns(v)) {
+      liveVideo = null;
+      return;
+    }
     liveBusy = true;
-    const done = (text) => {
+    const done = (text, state) => {
       liveBusy = false;
-      if (dub) return;
+      liveSetState(state);
+      if (dubOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
       if (!text) return liveHide();
       liveVideo = v;
       dubShowSub(text);
@@ -5806,7 +5855,7 @@
     const fail = () => {
       liveFails++;
       liveNext = Date.now() + Math.min(30000, 1500 * liveFails);
-      done('');
+      done('', 'none');
     };
     GM_xmlhttpRequest({
       method: 'GET',
@@ -5820,7 +5869,8 @@
         } catch {
           j = null;
         }
-        done(j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '');
+        const text = j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '';
+        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : 'quiet');
       },
       onerror: fail,
       ontimeout: fail,
@@ -5871,17 +5921,24 @@
       { passive: true, capture: true }
     );
     if (YOUTUBE) return ytDubInit();
-    // 자막 트랙이 있는 외국어 영상을 틀면 저절로 한국어 자막(한국어 트랙이 있으면 그대로 둔다).
+    // 한국어 자막을 켜 둔 동안(pageSubs) 영상을 틀면: 앞 영상(넘겨서 멈췄거나 화면 밖)의 자막은 끄고, 새 영상에
+    // 자막 트랙이 있으면 그것을 한국어로(한국어 트랙이 있으면 그대로 둔다). 트랙이 없는 영상은 liveTick 이
+    // 크롬 실시간 자막으로 덮는다. 사용자(2026-11-01): 페이스북 릴스를 넘길 때마다 꺼져서 다시 켜야 했다.
     document.addEventListener(
       'play',
       (e) => {
         const v = e.target;
-        if (!dubCfg.autoSubs || dub || !(v instanceof HTMLVideoElement) || v.lzkAutoTried) return;
+        if (!dubCfg.pageSubs || !(v instanceof HTMLVideoElement)) return;
         const r = v.getBoundingClientRect();
         if (r.width < 240 || r.height < 135) return;
+        if (dub && dub.video !== v) {
+          const o = dub.video;
+          const or = o.getBoundingClientRect();
+          if (!o.isConnected || o.paused || o.ended || or.bottom < 0 || or.top > window.innerHeight) dubStop();
+        }
+        if (dub) return;
         const tracks = [...v.textTracks].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
         if (!tracks.length || tracks.some((t) => /^ko/i.test(t.language))) return;
-        v.lzkAutoTried = true;
         dubStart(v, true);
       },
       true

@@ -147,6 +147,30 @@ static class ScreenKorean
     static readonly Dictionary<string, string> done = new Dictionary<string, string>(); // 읽은 글자 → 한국어("" = 덮지 않음)
     static readonly JavaScriptSerializer json = new JavaScriptSerializer();
     static readonly Regex TwoLatin = new Regex("[A-Za-z].*[A-Za-z]");
+
+    // 읽을 글자(트레이 '화면 번역 글자'): auto = 알아서(영어·로마자, 아니면 태국어), th = 태국어, latin = 영어·로마자만.
+    // 이 PC 의 윈도우 OCR 은 한국어판이라 태국어를 '11.]Li하EJ가1다益ff%' 처럼 엉터리로 읽는다(2026-11-01) — 그런 줄은
+    // 엔진이 태국어 OCR(Tesseract)로 다시 읽는다.
+    public static string Lang = "auto";
+    static readonly Regex CleanKorean = new Regex("^[가-힣ㄱ-ㆎ0-9\\s.,!?~·:;()\\[\\]<>\\-'\"/%+&@#*=…]+$");
+    static readonly Regex HasHangul = new Regex("[가-힣]");
+    static readonly Regex AsciiOnly = new Regex("^[\\x20-\\x7E]+$");
+
+    public static void SetLang(string lang)
+    {
+        Lang = lang;
+        lock (done) done.Clear(); // 다른 글자로 다시 읽게
+        Log.Write("화면 번역 글자: " + lang);
+    }
+
+    // 엔진에 물어볼 줄: 로마자가 둘 넘거나, (자동·태국어) 제대로 읽힌 한국어가 아닌 줄.
+    static bool Worth(string t)
+    {
+        if (TwoLatin.IsMatch(t)) return true;
+        if (Lang == "latin") return false;
+        string s = t.Trim();
+        return s.Length >= 3 && !(HasHangul.IsMatch(s) && CleanKorean.IsMatch(s));
+    }
     static int cropNo;
 
     public static bool On { get { return target != IntPtr.Zero; } }
@@ -789,7 +813,7 @@ static class ScreenKorean
             {
                 string ko;
                 if (done.TryGetValue(c.Text, out ko)) c.Ko = ko;
-                else if (!TwoLatin.IsMatch(c.Text)) c.Ko = "";
+                else if (!Worth(c.Text)) c.Ko = "";
                 else if (asking.Add(c.Text)) ask.Add(c);
             }
         }
@@ -806,7 +830,7 @@ static class ScreenKorean
                 it["n"] = c.Lines;
                 items.Add(it);
             }
-            string[] r = engine.Call("screen", "", json.Serialize(items), 60000);
+            string[] r = engine.Call("screen", Lang, json.Serialize(items), 60000);
             object[] outs = (object[])json.DeserializeObject(r[0]);
             lock (done)
             {
@@ -834,7 +858,9 @@ static class ScreenKorean
     // 밝기를 늘여 바탕 → 흰색, 글자 → 검은색(어두운 테마도 같게). 밝기가 비슷하면 바탕과의 색 차이로.
     static string SaveCrop(int[] px, int w, int h, TextChunk c)
     {
-        Rectangle r = Rectangle.Inflate(c.Box, 4, 4);
+        // 태국어일 수 있는 줄은 위아래를 넉넉히 — 윈도우 OCR 의 칸이 글자 위아래의 점·꼬리(ั ี ุ ู ่ ้)를 잘랐다.
+        int padY = Lang == "latin" || AsciiOnly.IsMatch(c.Text) ? 4 : 4 + c.LineH * 35 / 100;
+        Rectangle r = Rectangle.Inflate(c.Box, 4, padY);
         r.Intersect(new Rectangle(0, 0, w, h));
         int bg = c.Bg.ToArgb(), lb = Luma(bg), lf = Luma(c.Fg.ToArgb()), maxD = 1;
         for (int y = r.Top; y < r.Bottom; y++)

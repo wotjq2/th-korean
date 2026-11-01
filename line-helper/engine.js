@@ -247,36 +247,94 @@ function uiFix(s) {
   return toks.join(' ');
 }
 
-// 옮기지 않는 줄: 영어 글자가 거의 없거나, 이미 한국어거나, 주소·경로·메일.
+const thaiCount = (s) => (s.match(new RegExp(`[${THAI_CH}]`, 'g')) || []).length;
+
+// 옮기지 않는 줄: 영어·태국어 글자가 거의 없거나, 이미 한국어거나, 주소·경로·메일.
 function uiSkip(s) {
-  return latinCount(s) < 2 || hangulCount(s) >= latinCount(s) || /https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s);
+  const foreign = latinCount(s) + thaiCount(s);
+  return (latinCount(s) < 2 && thaiCount(s) < 2) || hangulCount(s) >= foreign || /https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s);
+}
+
+// 윈도우 OCR 이 제대로 읽은 한국어 줄(한글·숫자·흔한 기호뿐). 태국어를 읽으면 '11.]Li하EJ가1다益ff%' 처럼
+// 로마자·한자·기호가 섞여 나온다(2026-11-01 시험 창).
+const cleanKorean = (s) => /[가-힣]/.test(s) && /^[가-힣ㄱ-ㆎ0-9\s.,!?~·:;()[\]<>\-'"/%+&@#*=…]+$/.test(s);
+
+// 태국어 OCR 로 다시 읽기. 낱말 사이에 끼운 띄어쓰기는 지운다.
+async function readThai(it) {
+  const r = await ocr(it.f, { langs: ['tha'], psm: it.n > 1 ? '6' : '7' });
+  const t = r.text
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(new RegExp(`(?<=[${THAI_CH}]) (?=[${THAI_CH}])`, 'g'), '')
+    .trim();
+  return { t, conf: r.conf };
 }
 
 // 모든 줄을 영어 OCR 로 한 번 더 읽는다. 헷갈린 표시가 없어도 윈도우 OCR 은 글자를 빠뜨리거나 바꾼다
 // (typing → vping, Spell → SpeII, Use → lJse — 표시만 보고 다시 읽던 때 그대로 번역됐다, 2026-10-24).
 // 글자만 같고 띄어쓰기만 다르면 윈도우 쪽을 쓴다(Setup later ↔ Set up later). 다르면 영어 OCR 이 충분히
 // 확신할 때만 — 윈도우 쪽이 수상하면 덜 확신해도 영어 OCR 을 믿는다.
-async function uiLine(it) {
+// mode(트레이 '화면 번역 글자'): auto = 영어로 안 읽히고 한국어도 아니면 태국어로 읽어 본다, th = 한국어가
+// 아니면 태국어로 먼저, latin = 영어·로마자만(예전처럼).
+async function uiLine(it, mode = 'auto') {
   const win = uiFix(it.t);
   if (!it.f) return win;
   try {
-    const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
-    const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
-    const bare = (s) => s.toLowerCase().replace(/[^a-z]/g, '');
-    if (bare(tess) === bare(win)) return win;
-    if (r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7) return tess;
+    if (mode !== 'th') {
+      const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
+      const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
+      const bare = (s) => s.toLowerCase().replace(/[^a-z]/g, '');
+      const ascii = /^[\x20-\x7E]+$/.test(it.t);
+      if (bare(tess) === bare(win) && (ascii || mode === 'latin')) return win;
+      if (r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7) return tess;
+      if (mode === 'latin') return win;
+    }
+    if (cleanKorean(it.t)) return win;
+    const th = await readThai(it);
+    if (thaiCount(th.t) >= 3 && th.conf >= (mode === 'th' ? 45 : 60)) return th.t;
   } catch (e) {
     console.error('화면 글줄 다시 읽기 실패:', e.message);
   }
   return win;
 }
 
+// 줄 묶음 번역. 구글은 한 묶음의 말을 한 언어로 보고 옮겨서, 영어 줄과 섞인 필리핀어 줄은 그대로 돌아왔다
+// (2026-11-01). 태국어 줄은 따로 묶고(메신저 받는 쪽과 같은 손질), 그래도 그대로 돌아온 로마자 줄은 한 줄씩 다시 묻는다.
+async function uiTranslate(lines) {
+  const out = new Array(lines.length).fill('');
+  const thai = [];
+  const latin = [];
+  lines.forEach((s, i) => (thaiCount(s) >= 2 ? thai : latin).push(i));
+  if (thai.length) {
+    const prep = thai.map((i) => T.chatPrepThai(lines[i], true, ''));
+    const ask = [];
+    prep.forEach((p, k) => {
+      const whole = T.chatThaiWhole(p);
+      if (whole) out[thai[k]] = whole;
+      else ask.push(k);
+    });
+    const got = ask.length ? await T.translateToKorean(ask.map((k) => prep[k])) : [];
+    ask.forEach((k, j) => {
+      if (got[j]) out[thai[k]] = T.chatFixKorean(got[j], prep[k]);
+    });
+  }
+  if (latin.length) {
+    const got = await T.translateToKorean(latin.map((i) => lines[i]));
+    latin.forEach((i, k) => (out[i] = String(got[k] || '')));
+    const again = latin.filter((i) => !T.HANGUL.test(out[i]) && /\S+\s+\S+/.test(lines[i])).slice(0, 8);
+    for (const i of again) {
+      const [one] = await T.translateToKorean([lines[i]]);
+      if (one) out[i] = one;
+    }
+  }
+  return out;
+}
+
 // items: [{t: 윈도우 OCR 글자, f: 잘라 낸 그림(흰 바탕 검은 글자), n: 줄 수}] → [{s: 옮긴 원문, k: 한국어 또는 ''}]
-async function screenLines(items) {
+async function screenLines(items, mode) {
   const src = [];
-  for (const it of items) src.push(await uiLine(it));
+  for (const it of items) src.push(await uiLine(it, mode));
   const todo = src.map((s, i) => (uiSkip(s) ? -1 : i)).filter((i) => i >= 0);
-  const got = todo.length ? await T.translateToKorean(todo.map((i) => src[i])) : [];
+  const got = todo.length ? await uiTranslate(todo.map((i) => src[i])) : [];
   const out = src.map((s) => ({ s, k: '' }));
   todo.forEach((i, k) => {
     const ko = String(got[k] || '').trim();
@@ -299,7 +357,7 @@ async function handle(req) {
     return { out: '', via: '' };
   }
   if (req.op === 'screen') {
-    const out = await screenLines(JSON.parse(req.text));
+    const out = await screenLines(JSON.parse(req.text), req.lang || 'auto');
     return { out: JSON.stringify(out), via: String(out.filter((o) => o.k).length) };
   }
   const text = String(req.text || '').replace(/\r\n?/g, '\n').trim();

@@ -996,6 +996,7 @@ static class App
                 if (k == "both") Both = v == "1";
                 if (k == "korean") ShowKorean = v != "0";
                 if (k == "livecaption") LiveCaption.On = v != "0";
+                if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin")) ScreenKorean.Lang = v;
             }
         }
         catch { }
@@ -1006,7 +1007,7 @@ static class App
         try
         {
             File.WriteAllText(settingsFile, "lang=" + Lang + "\r\nreceive=" + (Receive ? "1" : "0") + "\r\nboth=" + (Both ? "1" : "0")
-                + "\r\nkorean=" + (ShowKorean ? "1" : "0") + "\r\nlivecaption=" + (LiveCaption.On ? "1" : "0") + "\r\n");
+                + "\r\nkorean=" + (ShowKorean ? "1" : "0") + "\r\nlivecaption=" + (LiveCaption.On ? "1" : "0") + "\r\nscreenlang=" + ScreenKorean.Lang + "\r\n");
         }
         catch { }
     }
@@ -1100,6 +1101,17 @@ static class App
             else Show("화면 번역", "바꿀 프로그램 창을 앞에 두고 " + ScreenKorean.HotkeyName + " 를 누르세요", false, 6000);
         };
         menu.Items.Add(screen);
+        // 화면 번역이 읽을 글자 — 기본은 알아서(영어·로마자, 아니면 태국어), 손으로 고를 수도 있다.
+        ToolStripMenuItem slang = new ToolStripMenuItem("화면 번역 글자");
+        foreach (string[] l in new string[][] { new[] { "auto", "자동 (영어·태국어 알아서)" }, new[] { "th", "태국어" }, new[] { "latin", "영어·로마자만" } })
+        {
+            string id = l[0];
+            ToolStripMenuItem it = new ToolStripMenuItem(l[1]);
+            it.Checked = ScreenKorean.Lang == id;
+            it.Click += delegate { ScreenKorean.SetLang(id); SaveSettings(); RefreshTray(); };
+            slang.DropDownItems.Add(it);
+        }
+        menu.Items.Add(slang);
         ToolStripMenuItem live = new ToolStripMenuItem("크롬 실시간 자막을 한국어로 덮기");
         live.Checked = LiveCaption.On;
         live.Click += delegate { LiveCaption.On = !LiveCaption.On; SaveSettings(); RefreshTray(); Log.Write("실시간 자막 한국어: " + (LiveCaption.On ? "켬" : "끔")); };

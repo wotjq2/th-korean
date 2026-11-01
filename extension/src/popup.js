@@ -40,6 +40,14 @@ $('#ver').textContent = chrome.runtime.getManifest().version;
   }
 })();
 
+// 검색 Enter 한 번/두 번 — 스크립트 설정 창의 '검색 전 번역된 태국어 확인' 과 같은 값(gm:confirmSearch, 기본 켬).
+// 스크립트가 Enter 때마다 다시 읽어 열린 페이지에도 바로 적용된다.
+chrome.storage.local.get(GM_PREFIX + 'confirmSearch').then((v) => {
+  const on = v[GM_PREFIX + 'confirmSearch'];
+  $('#confirm').checked = on === undefined ? true : !!on;
+});
+$('#confirm').addEventListener('change', (e) => chrome.storage.local.set({ [GM_PREFIX + 'confirmSearch']: e.target.checked }));
+
 // 번역 도우미 — background.js 가 네이티브 메시징으로 도우미 exe 에 묻고 시킨다.
 // 크롬에 아직 이어지지 않은 PC(새 판 도우미가 한 번도 켜지지 않았거나 도우미가 없다)에서는 [켜기]가
 // 예전부터 있던 th-korean-helper:// 주소로 켠다. 옛 판도 이 주소는 알고, 켜지면 1분 뒤 새 판으로 바뀌며

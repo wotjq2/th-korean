@@ -22,6 +22,9 @@
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; text-align: center; }
   #note { min-height: 1.4em; margin-top: 6px; color: var(--sub); }
+  #search { border-top: 1px solid var(--line); padding: 10px 14px 10px; }
+  #search label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  #search .hint { margin-top: 4px; color: var(--sub); font-size: 12px; }
   #helper { border-top: 1px solid var(--line); padding: 10px 14px 12px; }
   .hrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
   .hrow small { color: var(--sub); }
@@ -41,6 +44,10 @@
 <body>
 <header><h1>통합 번역</h1><span id="ver"></span></header>
 <div id="menu"></div>
+<section id="search">
+  <label><input type="checkbox" id="confirm"> 검색할 때 바뀐 태국어 확인 (Enter 두 번)</label>
+  <div class="hint">끄면 Enter 한 번에 바로 검색합니다. 라자다·쇼피·다른 사이트 입력칸 모두.</div>
+</section>
 <section id="helper">
   <div class="hrow"><span>번역 도우미 <small>LINE·화면 번역</small></span><span id="hstate">확인 중…</span></div>
   <div class="row">

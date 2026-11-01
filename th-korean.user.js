@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.26.1
+// @version      1.26.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1914,6 +1914,8 @@
       setInputValue(input, thai);
 
       const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
+      // 통합 번역 아이콘 화면에서도 바꿀 수 있어서, 열려 있는 페이지도 바로 따르게 쓸 때마다 다시 읽는다.
+      cfg.confirmSearch = GM_getValue('confirmSearch', cfg.confirmSearch);
       if (cfg.confirmSearch) {
         awaitingConfirm = true;
         toast(`${msg}\n확인 후 Enter를 다시 누르세요. 직접 수정해도 됩니다.`, note ? 9000 : 6000);
@@ -3729,7 +3731,7 @@
     $('#lzk-page-engine').value = usesAI(cfg.pageEngine) ? 'ai' : cfg.pageEngine;
     $('#lzk-search-engine').value = usesAI(cfg.searchEngine) ? 'ai' : 'free';
     $('#lzk-auto').checked = cfg.autoTranslatePage;
-    $('#lzk-confirm').checked = cfg.confirmSearch;
+    $('#lzk-confirm').checked = cfg.confirmSearch = GM_getValue('confirmSearch', cfg.confirmSearch);
     $('#lzk-chat-particle').value = cfg.chatParticle;
     $('#lzk-chat-translate').checked = cfg.chatTranslate;
     $('#lzk-selection').checked = cfg.selectionTranslate;
@@ -4606,6 +4608,7 @@
       }
       const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
       // 설정 '검색 전 번역된 태국어 확인 (Enter 한 번 더)' 를 라자다·쇼피와 똑같이 따른다.
+      cfg.confirmSearch = GM_getValue('confirmSearch', cfg.confirmSearch);
       if (cfg.confirmSearch) {
         toast(`${msg}\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.`, note ? 9000 : 6000);
       } else {

@@ -878,13 +878,16 @@ static class App
             if (args[i] == "--target") target = args[i + 1];
             if (args[i] == "--screen") screenTest = args[i + 1];
         }
+        // 크롬 '통합 번역' 확장이 켜기·끄기·상태를 물으러 부른 것 — 트레이 앱을 띄우지 않고 답만 한다(ChromeLink.cs).
+        if (ChromeLink.IsHostCall(args)) { ChromeLink.Run(MutexName, QuitName); return; }
+        if (Array.IndexOf(args, "--register-chrome") >= 0) { ChromeLink.Register(); return; }
         // 업데이터가 새 판을 켤 때: 이전 판이 끝나기를 기다렸다 켜지고, 바뀌었다고 알린다.
         bool wait = Array.IndexOf(args, "--wait") >= 0, updated = Array.IndexOf(args, "--updated") >= 0;
         // 크롬 스크립트 설정 창의 '번역 도우미 켜기' 가 th-korean-helper:// 주소로 부른 것(Updater.RegisterLink).
         bool fromLink = false;
         foreach (string a in args) if (a.StartsWith(Updater.LinkScheme + ":", StringComparison.OrdinalIgnoreCase)) fromLink = true;
         bool created;
-        using (Mutex m = new Mutex(true, "Local\\th-korean-line-helper-" + target, out created))
+        using (Mutex m = new Mutex(true, MutexName, out created))
         {
             if (!created && wait)
             {
@@ -946,6 +949,13 @@ static class App
                     Show("번역 도우미가 켜져 있습니다", ready, false, 6000);
                 }
             }) { IsBackground = true }.Start();
+            EventWaitHandle quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, QuitName);
+            new Thread(delegate ()
+            {
+                if (!quitSignal.WaitOne()) return;
+                Log.Write("크롬 '통합 번역' 에서 끔");
+                Quit();
+            }) { IsBackground = true }.Start();
             ClipWatcher clip = new ClipWatcher();
             clip.Changed += OnClipboard;
             hookProc = HookCallback;
@@ -966,6 +976,10 @@ static class App
 
     // 크롬 '번역 도우미 켜기' 로 다시 불렸을 때 이미 켜진 판에 알리는 신호.
     static string PingName { get { return "Local\\th-korean-line-helper-ping-" + target; } }
+    // 하나만 켜지게 하는 잠금. 크롬 확장이 켜져 있는지 볼 때도 이것을 본다(ChromeLink.IsRunning).
+    static string MutexName { get { return "Local\\th-korean-line-helper-" + target; } }
+    // 크롬 '통합 번역' 의 [끄기] 가 보내는 신호.
+    public static string QuitName { get { return "Local\\th-korean-line-helper-quit-" + target; } }
 
     static void LoadSettings()
     {

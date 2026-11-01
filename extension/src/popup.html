@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>통합 번역</title>
+<style>
+  :root { --bg: #fff; --fg: #1d1d1f; --sub: #6e6e73; --line: #e3e3e8; --btn: #f2f2f6; --accent: #2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1f1f22; --fg: #f2f2f4; --sub: #a1a1a8; --line: #3a3a40; --btn: #2c2c31; --accent: #6b9bff; }
+  }
+  body { margin: 0; width: 300px; background: var(--bg); color: var(--fg); font: 13px/1.45 "Malgun Gothic", system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 8px; padding: 12px 14px 8px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 15px; }
+  #ver { color: var(--sub); font-size: 12px; }
+  #menu { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; }
+  #menu .empty { color: var(--sub); }
+  button { font: inherit; color: inherit; background: var(--btn); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; text-align: left; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  details { border-top: 1px solid var(--line); padding: 8px 14px 12px; }
+  summary { cursor: pointer; color: var(--sub); }
+  textarea { box-sizing: border-box; width: 100%; height: 110px; margin: 8px 0 6px; font: 11px/1.35 Consolas, monospace; background: var(--btn); color: inherit; border: 1px solid var(--line); border-radius: 6px; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; text-align: center; }
+  #note { min-height: 1.4em; margin-top: 6px; color: var(--sub); }
+  #helper { border-top: 1px solid var(--line); padding: 10px 14px 12px; }
+  .hrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .hrow small { color: var(--sub); }
+  #hstate { font-weight: 600; }
+  #hstate.on { color: #16a34a; }
+  #hstate.off { color: var(--sub); }
+  #hstate.bad { color: #dc2626; font-weight: 400; font-size: 12px; text-align: right; max-width: 170px; }
+  #helper label { display: flex; gap: 6px; align-items: center; margin-top: 8px; color: var(--sub); cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
+</style>
+</head>
+<body>
+<header><h1>통합 번역</h1><span id="ver"></span></header>
+<div id="menu"></div>
+<section id="helper">
+  <div class="hrow"><span>번역 도우미 <small>LINE·화면 번역</small></span><span id="hstate">확인 중…</span></div>
+  <div class="row">
+    <button id="hon">켜기</button>
+    <button id="hoff">끄기</button>
+  </div>
+  <label><input type="checkbox" id="hauto"> 크롬을 켜면 함께 켜기</label>
+</section>
+<details id="move">
+  <summary>설정 옮기기 (Tampermonkey → 여기)</summary>
+  <textarea id="data" spellcheck="false" placeholder="Tampermonkey 의 '저장소' 탭 내용을 통째로 붙여 넣고 [가져오기]"></textarea>
+  <div class="row">
+    <button id="import">가져오기</button>
+    <button id="export">내보내기</button>
+  </div>
+  <div id="note"></div>
+</details>
+<script src="popup.js"></script>
+</body>
+</html>

@@ -38,6 +38,7 @@ static class Updater
             dev = Directory.Exists(Path.Combine(d.FullName, ".git"));
         if (dev) { Log.Write("업데이트: 저장소 안의 개발판이라 스스로 바꾸지 않습니다"); return; }
         RegisterLink();
+        ChromeLink.Register();
         new Thread(delegate ()
         {
             Thread.Sleep(60 * 1000);

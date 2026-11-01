@@ -5,3 +5,8 @@
 line-helper/*.exe
 line-helper/data/
 line-helper/node_modules/
+# 도우미가 켤 때 크롬에 알리려고 exe 옆에 쓰는 설명 파일(ChromeLink.Register)
+line-helper/com.th_korean.helper.json
+
+# 통합 번역 확장: node extension/build.js 가 만드는 폴더(크롬에 불러오는 곳)
+extension/dist/

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.25.0
+// @version      1.25.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5054,22 +5054,85 @@
     return ans;
   }
 
+  // 목소리마다 실제 읽는 빠르기. 빠르기 값(rate)과 실제 속도가 비례하지 않는다 — 크롬 Google 한국의(2026-11-01
+  // 측정, 43글자): 1배 5.9자/초, 1.5배 11.7자/초, 2배 22.5자/초, 2.5배부터는 아예 읽지 않았다. 그래서
+  // 속도 = base × rate^pow 로 보고, 읽을 때마다 걸린 시간으로 base 를 고쳐 간다(목소리 이름별로 저장).
+  function dubVoiceProfile(voice) {
+    const name = (voice && voice.name) || '';
+    const google = /Google/i.test(name) && !(voice && voice.localService);
+    const saved = (dubCfg.tts || {})[name];
+    return {
+      name,
+      base: saved > 2 && saved < 15 ? saved : DUB_KO_PER_SEC,
+      pow: google ? 1.8 : 1,
+      maxRate: google ? 2 : 2.5,
+    };
+  }
+
+  // 알아들을 수 있는 한도: 보통 빠르기의 2.5배까지. 더 길면 다음 문장에서 따라잡는다.
+  const DUB_MAX_SPEEDUP = 2.5;
+  let dubSaying = null; // 읽는 중인 것 { started, expect(ms), canceled }
+
   function dubSpeak(d, s) {
     try {
-      speechSynthesis.cancel();
-      if (!dubCfg.voiceOn || !(dubCfg.dubVol > 0)) return;
-      const u = new SpeechSynthesisUtterance(s.ko);
+      if (!dubCfg.voiceOn || !(dubCfg.dubVol > 0)) {
+        dubHush();
+        return;
+      }
       const voice = dubVoice(s.gender);
+      const prof = dubVoiceProfile(voice);
+      const chars = (s.ko.match(/[가-힣0-9A-Za-z]/g) || []).length;
+      // 앞 문장이 아직 남았으면: 조금(1.5초 이내)이면 끝까지 읽게 두고 이번 문장을 그만큼 더 빨리 읽는다.
+      // 많이 남았으면 끊고 이번 문장부터 — 밀리기 시작하면 끝까지 늦어진다.
+      let wait = 0;
+      if (dubSaying && speechSynthesis.speaking) {
+        const left = dubSaying.expect - (performance.now() - dubSaying.started);
+        if (left > 0 && left <= 1500) wait = left / 1000;
+        else {
+          dubSaying.canceled = true;
+          speechSynthesis.cancel();
+        }
+      } else dubHush();
+      // 다음 문장이 시작하기 전에 끝나도록. 영상을 빨리 돌리면 그만큼 남는 시간이 준다.
+      const room = Math.max(0.6, (s.next - s.start) / 1000 / (d.video.playbackRate || 1) - wait);
+      const speed = Math.min((chars + 1) / (room * 0.92), prof.base * DUB_MAX_SPEEDUP);
+      const rate = Math.min(prof.maxRate, Math.max(1, (speed / prof.base) ** (1 / prof.pow)));
+      const u = new SpeechSynthesisUtterance(s.ko);
       if (voice) u.voice = voice;
       u.lang = voice ? voice.lang : 'ko-KR';
-      // 다음 문장이 시작하기 전에 끝나도록. 영상을 빨리 돌리면 그만큼 남는 시간이 준다.
-      const room = Math.max(0.8, (s.next - s.start) / 1000 / (d.video.playbackRate || 1));
-      const need = (s.ko.match(/[가-힣0-9]/g) || []).length / DUB_KO_PER_SEC + 0.2;
-      u.rate = Math.min(2, Math.max(1, need / (room * 0.92)));
+      u.rate = rate;
       u.volume = dubCfg.dubVol;
-      speechSynthesis.speak(u);
+      const rec = { started: performance.now() + wait * 1000, expect: (chars / (prof.base * rate ** prof.pow)) * 1000, canceled: false };
+      u.onstart = () => {
+        rec.started = performance.now();
+      };
+      u.onend = () => {
+        // 끝까지 읽은 것만으로 이 목소리의 1배 빠르기를 고쳐 둔다.
+        const sec = (performance.now() - rec.started) / 1000;
+        if (rec.canceled || sec < 0.4 || chars < 4) return;
+        const base = chars / sec / rate ** prof.pow;
+        if (!(base > 2 && base < 15)) return;
+        dubCfg.tts = { ...(dubCfg.tts || {}), [prof.name]: +(prof.base * 0.7 + base * 0.3).toFixed(2) };
+        if (++dubTtsLearned % 8 === 0) saveDubCfg();
+      };
+      u.onerror = () => {
+        rec.canceled = true;
+      };
+      dubSaying = rec;
+      speechSynthesis.speak(u); // 앞 문장이 남아 있으면 그 뒤에 이어 읽는다
     } catch (e) {
       console.warn(`[${APP_NAME}] 더빙 목소리 실패:`, e.message);
+    }
+  }
+  let dubTtsLearned = 0;
+
+  // 읽던 것을 멈춘다(앞뒤로 감기·멈춤·광고·끄기). 끊긴 것은 빠르기를 배우는 데 쓰지 않는다.
+  function dubHush() {
+    if (dubSaying) dubSaying.canceled = true;
+    try {
+      speechSynthesis.cancel();
+    } catch {
+      /* 목소리를 못 쓰는 브라우저 */
     }
   }
 
@@ -5112,7 +5175,7 @@
     if (YOUTUBE && document.getElementById('movie_player')?.classList.contains('ad-showing')) {
       if (d.cur !== -2) {
         d.cur = -2;
-        speechSynthesis.cancel();
+        dubHush();
         dubShowSub('');
       }
       return;
@@ -5155,7 +5218,7 @@
     if (!dub) return;
     dubDuck(dub, on);
     if (on) dub.cur = -1; // 지금 문장부터 읽는다
-    else speechSynthesis.cancel();
+    else dubHush();
     dubStatus();
   }
 
@@ -5171,7 +5234,7 @@
     ensureGlossary();
     dubDuck(d, dubCfg.voiceOn);
     d.onSeek = () => {
-      speechSynthesis.cancel();
+      dubHush();
       d.cur = -1;
     };
     video.addEventListener('seeking', d.onSeek);
@@ -5200,11 +5263,8 @@
     clearInterval(d.trackPoll);
     d.video.removeEventListener('seeking', d.onSeek);
     d.video.removeEventListener('pause', d.onSeek);
-    try {
-      speechSynthesis.cancel();
-    } catch {
-      /* 목소리를 못 쓰는 브라우저 */
-    }
+    dubHush();
+    if (dubTtsLearned) saveDubCfg(); // 배운 목소리 빠르기
     dubDuck(d, false);
     dubShowSub('');
     dubStatus();
@@ -5633,9 +5693,20 @@
       dubPanel = null;
       dubPlaceSub();
     });
+    // 사이트의 소리 막대·음소거 단추를 직접 만졌는지 — 누른 것과 그 위 두 겹만 본다. 유튜브 새 플레이어는
+    // 플레이어 전체에 ytp-delhi-horizontal-volume-controls 를 달아 두어, 조상을 다 보면 '한' 단추를 누른 것까지
+    // 소리를 만진 것으로 잘못 알았다(유튜브가 되돌린 100% 를 사용자 값으로 저장했다).
+    const volumeish = (el) => {
+      if (el && el.closest && el.closest('.lzk-dubpanel, .lzk-dub-btn, #lzk-dubchip')) return false;
+      for (let i = 0; el && i < 3; i++, el = el.parentElement) {
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (/volume|mute/i.test(`${cls} ${(el.getAttribute && el.getAttribute('aria-label')) || ''}`)) return true;
+      }
+      return false;
+    };
     const touched = (e) => {
       const t = e.target;
-      const onBar = t && t.closest && t.closest('.ytp-volume-area, .ytp-volume-panel, .ytp-mute-button, [class*=volume i]');
+      const onBar = volumeish(t);
       const key = e.type === 'keydown' && /^(ArrowUp|ArrowDown|m|M)$/.test(e.key) && !(t && t.closest && t.closest('input, textarea, [contenteditable]'));
       if (onBar || key) dubVolumeTouchedAt = Date.now();
     };

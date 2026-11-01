@@ -41,14 +41,25 @@ $('#ver').textContent = chrome.runtime.getManifest().version;
 })();
 
 // 번역 도우미 — background.js 가 네이티브 메시징으로 도우미 exe 에 묻고 시킨다.
+// 크롬에 아직 이어지지 않은 PC(새 판 도우미가 한 번도 켜지지 않았거나 도우미가 없다)에서는 [켜기]가
+// 예전부터 있던 th-korean-helper:// 주소로 켠다. 옛 판도 이 주소는 알고, 켜지면 1분 뒤 새 판으로 바뀌며
+// 크롬에 자기를 등록한다 — 그다음부터는 [끄기]·'크롬과 함께 켜기' 도 된다.
+const HELPER_LINK = 'th-korean-helper://start';
+const HELPER_INSTALL =
+  'powershell -NoExit -c "irm https://raw.githubusercontent.com/wotjq2/th-korean/main/line-helper/install.ps1 | iex"';
+// 위 명령을 담은 설치 파일(더블클릭). 현장 다운로더도 이 주소로 받는다 — 이름·위치를 바꾸지 말 것.
+const HELPER_SETUP_URL = encodeURI('https://raw.githubusercontent.com/wotjq2/th-korean/main/번역도우미_설치.cmd');
+let helperLinked = true;
+
 function showHelper(r) {
   const st = $('#hstate');
-  if (!r || !r.ok) {
+  helperLinked = !!(r && r.ok);
+  $('#hsetup').hidden = helperLinked;
+  if (!helperLinked) {
+    const notFound = /not found/i.test((r && r.error) || '');
     st.className = 'bad';
-    st.textContent = /not found/i.test((r && r.error) || '')
-      ? '설치 안 됨 — 설치한 뒤 한 번 켜 주세요'
-      : '연결 실패: ' + ((r && r.error) || '?');
-    $('#hon').disabled = true;
+    st.textContent = notFound ? '아직 연결 안 됨' : '연결 실패: ' + ((r && r.error) || '?');
+    $('#hon').disabled = false;
     $('#hoff').disabled = true;
     return;
   }
@@ -65,7 +76,63 @@ async function helper(cmd) {
   showHelper(await chrome.runtime.sendMessage({ t: 'helper', cmd, manual: true }));
 }
 
-$('#hon').addEventListener('click', () => helper('start'));
+// 지금 탭의 페이지에서 주소를 누르게 한다. 크롬 설정 화면처럼 확장이 못 들어가는 탭이면 새 탭으로 연다.
+async function startByLink() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let sent = false;
+  try {
+    sent = await chrome.tabs.sendMessage(tab.id, { t: 'helper-link', url: HELPER_LINK });
+  } catch {
+    sent = false;
+  }
+  if (!sent) await chrome.tabs.create({ url: HELPER_LINK });
+  $('#hstate').className = 'off';
+  $('#hstate').textContent = '켜는 중…';
+  $('#hnote').textContent =
+    '크롬이 "번역 도우미 열기?"를 물으면 "항상 허용"에 체크하고 열기. 처음이면 1분쯤 뒤 새 판으로 바뀌며 여기와 이어집니다.';
+}
+
+$('#hon').addEventListener('click', () => (helperLinked ? helper('start') : startByLink()));
+// GitHub 에서 설치 파일을 받아 다운로드 폴더를 열어 준다. 크롬 확장은 받은 프로그램을 직접 실행할 수 없다.
+$('#hget').addEventListener('click', async () => {
+  const hnote = $('#hnote');
+  let id;
+  try {
+    id = await chrome.downloads.download({ url: HELPER_SETUP_URL });
+  } catch (e) {
+    hnote.textContent = '받기 실패: ' + ((e && e.message) || e);
+    return;
+  }
+  hnote.textContent = '받는 중…';
+  // 파일이 작아(수백 바이트) 지켜보기 전에 끝나 있을 수 있다 — 바뀜 알림과 지금 상태를 같이 본다.
+  let settled = false;
+  const settle = (state, danger) => {
+    if (settled) return;
+    if (danger && !/^(safe|accepted)$/.test(danger)) {
+      hnote.textContent = '크롬이 "위험할 수 있는 파일"이라고 물으면 [유지]를 누르세요.';
+    }
+    if (state === 'complete') {
+      settled = true;
+      hnote.textContent = '받았습니다 — 열린 폴더의 번역도우미_설치.cmd 를 더블클릭하세요. 설치가 끝나면 도우미가 켜지고 여기와 이어집니다.';
+      chrome.downloads.show(id);
+    } else if (state === 'interrupted') {
+      settled = true;
+      hnote.textContent = '받기가 바로 취소됐습니다 — IDM 같은 다운로드 프로그램이 가로챘을 수 있습니다(잠시 끄고 다시).';
+    }
+    if (settled) chrome.downloads.onChanged.removeListener(watch);
+  };
+  const watch = (d) => {
+    if (d.id === id) settle(d.state && d.state.current, d.danger && d.danger.current);
+  };
+  chrome.downloads.onChanged.addListener(watch);
+  const [item] = await chrome.downloads.search({ id });
+  if (item) settle(item.state, item.danger);
+});
+
+$('#hcopy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(HELPER_INSTALL);
+  $('#hnote').textContent = '설치 명령을 복사했습니다 — 윈도우 키+R → Ctrl+V → Enter. 설치가 끝나면 도우미가 켜지고 여기와 이어집니다.';
+});
 $('#hoff').addEventListener('click', () => helper('stop'));
 chrome.storage.local.get('helperAuto').then(({ helperAuto = true }) => {
   $('#hauto').checked = helperAuto;

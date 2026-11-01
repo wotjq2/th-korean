@@ -99,8 +99,8 @@ async function main() {
     icons,
     action: { default_title: NAME, default_popup: 'popup.html', default_icon: icons },
     background: { service_worker: 'background.js' },
-    // nativeMessaging: 번역 도우미(LINE·화면 번역) 켜기·끄기·상태
-    permissions: ['storage', 'unlimitedStorage', 'nativeMessaging'],
+    // nativeMessaging: 번역 도우미(LINE·화면 번역) 켜기·끄기·상태, downloads: 도우미가 없을 때 설치 파일 받기
+    permissions: ['storage', 'unlimitedStorage', 'nativeMessaging', 'downloads'],
     host_permissions: hosts,
     content_scripts: [
       {

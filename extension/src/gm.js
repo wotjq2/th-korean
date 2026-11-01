@@ -127,5 +127,12 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     const c = gmMenu.get(m.id);
     if (c) setTimeout(() => c.fn(), 0);
     reply(!!c);
+  } else if (m.t === 'helper-link') {
+    // 아직 확장과 이어지지 않은 번역 도우미를 예전 주소(th-korean-helper://)로 켠다. 스크립트 설정 창의
+    // '번역 도우미 켜기' 와 같은 길 — 페이지에서 눌러야 크롬이 '열까요?(항상 허용)' 를 물어 준다.
+    const a = document.createElement('a');
+    a.href = m.url;
+    a.click();
+    reply(true);
   }
 });

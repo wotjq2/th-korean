@@ -31,6 +31,11 @@
   #hstate.bad { color: #dc2626; font-weight: 400; font-size: 12px; text-align: right; max-width: 170px; }
   #helper label { display: flex; gap: 6px; align-items: center; margin-top: 8px; color: var(--sub); cursor: pointer; }
   button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
+  #hsetup { margin-top: 8px; color: var(--sub); font-size: 12px; }
+  #hsetup button { display: block; width: 100%; margin-top: 6px; text-align: center; }
+  #hsetup button.sub { background: none; border-color: transparent; color: var(--sub); padding: 3px; text-decoration: underline; }
+  #hnote { margin-top: 6px; color: var(--sub); font-size: 12px; }
+  #hnote:empty { display: none; }
 </style>
 </head>
 <body>
@@ -43,6 +48,12 @@
     <button id="hoff">끄기</button>
   </div>
   <label><input type="checkbox" id="hauto"> 크롬을 켜면 함께 켜기</label>
+  <div id="hsetup" hidden>
+    [켜기]를 눌러도 안 켜지면 이 PC에 도우미가 없는 것입니다.
+    <button id="hget">번역 도우미 받기 (GitHub)</button>
+    <button id="hcopy" class="sub">또는 설치 명령 복사</button>
+  </div>
+  <div id="hnote"></div>
 </section>
 <details id="move">
   <summary>설정 옮기기 (Tampermonkey → 여기)</summary>

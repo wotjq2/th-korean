@@ -936,6 +936,7 @@ static class App
             new Thread(OcrLoop) { IsBackground = true }.Start();
             SetupTray();
             ScreenKorean.Start(engine, dataDir, ui, screenTest);
+            LiveCaption.Start(engine);
             Updater.Start(dir, engine);
             if (updated) Show("번역 도우미", "새 판으로 바꿨습니다", false, 5000);
             const string ready = "LINE 보내기·받기, 아무 프로그램 창에서 " + ScreenKorean.HotkeyName + " = 화면 번역";
@@ -994,6 +995,7 @@ static class App
                 if (k == "receive") Receive = v != "0";
                 if (k == "both") Both = v == "1";
                 if (k == "korean") ShowKorean = v != "0";
+                if (k == "livecaption") LiveCaption.On = v != "0";
             }
         }
         catch { }
@@ -1004,7 +1006,7 @@ static class App
         try
         {
             File.WriteAllText(settingsFile, "lang=" + Lang + "\r\nreceive=" + (Receive ? "1" : "0") + "\r\nboth=" + (Both ? "1" : "0")
-                + "\r\nkorean=" + (ShowKorean ? "1" : "0") + "\r\n");
+                + "\r\nkorean=" + (ShowKorean ? "1" : "0") + "\r\nlivecaption=" + (LiveCaption.On ? "1" : "0") + "\r\n");
         }
         catch { }
     }
@@ -1098,6 +1100,10 @@ static class App
             else Show("화면 번역", "바꿀 프로그램 창을 앞에 두고 " + ScreenKorean.HotkeyName + " 를 누르세요", false, 6000);
         };
         menu.Items.Add(screen);
+        ToolStripMenuItem live = new ToolStripMenuItem("크롬 실시간 자막을 한국어로 덮기");
+        live.Checked = LiveCaption.On;
+        live.Click += delegate { LiveCaption.On = !LiveCaption.On; SaveSettings(); RefreshTray(); Log.Write("실시간 자막 한국어: " + (LiveCaption.On ? "켬" : "끔")); };
+        menu.Items.Add(live);
         ToolStripMenuItem auto = new ToolStripMenuItem("윈도우 켤 때 같이 켜기");
         auto.Checked = AutoStart;
         auto.Click += delegate { AutoStart = !AutoStart; RefreshTray(); };

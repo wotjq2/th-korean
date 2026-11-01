@@ -151,6 +151,17 @@ async function toKorean(src) {
   return { out: T.chatFixKorean(got.join('\n'), s), via: '번역' };
 }
 
+// 크롬 실시간 자막 한 줄(LiveCaption.cs). 영상은 나에게 하는 말이 아니라서 호칭(พี่→오빠)은 바꾸지 않는다(mine).
+// 태국어가 아니어도(영어·일본어 자막) 그대로 번역으로 간다.
+async function captionKorean(src) {
+  const s = T.chatPrepThai(src, true, '');
+  const whole = T.chatThaiWhole(s);
+  if (whole) return { out: whole, via: '표' };
+  const [ko] = await T.translateToKorean([s]);
+  if (!ko) throw new Error('번역 결과가 비어 있습니다');
+  return { out: T.chatFixKorean(ko, s), via: '번역' };
+}
+
 // LINE 말풍선 글자 읽기. LINE 은 메시지 글자를 다른 프로그램에 주지 않아 화면에서 읽는다.
 // LineHelper 가 말풍선 안쪽만 잘라 흰 바탕 검은 글자로 3배 키워 준다. 한국어 말풍선도 알아봐야
 // (한국 친구 방, 태국어+한국어로 보낸 말) 엉뚱한 태국어로 읽지 않는다.
@@ -299,6 +310,11 @@ async function handle(req) {
   }
   if (req.op === 'ko') {
     const r = await toKorean(text);
+    if (!r.out || T.THAI.test(r.out)) throw new Error('번역 결과가 비어 있습니다');
+    return r;
+  }
+  if (req.op === 'caption') {
+    const r = await captionKorean(text);
     if (!r.out || T.THAI.test(r.out)) throw new Error('번역 결과가 비어 있습니다');
     return r;
   }

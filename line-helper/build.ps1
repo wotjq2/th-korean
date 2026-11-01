@@ -11,5 +11,5 @@ $wm = "$env:WINDIR\System32\WinMetadata"
     "/r:$fw\System.Runtime.dll" "/r:$fw\System.Runtime.WindowsRuntime.dll" `
     "/r:$wm\Windows.Foundation.winmd" "/r:$wm\Windows.Media.winmd" "/r:$wm\Windows.Graphics.winmd" `
     "/r:$wm\Windows.Storage.winmd" "/r:$wm\Windows.Globalization.winmd" "/r:$wm\Windows.Security.winmd" `
-    "$PSScriptRoot\LineHelper.cs" "$PSScriptRoot\ScreenKorean.cs" "$PSScriptRoot\Updater.cs" "$PSScriptRoot\ChromeLink.cs"
+    "$PSScriptRoot\LineHelper.cs" "$PSScriptRoot\ScreenKorean.cs" "$PSScriptRoot\Updater.cs" "$PSScriptRoot\ChromeLink.cs" "$PSScriptRoot\LiveCaption.cs"
 exit $LASTEXITCODE

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.25.1
+// @version      1.26.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -2221,7 +2221,8 @@
       -webkit-box-decoration-break: clone; box-decoration-break: clone;
     }
     .lzk-dubsub[hidden], #lzk-dubchip[hidden] { display: none !important; }
-    html[data-lzk-dubsubs] #movie_player .ytp-caption-window-container { display: none !important; }
+    html[data-lzk-dubsubs] #movie_player .ytp-caption-window-container,
+    html[data-lzk-dubsubs] #shorts-player .ytp-caption-window-container { display: none !important; }
     #lzk-dubchip {
       position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
       background: rgba(15, 20, 110, .92); color: #fff; padding: 7px 11px; cursor: pointer;
@@ -4818,7 +4819,18 @@
   const DUB_KEY = 'videoDub'; // { videoVol, dubVol, subs, voice }
   // 한국어 자막이 기본이고 목소리(더빙)는 고를 때만(사용자 요청 2026-11-01). autoSubs: 외국어 영상이면
   // 사람이 만든 한국어 자막이 없을 때 우리 한국어 자막을 저절로 켠다.
-  const DUB_DEFAULTS = { videoVol: 0.25, dubVol: 1, subs: true, voice: '', voiceOn: false, autoSubs: true };
+  // maxSpeed: 목소리를 보통의 몇 배까지 빠르게 할지(알아들을 수 있는 한도, 창에서 1~2.5배).
+  // subScale: 자막 글씨 크기(창에서 50~150%).
+  const DUB_DEFAULTS = {
+    videoVol: 0.25,
+    dubVol: 1,
+    subs: true,
+    voice: '',
+    voiceOn: false,
+    autoSubs: true,
+    maxSpeed: 1.6,
+    subScale: 1,
+  };
   const DUB_GAP_MS = 700; // 이만큼 쉬면 문장을 끊는다
   const DUB_MAX_MS = 7000; // 자동 자막은 마침표가 없어 길이로도 끊는다
   const DUB_MAX_CHARS = 90;
@@ -5069,44 +5081,64 @@
     };
   }
 
-  // 알아들을 수 있는 한도: 보통 빠르기의 2.5배까지. 더 길면 다음 문장에서 따라잡는다.
-  const DUB_MAX_SPEEDUP = 2.5;
-  let dubSaying = null; // 읽는 중인 것 { started, expect(ms), canceled }
+  let dubSaying = null; // 읽는 중인 것 { started, expect(ms), canceled, done }
 
-  function dubSpeak(d, s) {
+  // 지금 문장을 읽을지 정한다(dubTick 이 0.15초마다 부른다). 앞 문장을 중간에 끊지 않는다 — 2.5배까지 빨리
+  // 읽었더니 말이 긴 영상(4m-qSU7Sdjg)에서 알아들을 수 없었다(사용자). 앞 문장이 1.5초 넘게 남았으면 기다렸다
+  // 읽고, 문장 시간의 절반이 지나도록 못 읽었으면 그 문장은 목소리를 건너뛴다(자막에는 나온다).
+  function dubMaybeSpeak(d, s, t) {
+    if (s.said) return;
+    const late = t - s.start;
+    if (late > Math.max(1500, (s.next - s.start) * 0.5)) {
+      s.said = true; // 너무 늦었다
+      d.skipped = (d.skipped || 0) + 1;
+      dubStatus();
+      return;
+    }
+    let wait = 0;
+    if (dubSaying && !dubSaying.done && speechSynthesis.speaking) {
+      const left = dubSaying.expect - (performance.now() - dubSaying.started);
+      if (left > 1500) return; // 앞 문장을 마저 읽는다
+      wait = Math.max(0, left) / 1000;
+    }
+    s.said = true;
+    d.spoken = (d.spoken || 0) + 1;
+    dubSpeak(d, s, t, wait);
+    dubStatus();
+  }
+
+  function dubSpeak(d, s, t, wait) {
     try {
       if (!dubCfg.voiceOn || !(dubCfg.dubVol > 0)) {
         dubHush();
         return;
       }
+      if (!wait) dubHush(); // 남은 것 없이 새로 — 쌓인 줄을 비운다
       const voice = dubVoice(s.gender);
       const prof = dubVoiceProfile(voice);
       const chars = (s.ko.match(/[가-힣0-9A-Za-z]/g) || []).length;
-      // 앞 문장이 아직 남았으면: 조금(1.5초 이내)이면 끝까지 읽게 두고 이번 문장을 그만큼 더 빨리 읽는다.
-      // 많이 남았으면 끊고 이번 문장부터 — 밀리기 시작하면 끝까지 늦어진다.
-      let wait = 0;
-      if (dubSaying && speechSynthesis.speaking) {
-        const left = dubSaying.expect - (performance.now() - dubSaying.started);
-        if (left > 0 && left <= 1500) wait = left / 1000;
-        else {
-          dubSaying.canceled = true;
-          speechSynthesis.cancel();
-        }
-      } else dubHush();
-      // 다음 문장이 시작하기 전에 끝나도록. 영상을 빨리 돌리면 그만큼 남는 시간이 준다.
-      const room = Math.max(0.6, (s.next - s.start) / 1000 / (d.video.playbackRate || 1) - wait);
-      const speed = Math.min((chars + 1) / (room * 0.92), prof.base * DUB_MAX_SPEEDUP);
+      // 다음 문장이 시작하기 전에 끝나도록, 앞 문장이 남은 만큼 더 빨리. 영상을 빨리 돌리면 그만큼 남는 시간이 준다.
+      // 그래도 알아들을 수 있게 창의 '최대 빠르기'(기본 1.6배)까지만 — 넘치면 다음 문장을 건너뛴다.
+      const room = Math.max(0.6, (s.next - t) / 1000 / (d.video.playbackRate || 1) - wait);
+      const speed = Math.min((chars + 1) / (room * 0.92), prof.base * Math.max(1, dubCfg.maxSpeed || 1.6));
       const rate = Math.min(prof.maxRate, Math.max(1, (speed / prof.base) ** (1 / prof.pow)));
       const u = new SpeechSynthesisUtterance(s.ko);
       if (voice) u.voice = voice;
       u.lang = voice ? voice.lang : 'ko-KR';
       u.rate = rate;
       u.volume = dubCfg.dubVol;
-      const rec = { started: performance.now() + wait * 1000, expect: (chars / (prof.base * rate ** prof.pow)) * 1000, canceled: false };
+      if (dubSubEl) dubSubEl.dataset.rate = rate.toFixed(2); // 시험·문제 찾기용
+      const rec = {
+        started: performance.now() + wait * 1000,
+        expect: (chars / (prof.base * rate ** prof.pow)) * 1000,
+        canceled: false,
+        done: false,
+      };
       u.onstart = () => {
         rec.started = performance.now();
       };
       u.onend = () => {
+        rec.done = true;
         // 끝까지 읽은 것만으로 이 목소리의 1배 빠르기를 고쳐 둔다.
         const sec = (performance.now() - rec.started) / 1000;
         if (rec.canceled || sec < 0.4 || chars < 4) return;
@@ -5117,6 +5149,7 @@
       };
       u.onerror = () => {
         rec.canceled = true;
+        rec.done = true;
       };
       dubSaying = rec;
       speechSynthesis.speak(u); // 앞 문장이 남아 있으면 그 뒤에 이어 읽는다
@@ -5163,8 +5196,13 @@
     const r = dub.video.getBoundingClientRect();
     dubSubEl.style.left = `${r.left + r.width * 0.06}px`;
     dubSubEl.style.width = `${r.width * 0.88}px`;
-    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * 0.13}px`;
-    dubSubEl.style.fontSize = `${Math.round(Math.max(15, Math.min(36, r.height / 17)))}px`;
+    // 세로 영상(쇼츠)은 폭이 좁아 높이로만 정하면 글자가 커서 다섯 줄이 됐다 — 폭으로도 줄이고, 아래쪽 채널 이름·
+    // 제목을 가리지 않게 조금 위에 둔다.
+    // 사용자(2026-11-01): 쇼츠에서 폭/18 도 아직 크다 → 세로는 폭/26, 가로는 높이/19. 창의 '자막 크기' 로 더 조절.
+    const tall = r.height > r.width;
+    const base = tall ? r.width / 26 : Math.min(r.height / 19, r.width / 30);
+    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * (tall ? 0.22 : 0.12)}px`;
+    dubSubEl.style.fontSize = `${Math.round(Math.max(12, Math.min(40, base * (dubCfg.subScale || 1))))}px`;
   }
 
   function dubTick() {
@@ -5172,7 +5210,7 @@
     if (!d) return;
     const v = d.video;
     dubPlaceSub();
-    if (YOUTUBE && document.getElementById('movie_player')?.classList.contains('ad-showing')) {
+    if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains('ad-showing')) {
       if (d.cur !== -2) {
         d.cur = -2;
         dubHush();
@@ -5193,10 +5231,8 @@
     const t = v.currentTime * 1000;
     const i = dubFind(d.sentences, t);
     const s = d.sentences[i];
-    if (i !== d.cur) {
-      d.cur = i;
-      if (s && s.ko && t - s.start < 1500) dubSpeak(d, s);
-    }
+    d.cur = i;
+    if (s && s.ko && dubCfg.voiceOn) dubMaybeSpeak(d, s, t);
     dubShowSub(s && t < Math.min(s.next, s.end + 1500) ? s.ko || '' : '');
   }
 
@@ -5217,8 +5253,7 @@
     saveDubCfg();
     if (!dub) return;
     dubDuck(dub, on);
-    if (on) dub.cur = -1; // 지금 문장부터 읽는다
-    else dubHush();
+    if (!on) dubHush();
     dubStatus();
   }
 
@@ -5233,9 +5268,11 @@
     if (YOUTUBE && !auto) dubWanted = true;
     ensureGlossary();
     dubDuck(d, dubCfg.voiceOn);
+    // 감거나 멈추면 읽던 것을 멈추고, 다시 볼 때 그 자리 문장부터 읽을 수 있게 '읽음' 표시를 지운다.
     d.onSeek = () => {
       dubHush();
       d.cur = -1;
+      for (const s of d.sentences) s.said = false;
     };
     video.addEventListener('seeking', d.onSeek);
     video.addEventListener('pause', d.onSeek);
@@ -5243,7 +5280,7 @@
     dubStatus();
     dubSyncButton();
     try {
-      const cues = YOUTUBE && video.closest('#movie_player') ? await ytLoadCues(d) : dubTrackCues(d);
+      const cues = YOUTUBE && video.closest('#movie_player, #shorts-player') ? await ytLoadCues(d) : dubTrackCues(d);
       if (d !== dub) return;
       if (cues) dubSetCues(d, cues);
       else if (auto) return dubStop();
@@ -5301,7 +5338,15 @@
   }
 
   // --- 유튜브 ---
-  const ytVideoId = () => new URL(location.href).searchParams.get('v') || '';
+  // 보통 영상은 /watch?v=ID 와 #movie_player, 쇼츠는 /shorts/ID 와 #shorts-player(지금 보이는 것).
+  const ytIsShorts = () => location.pathname.startsWith('/shorts/');
+  const ytVideoId = () =>
+    new URL(location.href).searchParams.get('v') || (/^\/shorts\/([\w-]+)/.exec(location.pathname) || [])[1] || '';
+  const ytPlayer = () =>
+    ytIsShorts()
+      ? document.querySelector('ytd-reel-video-renderer[is-active] #shorts-player') || document.querySelector('#shorts-player')
+      : document.getElementById('movie_player');
+  const ytVideo = () => ytPlayer()?.querySelector('video') || null;
 
   function ytCues(j) {
     const out = [];
@@ -5326,7 +5371,7 @@
   async function ytCaptureTimedtext(id, d, fresh) {
     const got = () => ytTimedtext.get(id) || [];
     if (got().length && !fresh) return got();
-    const player = document.getElementById('movie_player');
+    const player = ytPlayer();
     for (let i = 0; i < 180 && player && player.classList.contains('ad-showing'); i++) {
       if (d !== dub) return [];
       d.status = '광고가 끝나면 시작합니다…';
@@ -5341,7 +5386,13 @@
     if (got().length && !fresh) return got();
     const btn = player && player.querySelector('.ytp-subtitles-button');
     if (!btn || btn.style.display === 'none' || btn.getAttribute('aria-disabled') === 'true') {
-      d.why = '자막(CC) 단추가 없거나 꺼져 있음 — 자막이 없는 영상';
+      // 쇼츠 플레이어에는 CC 단추가 없다. 대신 영상을 틀 때 스스로 자막을 부르므로 조금 더 기다린다.
+      for (let i = 0; i < 16 && !got().length && ytIsShorts(); i++) await sleep(250);
+      if (!got().length) {
+        d.why = ytIsShorts()
+          ? '쇼츠 자막을 못 찾음 — 자막이 없는 쇼츠이거나, 쇼츠 ⋮ 메뉴에서 자막을 한 번 켜 주세요'
+          : '자막(CC) 단추가 없거나 꺼져 있음 — 자막이 없는 영상';
+      }
       return got();
     }
     const before = got().length;
@@ -5461,7 +5512,8 @@
     if (dub && dub.videoId !== id) dubStop();
     dubWanted = keep && !!id;
     if (!id || dub) return;
-    const v = document.querySelector('#movie_player video');
+    const v = ytVideo();
+    if (!v) return;
     if (dubWanted) dubStart(v);
     else if (dubCfg.autoSubs && dubAutoTried !== id) {
       dubAutoTried = id; // 한 영상에 한 번만 — 손으로 끈 뒤 다시 켜지지 않게
@@ -5489,6 +5541,14 @@
     setInterval(ytMountButton, 1500);
     document.addEventListener('yt-navigate-finish', () => setTimeout(ytOnNavigate, 800));
     setTimeout(ytOnNavigate, 2500); // 처음 열린 영상(이미 켜져 있으면 두 번 켜지 않는다)
+    // 쇼츠는 넘길 때 주소만 바뀌기도 한다 — 영상 id 가 바뀌었는지 1초마다 본다.
+    let lastId = ytVideoId();
+    setInterval(() => {
+      const id = ytVideoId();
+      if (id === lastId) return;
+      lastId = id;
+      setTimeout(ytOnNavigate, 800);
+    }, 1000);
   }
 
   // --- 창: 한국어 자막 켜기·끄기, 목소리(더빙), 자동, 영상 소리·번역 소리, 목소리 고르기 ---
@@ -5513,10 +5573,12 @@
       const lang = { th: '태국어', en: '영어', zh: '중국어', ja: '일본어', ko: '한국어' }[dub.lang] || dub.lang || '?';
       const waiting = dub.translating || dub.sentences.some((s) => !s.ko && !s.tried);
       const mode = dubCfg.voiceOn ? '자막 + 목소리' : '한국어 자막';
+      // 목소리로 읽은 문장과 너무 밀려 건너뛴 문장 — 건너뜀이 많으면 '최대 빠르기' 를 올리면 된다.
+      const said = dubCfg.voiceOn && dub.spoken ? ` · 읽음 ${dub.spoken}, 건너뜀 ${dub.skipped || 0}` : '';
       st.textContent =
         waiting && done < n
           ? `${lang} → 한국어 번역 중 ${done}/${n}`
-          : `${mode} · ${lang} ${n}문장` + (done < n ? ` (못 옮긴 ${n - done})` : '') + (dub.auto ? ' · 자동' : '');
+          : `${mode} · ${lang} ${n}문장` + (done < n ? ` (못 옮긴 ${n - done})` : '') + (dub.auto ? ' · 자동' : '') + said;
     }
   }
 
@@ -5582,12 +5644,13 @@
       lab.append(cb, document.createTextNode(` ${text}`));
       return lab;
     };
-    const range = (label, k, apply) => {
+    const range = (label, k, apply, min = 0, max = 100) => {
       const lab = el('label');
       const r = el('input');
       r.type = 'range';
-      r.min = '0';
-      r.max = '100';
+      r.min = String(min);
+      r.max = String(max);
+      r.step = max > 100 ? '10' : '1';
       r.dataset.k = k;
       r.dataset.label = label;
       r.addEventListener('input', () => {
@@ -5613,6 +5676,8 @@
         if (dub && dub.video === video && dub.ducked) video.volume = v;
       }),
       range('번역 소리', 'dubVol'),
+      // 대본이 말소리보다 길 때 얼마나 빨리 읽을지. 높이면 덜 건너뛰지만 알아듣기 어려워진다.
+      range('최대 빠르기', 'maxSpeed', null, 100, 250),
       vl
     );
     p.append(
@@ -5626,6 +5691,7 @@
         saveDubCfg();
         if (!on) dubShowSub('');
       }),
+      range('자막 크기', 'subScale', dubPlaceSub, 50, 150),
       check(YOUTUBE ? '외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)' : '자막 있는 외국어 영상은 자동으로', 'autoSubs')
     );
     // 창 안의 클릭·키가 영상(재생·멈춤, 화살표 = 앞뒤로 감기)으로 새지 않게.
@@ -5655,8 +5721,9 @@
   function dubChipAt(x, y) {
     if (dubChip && dubChip.matches(':hover')) return;
     const v = [...document.querySelectorAll('video')].find((el) => {
+      if (YOUTUBE && !el.closest('#shorts-player')) return false;
       const r = el.getBoundingClientRect();
-      return r.width >= 240 && r.height >= 135 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      return r.width >= 135 && r.height >= 135 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
     });
     if (!v) {
       if (dubChip) dubChip.hidden = true;
@@ -5711,7 +5778,19 @@
       if (onBar || key) dubVolumeTouchedAt = Date.now();
     };
     for (const type of ['pointerdown', 'wheel', 'keydown', 'input']) document.addEventListener(type, touched, { capture: true, passive: true });
-    if (YOUTUBE) return ytDubInit(); // 유튜브는 플레이어 단추(미리보기 영상에는 달지 않는다)
+    // 영상 위 '한국어 자막' 단추 — 유튜브는 쇼츠에만(보통 영상은 플레이어 단추, 목록의 미리보기 영상에는 안 단다).
+    let last = 0;
+    document.addEventListener(
+      'mousemove',
+      (e) => {
+        const now = Date.now();
+        if (now - last < 250) return;
+        last = now;
+        dubChipAt(e.clientX, e.clientY);
+      },
+      { passive: true, capture: true }
+    );
+    if (YOUTUBE) return ytDubInit();
     // 자막 트랙이 있는 외국어 영상을 틀면 저절로 한국어 자막(한국어 트랙이 있으면 그대로 둔다).
     document.addEventListener(
       'play',
@@ -5726,17 +5805,6 @@
         dubStart(v, true);
       },
       true
-    );
-    let last = 0;
-    document.addEventListener(
-      'mousemove',
-      (e) => {
-        const now = Date.now();
-        if (now - last < 250) return;
-        last = now;
-        dubChipAt(e.clientX, e.clientY);
-      },
-      { passive: true, capture: true }
     );
   }
 

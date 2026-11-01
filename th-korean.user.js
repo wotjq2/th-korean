@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.24.0
+// @version      1.24.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 더빙(자막 + 목소리) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4829,7 +4829,7 @@
   let dubChip = null;
   let dubReverse = null; // 용어집 거꾸로: 태국어(띄어쓰기 없앤 꼴) → 한국어
   let dubVolumeTouchedAt = 0; // 사람이 사이트의 소리 막대·키를 만진 때
-  const ytTimedtext = new Map(); // 유튜브 영상 id → 플레이어가 부른 자막 주소(보안 표 포함)
+  const ytTimedtext = new Map(); // 유튜브 영상 id → 플레이어가 부른 자막 주소들(보안 표 포함, 새것이 끝)
 
   const saveDubCfg = () => GM_setValue(DUB_KEY, dubCfg);
 
@@ -5229,81 +5229,118 @@
     return out;
   }
 
-  async function ytCaptureTimedtext(id, d) {
-    const got = () => ytTimedtext.get(id);
-    if (got()) return got();
+  // 플레이어가 이 영상의 자막을 부르게 한다: 자막(CC)을 껐다 켜거나, 꺼져 있으면 켰다가 원래대로 끈다.
+  // 돌려주는 것은 잡힌 주소들(새것부터). 못 잡으면 왜 못 잡았는지 d.why 에 적는다.
+  async function ytCaptureTimedtext(id, d, fresh) {
+    const got = () => ytTimedtext.get(id) || [];
+    if (got().length && !fresh) return got();
     const player = document.getElementById('movie_player');
     for (let i = 0; i < 180 && player && player.classList.contains('ad-showing'); i++) {
-      if (d !== dub) return null;
+      if (d !== dub) return [];
       d.status = '광고가 끝나면 시작합니다…';
       dubStatus();
       await sleep(1000);
     }
+    if (d !== dub) return [];
+    d.status = '자막 주소 받는 중…';
+    dubStatus();
+    // 광고가 끝나며 플레이어가 이미 자막을 불렀으면 그것으로 — 다시 켜도 새로 부르지 않아 기다리기만 했다.
+    await sleep(1500);
+    if (got().length && !fresh) return got();
     const btn = player && player.querySelector('.ytp-subtitles-button');
-    if (!btn || btn.offsetParent === null) return null;
+    if (!btn || btn.style.display === 'none' || btn.getAttribute('aria-disabled') === 'true') {
+      d.why = '자막(CC) 단추가 없거나 꺼져 있음 — 자막이 없는 영상';
+      return got();
+    }
+    const before = got().length;
     const wasOn = btn.getAttribute('aria-pressed') === 'true';
     if (wasOn) {
       btn.click();
-      await sleep(300);
+      await sleep(400);
     }
     btn.click(); // 켜면 플레이어가 이 영상의 자막 주소를 부른다
-    for (let i = 0; i < 40 && !got(); i++) await sleep(250);
+    for (let i = 0; i < 60 && got().length <= before; i++) await sleep(250);
     if (!wasOn) btn.click(); // 원래대로 끈다 — 우리 한국어 자막만 보이게
-    return got() || null;
+    if (got().length <= before) d.why = `자막을 켜도 플레이어가 자막 주소를 부르지 않음 (CC ${wasOn ? '켜져' : '꺼져'} 있었음)`;
+    return got();
   }
 
+  // 자막 목록을 따로 받지 않는다 — 영상 페이지를 다시 받으면 유튜브가 자막 정보를 빼고 줄 때가 있었다
+  // (2026-11-01, 사용자 영상 KUZEfOmTQpY). 플레이어가 부른 주소(그 영상의 보안 표가 붙은)에서 lang·kind 만
+  // 바꿔 차례로 받아 본다: 사람이 만든 한국어 → 같은 언어의 사람이 만든 자막 → 플레이어가 고른 그대로.
+  // 없는 자막은 빈 답이 온다.
   async function ytLoadCues(d) {
     const id = ytVideoId();
     d.videoId = id;
-    const html = await (await fetch(`/watch?v=${encodeURIComponent(id)}`, { credentials: 'include' })).text();
-    const m = /"captionTracks":(\[.*?\])/.exec(html);
-    const tracks = m ? JSON.parse(m[1]) : [];
-    if (!tracks.length) {
-      d.status = '이 영상에는 자막이 없습니다. 자막 없는 영상(음성 인식)은 아직 못 합니다.';
-      return null;
-    }
-    const manual = tracks.filter((t) => t.kind !== 'asr');
-    const asr = tracks.find((t) => t.kind === 'asr');
-    const ko = manual.find((t) => /^ko/i.test(t.languageCode));
-    const spoken = asr ? asr.languageCode : manual[0].languageCode;
-    const pick = ko || manual.find((t) => t.languageCode === spoken) || asr || manual[0];
-    d.lang = ko ? 'ko' : pick.languageCode.slice(0, 2).toLowerCase();
     d.status = '자막 주소 받는 중…';
     dubStatus();
-    let base = await ytCaptureTimedtext(id, d);
+    let urls = await ytCaptureTimedtext(id, d);
     if (d !== dub) return null;
-    if (!base) {
-      d.status = '자막을 받지 못했습니다. 자막(CC)을 한 번 켜고 다시 눌러 주세요.';
-      return null;
-    }
-    const pickUrl = new URL(pick.baseUrl, location.origin);
-    const url = (tlang) => {
+    const get = async (u) => {
+      const text = await (await fetch(u, { credentials: 'include' })).text();
+      return text ? ytCues(JSON.parse(text)) : null;
+    };
+    const mk = (base, lang, kind, tlang) => {
       const u = new URL(base);
-      for (const p of ['lang', 'kind', 'name']) {
-        if (pickUrl.searchParams.get(p)) u.searchParams.set(p, pickUrl.searchParams.get(p));
-        else u.searchParams.delete(p);
-      }
+      u.searchParams.set('lang', lang);
+      if (kind) u.searchParams.set('kind', kind);
+      else u.searchParams.delete('kind');
+      for (const p of ['name', 'tlang']) u.searchParams.delete(p);
       if (tlang) u.searchParams.set('tlang', tlang);
-      else u.searchParams.delete('tlang');
       u.searchParams.set('fmt', 'json3');
       return u.href;
     };
-    const load = async (u) => {
-      const text = await (await fetch(u, { credentials: 'include' })).text();
-      if (!text) throw new Error('유튜브가 빈 자막을 줬습니다');
-      return ytCues(JSON.parse(text));
-    };
-    if (d.lang !== 'ko' && pick.isTranslatable !== false) d.koFallback = () => load(url('ko'));
     d.status = '대본 받는 중…';
     dubStatus();
-    try {
-      return await load(url(''));
-    } catch {
-      // 잡아 둔 주소가 낡았다(보안 표 만료 등) — 자막을 다시 켜서 새 주소로 한 번 더.
-      ytTimedtext.delete(id);
-      base = (await ytCaptureTimedtext(id, d)) || base;
-      return load(url(''));
+    for (let round = 0; round < 2; round++) {
+      // 보안 표(pot)가 붙은 주소부터, 새것부터
+      const bases = [...urls].reverse().sort((a, b) => /[?&]pot=./.test(b) - /[?&]pot=./.test(a));
+      for (const base of bases) {
+        const p = new URL(base).searchParams;
+        const spoken = p.get('lang') || '';
+        const asr = p.get('kind') === 'asr';
+        const tries = [];
+        if (!/^ko/i.test(spoken)) tries.push(['ko', '']);
+        if (asr) tries.push([spoken, '']);
+        tries.push([spoken, asr ? 'asr' : '']);
+        for (const [lang, kind] of tries) {
+          let cues = null;
+          try {
+            cues = await get(mk(base, lang, kind));
+          } catch {
+            cues = null;
+          }
+          if (d !== dub) return null;
+          if (cues && cues.length) {
+            d.lang = lang.slice(0, 2).toLowerCase();
+            if (d.lang !== 'ko') d.koFallback = async () => (await get(mk(base, lang, kind, 'ko'))) || [];
+            return cues;
+          }
+        }
+        // 플레이어가 받은 그대로(자동 번역 tlang 까지)도 한 번
+        try {
+          const u = new URL(base);
+          u.searchParams.set('fmt', 'json3');
+          const cues = await get(u.href);
+          if (cues && cues.length) {
+            d.lang = (p.get('tlang') || spoken).slice(0, 2).toLowerCase();
+            return cues;
+          }
+        } catch {
+          /* 다음 주소 */
+        }
+      }
+      if (round === 0) {
+        // 잡아 둔 주소가 낡았다(보안 표 만료 등) — 자막을 다시 켜서 새 주소로 한 번 더.
+        urls = await ytCaptureTimedtext(id, d, true);
+        if (d !== dub) return null;
+      }
     }
+    const withPot = urls.filter((u) => /[?&]pot=./.test(u)).length;
+    d.status =
+      '자막을 받지 못했습니다' +
+      (d.why ? ` — ${d.why}` : urls.length ? ` — 잡은 주소 ${urls.length}개(보안 표 ${withPot}개)가 모두 빈 답` : '');
+    return null;
   }
 
   function ytMountButton() {
@@ -5335,9 +5372,12 @@
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
           if (!e.name.includes('/api/timedtext')) continue;
-          // 보안 표(pot)가 없는 주소(미리 받기 등)는 빈 답이 온다.
-          const u = new URL(e.name);
-          if (u.searchParams.get('v') && u.searchParams.get('pot')) ytTimedtext.set(u.searchParams.get('v'), e.name);
+          // 보안 표(pot)가 없는 주소는 빈 답이 오기도 하지만, 로그인 등에 따라 다를 수 있어 다 모으고 받을 때 고른다.
+          const v = new URL(e.name).searchParams.get('v');
+          if (!v) continue;
+          const list2 = ytTimedtext.get(v) || [];
+          if (!list2.includes(e.name)) list2.push(e.name);
+          ytTimedtext.set(v, list2.slice(-6));
         }
       }).observe({ type: 'resource', buffered: true });
     } catch {

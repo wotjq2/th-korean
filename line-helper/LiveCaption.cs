@@ -92,6 +92,8 @@ static class LiveCaption
                         d["age"] = (int)(DateTime.Now - latestAt).TotalMilliseconds;
                     }
                     d["cc"] = ChromeCc();
+                    d["ccLang"] = ccLang;
+                    d["ccTr"] = ccTr;
                     lastPolled = DateTime.Now;
                     byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
@@ -108,6 +110,8 @@ static class LiveCaption
     // (2026-11-01)가 설정 화면에서 그 스위치를 끈 채 '번역 자막이 없다' 고 했다. 확장이 영상 위·창에 알린다.
     // 마지막으로 쓴 프로필의 Preferences 를, 파일이 바뀌었을 때만 다시 읽는다(키가 없으면 기본값 = 꺼짐).
     static string ccState = "";
+    static string ccLang = ""; // 크롬이 받아 적는 언어(ko-KR, th-TH …) — 영상 언어와 다르면 엉뚱한 글자가 나온다
+    static bool ccTr; // 크롬 '자막 번역' — 켜 두면 크롬이 먼저 옮겨 단어집이 쓰이지 않는다
     static DateTime ccChecked = DateTime.MinValue;
     static DateTime ccFileTime = DateTime.MinValue;
     static string ccFile = "";
@@ -139,6 +143,9 @@ static class LiveCaption
             using (StreamReader r = new StreamReader(f, System.Text.Encoding.UTF8))
                 text = r.ReadToEnd();
             ccState = Regex.IsMatch(text, "\"live_caption_enabled\":\\s*true") ? "on" : "off";
+            Match lang = Regex.Match(text, "\"live_caption_language\":\\s*\"([^\"]+)\"");
+            ccLang = lang.Success ? lang.Groups[1].Value : "en-US"; // 크롬 기본값
+            ccTr = Regex.IsMatch(text, "\"live_translate_enabled\":\\s*true");
         }
         catch (Exception) { ccFileTime = DateTime.MinValue; } // 크롬이 쓰는 중 — 다음에 다시
         return ccState;

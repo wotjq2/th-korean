@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.2
+// @version      1.27.3
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5791,8 +5791,12 @@
   let liveBusy = false;
   let liveFails = 0;
   let liveNext = 0;
-  // ok: 띄우는 중, quiet: 받아 적힌 말 없음, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, off: 도우미에서 꺼 둠, none: 도우미 없음
+  // ok: 띄우는 중, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠,
+  // off: 도우미에서 꺼 둠, none: 도우미 없음
   let liveState = '';
+  let liveCc = {}; // 도우미가 읽은 크롬 설정: lang(받아 적는 언어), tr(크롬 자막 번역)
+  const LIVE_LANGS = { ko: '한국어', th: '태국어', en: '영어', cmn: '중국어', ja: '일본어', vi: '베트남어', id: '인도네시아어',
+    fr: '프랑스어', de: '독일어', es: '스페인어', it: '이탈리아어', pt: '포르투갈어', ru: '러시아어', hi: '힌디어', pl: '폴란드어', tr: '튀르키예어' };
   const LIVE_SETTINGS = 'chrome://settings/accessibility';
   // 크롬 실시간 자막이 꺼져 있으면 탭마다 한 번, 재생 중인 영상 아래에 잠깐 알린다(창을 열지 않아도 보이게).
   const LIVE_CC_HINT = "크롬 '실시간 자막' 이 꺼져 있어 한국어 자막을 만들 수 없습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기";
@@ -5830,10 +5834,13 @@
   }
 
   function liveNote() {
+    const lang = liveCc.lang ? LIVE_LANGS[liveCc.lang.split('-')[0]] || liveCc.lang : '';
     const why = {
-      ok: '크롬 실시간 자막을 한국어로 띄우는 중',
+      ok: `크롬 실시간 자막을 한국어로 띄우는 중 (${liveCc.tr ? "크롬이 번역 — 단어집을 쓰려면 크롬 '자막 번역' 끄기" : '단어집 먼저'})`,
+      // 크롬은 소리가 꺼진 영상은 받아 적지 않는다(라자다 상품 영상은 소리 꺼진 채로 돈다 — 사용자 2026-11-01).
+      muted: '영상 소리가 꺼져 있습니다. 영상의 소리를 켜야 크롬이 말을 받아 적습니다',
+      quiet: `크롬이 받아 적은 말이 없습니다. 음악만 있는 영상이거나, 크롬이 받아 적는 언어${lang ? `(지금 ${lang})` : ''}가 영상 언어와 다를 수 있습니다`,
       ccoff: "크롬 '실시간 자막' 이 꺼져 있습니다 — 아래 단추로 크롬 설정을 열어 '실시간 자막' 을 켜 주세요",
-      quiet: '지금 받아 적힌 말이 없습니다(크롬 설정 › 접근성 › 실시간 자막을 켜고 영상 소리를 켜 주세요)',
       off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
       none: '번역 도우미가 꺼져 있습니다',
     }[liveState];
@@ -5894,7 +5901,8 @@
           j = null;
         }
         const text = j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '';
-        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.cc === 'off' ? 'ccoff' : 'quiet');
+        if (j) liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
+        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
       },
       onerror: fail,
       ontimeout: fail,

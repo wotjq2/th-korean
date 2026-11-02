@@ -9,7 +9,9 @@
     { "id": "ru", "label": "러", "name": "러시아어", "mt": "ru", "chip": "→ RU" },
     { "id": "he", "label": "이", "name": "히브리어", "mt": "he", "chip": "→ עברית" },
     { "id": "pl", "label": "폴", "name": "폴란드어", "mt": "pl", "chip": "→ PL" },
-    { "id": "vi", "label": "베", "name": "베트남어", "mt": "vi", "chip": "→ VI" }
+    { "id": "vi", "label": "베", "name": "베트남어", "mt": "vi", "chip": "→ VI" },
+    { "id": "ar", "label": "아", "name": "아랍어", "mt": "ar", "chip": "→ العربية" },
+    { "id": "hi", "label": "힌", "name": "힌디어", "mt": "hi", "chip": "→ हिन्दी" }
   ],
   "_languages": "입력칸의 한국어를 바꿀 언어(사이트의 '번역' 단추·LINE 언어 막대). id = 구글 번역 언어 코드(ko·th·en·vi·id·ms·km·lo·my·fr …), label = 단추 글자(1~3자), name = 이름, mt = 번역에 쓸 코드가 id 와 다를 때(중국어 zh-CN), chip = 입력칸 옆 표시. 용어집을 쓰려면 \"glossary\": \"glossary-vi.txt\" 처럼 th-korean-glossary 저장소의 파일 이름을 적는다(한 줄에 '한국어=그 언어', 태국어 glossary.txt 와 같은 꼴) — 입력 전체가 용어집 줄과 맞으면 그 값, 아니면 구글 번역. 태국어(th)는 빼도 늘 들어간다. 예: { \"id\": \"vi\", \"label\": \"베\", \"name\": \"베트남어\", \"chip\": \"→ VI\", \"glossary\": \"glossary-vi.txt\" }",
 

@@ -82,7 +82,7 @@ async function main() {
   ].join('\n');
   fs.writeFileSync(path.join(OUT, 'content.js'), content);
 
-  for (const f of ['background.js', 'popup.html', 'popup.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
+  for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
   const icons = {};
   for (const s of [16, 32, 48, 128]) {
     fs.copyFileSync(path.join(ICONS, `icon${s}.png`), path.join(OUT, `icon${s}.png`));
@@ -112,6 +112,13 @@ async function main() {
         js: [...vendored, 'content.js'],
         run_at: 'document_start',
         all_frames: false, // @noframes
+      },
+      {
+        // 쇼츠 플레이어의 자막(CC) 켜기 — 플레이어 기능은 페이지 쪽에만 있다(src/yt-main.js).
+        matches: ['https://www.youtube.com/*', 'https://m.youtube.com/*'],
+        js: ['yt-main.js'],
+        run_at: 'document_start',
+        world: 'MAIN',
       },
     ],
   };

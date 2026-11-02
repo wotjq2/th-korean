@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.5
+// @version      1.27.6
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5234,6 +5234,14 @@
       const now = livePlayingVideo();
       if (now && now !== v) return dubStop();
     }
+    // 유튜브(쇼츠를 넘김): 주소의 영상 id 가 바뀌면 바로 끈다. 1초마다 보는 ytOnNavigate 를 기다리면 앞 쇼츠의
+    // 문장이 다음 쇼츠 위에 남아 있었다(사용자 2026-11-02). 손으로 켜 둔 것(dubWanted)은 다음 영상으로 잇는다.
+    if (YOUTUBE && d.videoId && ytVideoId() !== d.videoId) {
+      const keep = dubWanted;
+      dubStop();
+      dubWanted = keep;
+      return;
+    }
     dubPlaceSub();
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains('ad-showing')) {
       if (d.cur !== -2) {
@@ -5393,6 +5401,29 @@
     return out;
   }
 
+  // 쇼츠 플레이어의 자막(CC) 보기(cmd 'peek')·켜기('on')·끄기('off'). 플레이어 기능은 페이지 쪽 자바스크립트에만
+  // 있어서 확장의 페이지 쪽 조각(extension/src/yt-main.js)에 문서 이벤트로 부탁한다. 답: { was: 부르기 전 CC
+  // 'on'/'off', id, tracks: 이 영상의 자막 목록('th:asr' 꼴, 모르면 null) }. 조각이 없으면(몽키) null.
+  function ytCaptions(cmd) {
+    return new Promise((resolve) => {
+      let timer = 0;
+      const done = (e) => {
+        clearTimeout(timer);
+        document.removeEventListener('lzk-yt-cc-done', done);
+        let r = null;
+        try {
+          r = e ? JSON.parse(e.detail) : null;
+        } catch {
+          r = null;
+        }
+        resolve(r);
+      };
+      timer = setTimeout(done, 500);
+      document.addEventListener('lzk-yt-cc-done', done);
+      document.dispatchEvent(new CustomEvent('lzk-yt-cc', { detail: cmd }));
+    });
+  }
+
   // 플레이어가 이 영상의 자막을 부르게 한다: 자막(CC)을 껐다 켜거나, 꺼져 있으면 켰다가 원래대로 끈다.
   // 돌려주는 것은 잡힌 주소들(새것부터). 못 잡으면 왜 못 잡았는지 d.why 에 적는다.
   async function ytCaptureTimedtext(id, d, fresh) {
@@ -5408,13 +5439,36 @@
     if (d !== dub) return [];
     d.status = '자막 주소 받는 중…';
     dubStatus();
+    // 쇼츠 플레이어의 CC 상태와 자막 목록(확장의 페이지 쪽 조각). CC 가 꺼져 있으면 플레이어가 자막을 부르지 않으니
+    // 아래에서 기다리지 않고 바로 켠다.
+    // 넘긴 직후에는 플레이어가 아직 앞 쇼츠를 들고 있다 — 이 영상으로 바뀔 때까지 0.2초씩 2초까지 다시 본다.
+    let cc = ytIsShorts() ? await ytCaptions('peek') : null;
+    for (let i = 0; i < 10 && cc && cc.id !== id && d === dub; i++) {
+      await sleep(200);
+      cc = await ytCaptions('peek');
+    }
+    const ccOff = !!(cc && cc.id === id && cc.was === 'off');
     // 광고가 끝나며 플레이어가 이미 자막을 불렀으면 그것으로 — 다시 켜도 새로 부르지 않아 기다리기만 했다.
-    await sleep(1500);
+    if (!ccOff) await sleep(1500);
     if (got().length && !fresh) return got();
     const btn = player && player.querySelector('.ytp-subtitles-button');
     if (!btn || btn.style.display === 'none' || btn.getAttribute('aria-disabled') === 'true') {
-      // 쇼츠 플레이어에는 CC 단추가 없다. 대신 영상을 틀 때 스스로 자막을 부르므로 조금 더 기다린다.
+      // 쇼츠 플레이어에는 CC 단추가 없다. 대신 영상을 틀 때 스스로 자막을 부르므로 조금 더 기다린다. 유튜브 CC 를
+      // 꺼 둔 계정이면 부르지 않으니(사용자 2026-11-02: 외국어가 나오면 CC 가 켜지고 한국어 자막도 저절로) 잠깐
+      // 켜서 부르게 하고 받으면 원래대로 끈다 — 우리 한국어 자막만 보이게.
+      const tracks = cc && cc.id === id ? cc.tracks : null;
+      if (tracks) d.tracks = tracks;
+      // 자막이 하나도 없는 쇼츠, 또는 저절로 켰는데 한국어 자막뿐인 쇼츠(한국어 영상) — CC 를 켜지 않고 기다리지도
+      // 않는다. 자막이 없는 쇼츠는 바로 크롬 실시간 자막으로 넘어간다(전에는 10초 넘게 다시 받아 보느라 그동안
+      // 자막이 없었다). 한국어 쇼츠에 CC 를 켜 두면 유튜브 한국어 자막이 떴다.
+      if (tracks && (!tracks.length || (d.auto && tracks.every((t) => /^ko/i.test(t))))) {
+        d.noCaptions = true;
+        d.why = tracks.length ? '한국어 쇼츠' : '자막이 없는 쇼츠 — 크롬 실시간 자막으로';
+        return got();
+      }
+      if (ccOff) await ytCaptions('on');
       for (let i = 0; i < 16 && !got().length && ytIsShorts(); i++) await sleep(250);
+      if (ccOff) await ytCaptions('off');
       if (!got().length) {
         d.why = ytIsShorts()
           ? '쇼츠 자막을 못 찾음 — 자막이 없는 쇼츠이거나, 쇼츠 ⋮ 메뉴에서 자막을 한 번 켜 주세요'
@@ -5446,10 +5500,23 @@
     dubStatus();
     let urls = await ytCaptureTimedtext(id, d);
     if (d !== dub) return null;
-    const get = async (u) => {
-      const text = await (await fetch(u, { credentials: 'include' })).text();
-      return text ? ytCues(JSON.parse(text)) : null;
+    if (d.noCaptions && !urls.length) {
+      d.status = d.why;
+      return null;
+    }
+    // ms: 이만큼 답이 없으면 그만 기다린다(없는 것으로 친다).
+    const get = async (u, ms = 0) => {
+      const ctl = new AbortController();
+      const timer = ms ? setTimeout(() => ctl.abort(), ms) : 0;
+      try {
+        const text = await (await fetch(u, { credentials: 'include', signal: ctl.signal })).text();
+        return text ? ytCues(JSON.parse(text)) : null;
+      } finally {
+        clearTimeout(timer);
+      }
     };
+    // 쇼츠는 이 영상에 있는 자막 목록을 안다(d.tracks) — 없는 자막은 묻지 않는다.
+    const has = (lang, kind) => !d.tracks || d.tracks.includes(lang + (kind ? `:${kind}` : ''));
     const mk = (base, lang, kind, tlang) => {
       const u = new URL(base);
       u.searchParams.set('lang', lang);
@@ -5471,16 +5538,15 @@
         const asr = p.get('kind') === 'asr';
         if (d.auto && /^ko/i.test(spoken)) return null; // 한국어 영상 — 저절로 켤 까닭이 없다
         const tries = [];
-        if (!/^ko/i.test(spoken)) tries.push(['ko', '']);
-        if (asr) tries.push([spoken, '']);
+        if (!/^ko/i.test(spoken) && has('ko', '')) tries.push(['ko', '']);
+        if (asr && has(spoken, '')) tries.push([spoken, '']);
         tries.push([spoken, asr ? 'asr' : '']);
-        for (const [lang, kind] of tries) {
-          let cues = null;
-          try {
-            cues = await get(mk(base, lang, kind));
-          } catch {
-            cues = null;
-          }
+        // 한꺼번에 묻고 앞 순서부터 고른다 — 차례로 물었더니 없는 자막 하나에 5.7초가 걸려 쇼츠 자막이 그만큼
+        // 늦었다(2026-11-02 시험, 사용자: 영어 쇼츠 자막이 늦다).
+        const asked = tries.map(([lang, kind]) => get(mk(base, lang, kind), 3000).catch(() => null));
+        for (let k = 0; k < tries.length; k++) {
+          const [lang, kind] = tries[k];
+          const cues = await asked[k];
           if (d !== dub) return null;
           if (cues && cues.length) {
             // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
@@ -5533,14 +5599,18 @@
   }
 
   // 영상이 바뀌면: 손으로 켜 두었으면 이어서, 아니면 '외국어 영상은 자동' 일 때 저절로.
-  function ytOnNavigate() {
+  function ytOnNavigate(tries = 0) {
     const id = ytVideoId();
     const keep = dubWanted;
     if (dub && dub.videoId !== id) dubStop();
     dubWanted = keep && !!id;
     if (!id || dub) return;
     const v = ytVideo();
-    if (!v) return;
+    if (!v) {
+      // 넘긴 바로 뒤라 새 쇼츠의 플레이어가 아직 없다 — 0.3초 뒤 다시(3초까지).
+      if (tries < 10) setTimeout(() => ytVideoId() === id && ytOnNavigate(tries + 1), 300);
+      return;
+    }
     if (dubWanted) dubStart(v);
     else if (dubCfg.autoSubs && dubAutoTried !== id) {
       dubAutoTried = id; // 한 영상에 한 번만 — 손으로 끈 뒤 다시 켜지지 않게
@@ -5568,14 +5638,15 @@
     setInterval(ytMountButton, 1500);
     document.addEventListener('yt-navigate-finish', () => setTimeout(ytOnNavigate, 800));
     setTimeout(ytOnNavigate, 2500); // 처음 열린 영상(이미 켜져 있으면 두 번 켜지 않는다)
-    // 쇼츠는 넘길 때 주소만 바뀌기도 한다 — 영상 id 가 바뀌었는지 1초마다 본다.
+    // 쇼츠는 넘길 때 주소만 바뀌기도 한다 — 영상 id 가 바뀌었는지 0.3초마다 본다(1초마다 + 0.8초 기다림이던 것을
+    // 줄였다 — 사용자 2026-11-02: 쇼츠 자막이 늦다. 플레이어가 새 쇼츠로 바뀌기를 기다리는 것은 ytCaptureTimedtext 가 한다).
     let lastId = ytVideoId();
     setInterval(() => {
       const id = ytVideoId();
       if (id === lastId) return;
       lastId = id;
-      setTimeout(ytOnNavigate, 800);
-    }, 1000);
+      setTimeout(ytOnNavigate, ytIsShorts() ? 200 : 800);
+    }, 300);
   }
 
   // --- 창: 한국어 자막 켜기·끄기, 목소리(더빙), 자동, 영상 소리·번역 소리, 목소리 고르기 ---
@@ -5596,7 +5667,7 @@
     toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!on);
     const cc = dubPanel.querySelector('.lzk-dub-cc');
-    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet' || (liveState === 'ok' && liveKoreanEars())));
+    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet' || (liveState === 'ok' && liveCc.tr)));
     if (!on)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
@@ -5798,6 +5869,17 @@
   // 나오고 있으면 쓰지 않는다. 도우미가 없으면 점점 드물게(최대 30초) 묻는다.
   const LIVE_URL = 'http://127.0.0.1:38291/caption';
   const LIVE_MAX_AGE = 6000; // 이만큼 새 말이 없으면 자막을 내린다
+  // 크롬 자막 창은 말을 문단으로 쌓아 가서(사용자 크롬 2026-11-02: 한 문단이 줄 3~5개) 끝의 두 줄도 길다. 유튜브 자막처럼
+  // 끝에서 60자 안쪽만, 문장이나 낱말 경계에서 잘라 보인다.
+  const LIVE_MAX_CHARS = 60;
+  function liveTail(t) {
+    if (t.length <= LIVE_MAX_CHARS) return t;
+    const s = t.slice(-LIVE_MAX_CHARS);
+    const end = s.search(/[.!?]\s/);
+    if (end >= 0 && end < LIVE_MAX_CHARS / 2) return s.slice(end + 1).trim();
+    const sp = s.indexOf(' ');
+    return sp >= 0 && sp < 15 ? s.slice(sp + 1) : s;
+  }
   let liveVideo = null;
   // 묻기 시작한 시각(0 = 쉬는 중). 확장 뒤쪽이 막 깨어나는 사이에 보낸 요청은 답이 영영 안 올 때가 있어(시험 크롬에서
   // 두 번에 한 번 꼴로 이 탭의 실시간 자막이 끝까지 멈췄다), 5초가 지나면 그 요청은 버리고 다시 묻는다.
@@ -5805,23 +5887,24 @@
   let liveSeq = 0;
   let liveFails = 0;
   let liveNext = 0;
-  // ok: 띄우는 중, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠,
-  // off: 도우미에서 꺼 둠, none: 도우미 없음
+  // ok: 띄우는 중, pause: 이 영상에서 자막을 띄우다 말이 멈춤, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐,
+  // korean: 한국어 말이라 비워 둠, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, off: 도우미에서 꺼 둠, none: 도우미 없음
   let liveState = '';
   let liveCc = {}; // 도우미가 읽은 크롬 설정: lang(받아 적는 언어), tr(크롬 자막 번역)
-  const LIVE_LANGS = { ko: '한국어', th: '태국어', en: '영어', cmn: '중국어', ja: '일본어', vi: '베트남어', id: '인도네시아어',
-    fr: '프랑스어', de: '독일어', es: '스페인어', it: '이탈리아어', pt: '포르투갈어', ru: '러시아어', hi: '힌디어', pl: '폴란드어', tr: '튀르키예어' };
+  let liveHad = false; // 지금 영상에서 자막을 띄운 적이 있다(말이 멈춘 사이를 '받아 적힌 말 없음' 으로 알리지 않게)
   const LIVE_SETTINGS = 'chrome://settings/accessibility';
   // 크롬 실시간 자막이 꺼져 있으면 탭마다 한 번, 재생 중인 영상 아래에 잠깐 알린다(창을 열지 않아도 보이게).
+  // (1.27.5 의 '크롬이 한국어로 듣는 중' 안내는 뺐다 — 크롬 156 은 받아 적는 언어를 스스로 알아내서(사용자 2026-11-02
+  // 화면: 설정은 한국어인데 '태국어(자동 감지됨)') 틀린 안내가 한국 영상 위에까지 떴다.)
   const LIVE_CC_HINT = "크롬 '실시간 자막' 이 꺼져 있어 한국어 자막을 만들 수 없습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기";
-  // 크롬이 한국어로 듣고 있으면 외국어 말은 거의 못 받아 적는다(사용자 2026-11-01, 라자다 영어 홍보 영상 — 소리를
-  // 켜도 자막이 없었다). 외국어 영상을 보려고 쓰는 기능이라 이것도 탭마다 한 번 영상 아래에 알린다.
-  const LIVE_KO_HINT =
-    "크롬 실시간 자막이 '한국어' 로 듣고 있어 외국어 말을 못 받아 적습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기 › 언어를 태국어·영어 등으로";
   let liveHinted = false;
   let liveHintUntil = 0;
-  let liveHintText = '';
-  const liveKoreanEars = () => /^ko/i.test(liveCc.lang || '');
+  // 자막을 꺼 두었거나 우리 자막이 나오는 영상에서 도우미에게 마지막으로 물은 때(크롬 자막 창 치우기용)
+  let liveQuietAt = 0;
+  // 지금 재생 중인 영상(과 그 주소), 그 영상이 재생되기 시작한 때 — 넘긴 뒤 앞 영상의 말을 버리는 데 쓴다
+  let liveFor = null;
+  let liveForSrc = '';
+  let liveSince = 0;
 
   function livePlayingVideo() {
     let best = null;
@@ -5854,21 +5937,26 @@
   }
 
   function liveNote() {
-    const lang = liveCc.lang ? LIVE_LANGS[liveCc.lang.split('-')[0]] || liveCc.lang : '';
     const why = {
-      ok:
-        `크롬 실시간 자막을 한국어로 띄우는 중 (${liveCc.tr ? "크롬이 번역 — 단어집을 쓰려면 크롬 '자막 번역' 끄기" : '단어집 먼저'})` +
-        (liveKoreanEars() ? " · 크롬이 '한국어' 로 듣는 중 — 외국어 영상이면 아래 단추로 언어를 바꾸세요" : ''),
+      // 크롬 '자막 번역' 을 켜 두면 한국 영상도 한국어로 와서 가려낼 수 없다 — 끄면 도우미가 한국어 말은 비워 둔다.
+      ok: `크롬 실시간 자막을 한국어로 띄우는 중 (${
+        liveCc.tr
+          ? "크롬이 번역 중이라 한국 영상에도 자막이 나옵니다 — 아래 단추로 크롬 설정을 열어 '자막 번역' 을 끄면 단어집으로 옮기고 한국 영상은 비워 둡니다"
+          : '단어집 먼저 · 한국 영상은 비워 둠'
+      })`,
+      korean: '한국어로 말하는 영상이라 자막을 띄우지 않습니다',
       // 크롬은 소리가 꺼진 영상은 받아 적지 않는다(라자다 상품 영상은 소리 꺼진 채로 돈다 — 사용자 2026-11-01).
       muted: '영상 소리가 꺼져 있습니다. 영상의 소리를 켜야 크롬이 말을 받아 적습니다',
-      quiet: liveKoreanEars()
-        ? "크롬이 받아 적은 말이 없습니다. 크롬이 '한국어' 로 듣고 있어 외국어 말은 못 받아 적습니다 — 아래 단추로 크롬 설정을 열어 언어(태국어·영어 등)를 바꾸세요"
-        : `크롬이 받아 적은 말이 없습니다. 음악만 있는 영상이거나, 크롬이 받아 적는 언어${lang ? `(지금 ${lang})` : ''}가 영상 언어와 다를 수 있습니다`,
+      // 크롬 156 은 말의 언어를 스스로 알아낸다(설정의 받아 적는 언어와 상관없이 '태국어(자동 감지됨)' — 사용자
+      // 2026-11-02) — 그래서 설정 언어는 말하지 않는다. 진짜 페이스북 릴스에서 말이 잠깐 멈출 때마다 이 글이 떠서
+      // 고장처럼 보였다 — 이 영상에서 자막을 띄운 적이 있으면 'pause' 로 알린다.
+      pause: '말이 멈춘 사이 — 다시 말하면 자막이 나옵니다',
+      quiet: '크롬이 받아 적은 말이 아직 없습니다. 말이 없는(음악만 있는) 영상이거나, 크롬이 그 언어를 받아 적지 못합니다',
       ccoff: "크롬 '실시간 자막' 이 꺼져 있습니다 — 아래 단추로 크롬 설정을 열어 '실시간 자막' 을 켜 주세요",
       off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
       none: '번역 도우미가 꺼져 있습니다',
     }[liveState];
-    return liveState === 'ok' || liveState === 'ccoff' ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
+    return ['ok', 'pause', 'ccoff', 'korean'].includes(liveState) ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
   }
 
   // 다른 사이트의 '한국어 자막 켜기·끄기' — 영상 하나가 아니라 켜 둔 동안 재생하는 영상마다.
@@ -5884,27 +5972,44 @@
   }
 
   function liveTick() {
-    if (!YOUTUBE && !dubCfg.pageSubs) return liveHide();
+    const want = YOUTUBE || dubCfg.pageSubs;
+    if (!want) liveHide();
     if ((liveBusy && Date.now() - liveBusy < 5000) || document.visibilityState !== 'visible' || Date.now() < liveNext) return;
     const v = livePlayingVideo();
     if (!v) return liveHide();
-    if (dubOwns(v)) {
-      liveVideo = null;
-      return;
+    // 영상을 넘기면(재생 중인 영상이나 그 주소가 바뀌면) 그 뒤에 새로 받아 적힌 말만 쓴다 — 크롬 자막 창은 앞 영상의
+    // 마지막 문장을 들고 있어서 새 영상 위에 6초까지 남았다(사용자 2026-11-02: 쇼츠·페이스북·틱톡에서 내리면 기존
+    // 자막이 그대로). 쇼츠·틱톡처럼 <video> 하나에 영상만 바꿔 끼우는 곳도 있어 영상 주소와 페이지 주소까지 본다.
+    const src = `${v.currentSrc}|${location.pathname}`;
+    if (v !== liveFor || src !== liveForSrc) {
+      liveFor = v;
+      liveForSrc = src;
+      liveSince = Date.now();
+      liveHad = false;
+      liveHide();
+    }
+    // 자막을 꺼 두었거나 우리 자막(자막 파일)이 나오는 영상도 5초마다 묻기는 한다 — 확장이 묻는 동안 도우미가 크롬
+    // 자막 창(검은 상자)을 화면 밖으로 치워 둔다(사용자 2026-11-02: 쇼츠·페이스북에서 그 창이 댓글을 가려 불편). 답은 안 쓴다.
+    const quiet = !want || dubOwns(v);
+    if (quiet) {
+      if (want) liveVideo = null;
+      if (Date.now() - liveQuietAt < 5000) return;
+      liveQuietAt = Date.now();
     }
     liveBusy = Date.now();
     const seq = ++liveSeq;
     const done = (text, state) => {
       if (seq !== liveSeq) return; // 버린 요청의 늦은 답
       liveBusy = 0;
-      liveSetState(state);
+      if (quiet) return;
+      if (text) liveHad = true;
+      liveSetState(state === 'quiet' && liveHad ? 'pause' : state);
       if (dubOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
-      if (!liveHinted && (state === 'ccoff' || ((state === 'quiet' || state === 'ok') && liveKoreanEars()))) {
+      if (!liveHinted && state === 'ccoff') {
         liveHinted = true;
         liveHintUntil = Date.now() + 9000;
-        liveHintText = state === 'ccoff' ? LIVE_CC_HINT : LIVE_KO_HINT;
       }
-      if (Date.now() < liveHintUntil) text = liveHintText;
+      if (Date.now() < liveHintUntil) text = LIVE_CC_HINT;
       if (!text) return liveHide();
       liveVideo = v;
       dubShowSub(text);
@@ -5927,12 +6032,13 @@
         } catch {
           j = null;
         }
-        const text = j && j.on && j.age < LIVE_MAX_AGE ? String(j.text || '').split('\n').slice(-2).join(' ') : '';
+        const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < Date.now() - liveSince; // 이 영상을 틀고 나서 바뀐 말
+        const text = fresh ? liveTail(String(j.text || '').split('\n').slice(-2).join(' ')) : '';
         if (j && (j.ccLang || '') + !!j.ccTr !== (liveCc.lang || '') + !!liveCc.tr) {
           liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
           dubStatus();
         }
-        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
+        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.ko ? 'korean' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
       },
       onerror: fail,
       ontimeout: fail,
@@ -5941,6 +6047,8 @@
 
   function videoDubInit() {
     setInterval(liveTick, 700);
+    // 넘기면 앞 영상이 멈춘다 — 다음 liveTick(0.7초)을 기다리지 않고 그 영상의 실시간 자막을 바로 내린다.
+    document.addEventListener('pause', (e) => e.target === liveVideo && liveHide(), true);
     try {
       speechSynthesis.getVoices(); // 목록을 미리 불러 둔다
       speechSynthesis.addEventListener('voiceschanged', dubFillVoices);

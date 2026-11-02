@@ -32,6 +32,8 @@ static class LiveCaption
     static readonly Regex Foreign = new Regex("[฀-๿A-Za-z぀-ヿ一-鿿]");
     static readonly Regex ThaiGap = new Regex("([฀-๿])\\s+(?=[฀-๿])");
     static readonly Regex ThaiRun = new Regex("[฀-๿][฀-๿\\s]*");
+    // 크롬 '자막 번역' 이 덜 들린 말에 붙이는 메모 — '(문장이 불완전합니다).' 가 영상 위에 그대로 떴다(2026-11-02 틱톡).
+    static readonly Regex ChromeNote = new Regex("\\s*\\([^()]*불완전[^()]*\\)\\.?");
 
     // UI 스레드에서 부른다(덮개 창을 그 스레드에 만든다).
     public static void Start(Engine e)
@@ -47,11 +49,13 @@ static class LiveCaption
     // 사용자(2026-11-01, 페이스북 릴스): 크롬 자막 창 대신 유튜브처럼 영상 위에 자막으로. 크롬 확장은 이 도우미에게
     // 먼저 말을 걸 수 없어서(네이티브 메시징은 확장이 부를 때만), 이 PC 안에서만 열리는 통로(127.0.0.1:38291)에
     // 지금 한국어 자막을 놓아 두고, 영상이 재생 중인 탭의 확장이 0.7초마다 가져가 그 영상 위에 띄운다.
-    // 확장이 가져가는 동안에는 크롬 자막 창을 덮지 않는다. 내주는 것은 자막 글자뿐이다(명령은 받지 않는다).
+    // 확장이 가져가는 동안에는 크롬 자막 창을 화면 밖으로 치운다(Tuck). 내주는 것은 자막 글자뿐이다(명령은 받지 않는다).
+    // 확장은 자막을 꺼 두었거나 자기 자막(자막 파일)을 띄우는 영상에서도 묻는다 — 그때도 크롬 자막 창은 치워 둔다.
     public const int Port = 38291;
     static string latest = "";
     static DateTime latestAt = DateTime.Now;
     static DateTime lastPolled = DateTime.MinValue;
+    static DateTime koreanAt = DateTime.MinValue; // 크롬이 받아 적은 말이 한국어라 비워 둔 마지막 때
 
     static void Publish(string text)
     {
@@ -94,6 +98,7 @@ static class LiveCaption
                     d["cc"] = ChromeCc();
                     d["ccLang"] = ccLang;
                     d["ccTr"] = ccTr;
+                    d["ko"] = latest.Length == 0 && (DateTime.Now - koreanAt).TotalSeconds < 6;
                     lastPolled = DateTime.Now;
                     byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
@@ -151,6 +156,60 @@ static class LiveCaption
         return ccState;
     }
 
+    // ---- 크롬 자막 창 치우기 ----
+    // 사용자(2026-11-02, 쇼츠·페이스북): 크롬 자막 창(검은 상자)이 댓글·영상을 가리고 한국어 영상에도 떠서 불편하다.
+    // 한국어는 확장이 영상 위에 유튜브 자막처럼 띄우므로, 확장이 10분 안에 물어 왔으면 그 창을 화면 아래 밖으로
+    // 옮겨 둔다. 창은 살아 있어 UI Automation 으로 계속 읽힌다(2026-11-02 시험 크롬: 옮긴 뒤 크롬이 되돌리지 않음).
+    // 크롬이 다시 화면에 놓으면 다음 Tick 에 또 치운다. 확장이 오래 안 묻거나, 도우미에서 끄거나, 도우미를 끝내면
+    // 제자리로 돌려놓는다. 확장 없이 도우미만 쓰면 예전처럼 자막 창 위를 한국어로 덮는다.
+    const int TuckMinutes = 10;
+    static IntPtr bubble = IntPtr.Zero;
+    static Native.RECT home;
+    static bool haveHome, stopping;
+    static readonly DateTime startedAt = DateTime.Now;
+
+    static bool WantTuck() { return On && !stopping && (DateTime.Now - lastPolled).TotalMinutes < TuckMinutes; }
+
+    static bool OnScreen(Native.RECT r)
+    {
+        Rectangle w = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+        foreach (Screen s in Screen.AllScreens) if (s.Bounds.IntersectsWith(w)) return true;
+        return false;
+    }
+
+    static void Tuck()
+    {
+        Native.RECT r;
+        if (bubble == IntPtr.Zero || !Native.GetWindowRect(bubble, out r) || !OnScreen(r)) return;
+        home = r;
+        haveHome = true;
+        Native.SetWindowPos(bubble, IntPtr.Zero, r.Left, SystemInformation.VirtualScreen.Bottom + 200, 0, 0,
+            Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+    }
+
+    static void Untuck()
+    {
+        Native.RECT r;
+        if (bubble == IntPtr.Zero || !Native.GetWindowRect(bubble, out r) || OnScreen(r)) return;
+        // 치운 자리를 모르면(도우미가 치운 채 꺼졌다 켜짐) 확장이 다시 물을 틈을 준 뒤 주 화면 아래 가운데로.
+        if (!haveHome && (DateTime.Now - startedAt).TotalSeconds < 5) return;
+        Point to;
+        if (haveHome) to = new Point(home.Left, home.Top);
+        else
+        {
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            to = new Point(wa.Left + (wa.Width - (r.Right - r.Left)) / 2, wa.Bottom - (r.Bottom - r.Top) - 40);
+        }
+        Native.SetWindowPos(bubble, IntPtr.Zero, to.X, to.Y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+    }
+
+    // 도우미를 끝낼 때(UI 스레드) 치운 자막 창을 돌려놓는다.
+    public static void Stop()
+    {
+        stopping = true;
+        try { Untuck(); } catch (Exception) { }
+    }
+
     static void Loop()
     {
         while (true)
@@ -165,15 +224,24 @@ static class LiveCaption
     // 다음 볼 때까지 쉴 시간(ms)을 돌려준다. 자막 창이 없으면 천천히 찾는다.
     static int Tick()
     {
-        if (!On) { Publish(""); Hide(); return 1000; }
+        if (stopping) return 1000;
+        if (!On) { Untuck(); Publish(""); Hide(); return 1000; }
         if (label == null) label = Find();
         if (label == null) { Publish(""); Hide(); return 1500; }
+        bool tuck = WantTuck();
+        if (tuck) Tuck(); else Untuck();
         System.Windows.Rect b = label.Current.BoundingRectangle;
-        if (b.IsEmpty || b.Width < 30 || b.Height < 10) { Hide(); return 500; }
-        if (!seen) { seen = true; Log.Write("실시간 자막: 크롬 자막 창을 찾음 — 한국어로 덮습니다"); }
-        List<string> lines = Lines(label);
+        // 크롬이 자막 창을 내렸다(말이 없음). 치워 둔 창은 화면 밖이라 글자 칸 크기 대신 창이 보이는지로 본다.
+        if (tuck ? !Native.IsWindowVisible(bubble) : b.IsEmpty || b.Width < 30 || b.Height < 10) { Hide(); return 500; }
+        if (!seen) { seen = true; Log.Write("실시간 자막: 크롬 자막 창을 찾음 — 한국어로 옮깁니다"); }
+        List<bool> glued = new List<bool>();
+        List<string> lines = Lines(label, glued);
         if (lines.Count == 0) { Publish(""); Hide(); return 350; }
         string all = string.Join(" ", lines.ToArray());
+        // 한국어 영상 — 크롬 '자막 번역' 을 꺼 두면 받아 적은 글자에 한글이 있을 때는 한국어 말뿐이다(태국어·영어 말은
+        // 한글로 적히지 않는다). 띄우지 않는다(사용자 2026-11-02: 한국 영상에도 자막이 떠서 불편). 자막 번역을 켜 두면
+        // 외국어 영상도 한국어로 와서 가려낼 수 없다.
+        if (!ccTr && Hangul.IsMatch(all)) { koreanAt = DateTime.Now; Publish(""); Hide(); return 350; }
         // 크롬 '자막 번역' 으로 모두 한국어면 옮길 것 없이 그대로 내준다.
         bool allKorean = Hangul.IsMatch(all) && !Foreign.IsMatch(all);
         for (int i = 0; i < lines.Count && !allKorean; i++)
@@ -197,21 +265,24 @@ static class LiveCaption
             }
             Ask(line);
         }
-        List<string> ko = allKorean ? lines : new List<string>();
-        if (!allKorean)
+        // 크롬은 자막 창 너비에서 줄을 바꿔 한국어 낱말이 두 줄로 갈린다(2026-11-02 사용자 크롬: '오토 / 바이', '설 / 치가').
+        // 그대로 이어 붙이면 영상 위에 '오토 바이' 로 나오니, 낱말 가운데서 갈린 한국어 줄은 앞 줄에 바로 붙인다.
+        List<string> ko = new List<string>();
+        lock (lk)
         {
-            lock (lk)
+            for (int i = 0; i < lines.Count; i++)
             {
-                foreach (string l in lines)
-                {
-                    string k;
-                    if (done.TryGetValue(l, out k) && k.Length > 0) ko.Add(k);
-                }
+                string k = lines[i];
+                if (!allKorean && (!done.TryGetValue(lines[i], out k) || k.Length == 0)) continue;
+                k = ChromeNote.Replace(k, "").Trim();
+                if (k.Length == 0) continue;
+                if (glued[i] && ko.Count > 0 && Hangul.IsMatch(lines[i]) && Hangul.IsMatch(lines[i - 1])) ko[ko.Count - 1] += k;
+                else ko.Add(k);
             }
         }
         Publish(string.Join("\n", ko.ToArray()));
-        // 확장이 이 한국어를 받아 영상 위에 띄우고 있으면(2초 안에 받아 갔으면) 크롬 자막 창은 덮지 않는다.
-        if (ko.Count == 0 || allKorean || (DateTime.Now - lastPolled).TotalMilliseconds < 2000) { Hide(); return 350; }
+        // 확장이 이 한국어를 받아 영상 위에 띄우고 있으면 크롬 자막 창은 치워 두었으니 덮지 않는다.
+        if (ko.Count == 0 || allKorean || WantTuck()) { Hide(); return 350; }
         Rectangle r = new Rectangle((int)b.X, (int)b.Y, (int)b.Width, (int)b.Height);
         cover.BeginInvoke((MethodInvoker)delegate { cover.Set(r, ko); });
         return 350;
@@ -244,23 +315,29 @@ static class LiveCaption
             System.Windows.Rect r = w.Current.BoundingRectangle;
             if (r.IsEmpty || r.Width > 1400 || r.Height > 900) continue;
             AutomationElement found = w.FindFirst(TreeScope.Descendants, cap);
-            if (found != null) return found;
+            if (found != null) { bubble = (IntPtr)w.Current.NativeWindowHandle; return found; }
         }
         return null;
     }
 
-    static List<string> Lines(AutomationElement lab)
+    // 보이는 줄마다 한 칸. glued[i] = 앞 줄 끝에 빈칸이 없다(크롬이 낱말 가운데서 줄을 바꿨다 — 낱말 사이에서
+    // 바꾼 줄은 끝에 빈칸이 남는다).
+    static List<string> Lines(AutomationElement lab, List<bool> glued)
     {
         List<string> list = new List<string>();
+        bool open = false;
         foreach (AutomationElement k in lab.FindAll(TreeScope.Children, Condition.TrueCondition))
         {
             string n = k.Current.Name;
-            if (!string.IsNullOrEmpty(n) && n.Trim().Length > 0) list.Add(n.Trim());
+            if (string.IsNullOrEmpty(n) || n.Trim().Length == 0) continue;
+            list.Add(n.Trim());
+            glued.Add(open);
+            open = !char.IsWhiteSpace(n[n.Length - 1]);
         }
         if (list.Count == 0)
         {
             string n = lab.Current.Name;
-            if (!string.IsNullOrEmpty(n) && n.Trim().Length > 0) list.Add(n.Trim());
+            if (!string.IsNullOrEmpty(n) && n.Trim().Length > 0) { list.Add(n.Trim()); glued.Add(false); }
         }
         return list;
     }

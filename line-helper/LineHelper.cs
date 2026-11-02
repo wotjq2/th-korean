@@ -72,7 +72,7 @@ static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     public const int GWL_EXSTYLE = -20;
-    public const uint SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
+    public const uint SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
     public const int SW_SHOWNOACTIVATE = 4;
     public static readonly IntPtr HWND_TOPMOST = (IntPtr)(-1), HWND_NOTOPMOST = (IntPtr)(-2);
@@ -968,6 +968,7 @@ static class App
             place.Start();
             ThreadPool.QueueUserWorkItem(delegate { try { engine.Call("warm", "", "", 60000); Log.Write("용어집 준비됨"); } catch (Exception e) { Log.Write("준비 실패: " + e.Message); } });
             Application.Run();
+            LiveCaption.Stop();
             Native.UnhookWindowsHookEx(hook);
             Native.RemoveClipboardFormatListener(clip.Handle);
             tray.Visible = false;

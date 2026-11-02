@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.1
+// @version      1.28.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -2323,11 +2323,12 @@
     #lzk-fab:hover { background: #1a22a0; }
     #lzk-fab[data-high] { bottom: 96px; }
     #lzk-langbar {
-      position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px; align-items: center;
+      position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px; align-items: flex-end;
     }
     #lzk-langbar[data-solo] { right: 18px; }
     #lzk-langbar[data-high] { bottom: 104px; }
-    #lzk-langbar .lzk-langs { display: none; gap: 4px; }
+    /* 언어가 많으면(2026-11-03 사용자: 많이 쓰는 언어 20개 — 22개) 한 줄에 12개까지, 넘치면 위로 줄을 더한다. */
+    #lzk-langbar .lzk-langs { display: none; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: min(404px, calc(100vw - 150px)); }
     #lzk-langbar[data-open] .lzk-langs { display: flex; }
     #lzk-langbar button {
       width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
@@ -5661,7 +5662,8 @@
   // 쇼츠 플레이어의 자막(CC) 보기(cmd 'peek')·켜기('on')·끄기('off'). 플레이어 기능은 페이지 쪽 자바스크립트에만
   // 있어서 확장의 페이지 쪽 조각(extension/src/yt-main.js)에 문서 이벤트로 부탁한다. 답: { was: 부르기 전 CC
   // 'on'/'off', id, tracks: 이 영상의 자막 목록('th:asr' 꼴, 모르면 null) }. 조각이 없으면(몽키) null.
-  function ytCaptions(cmd) {
+  // sel: 물을 플레이어(없으면 쇼츠 플레이어). 보통 영상(#movie_player)도 자막 목록은 같은 방법으로 읽는다.
+  function ytCaptions(cmd, sel) {
     return new Promise((resolve) => {
       let timer = 0;
       const done = (e) => {
@@ -5678,9 +5680,42 @@
       timer = setTimeout(done, 500);
       document.addEventListener('lzk-yt-cc-done', done);
       // 플레이어 선택자도 함께 넘긴다 — 원격 설정(youtube.shortsPlayer)을 고치면 페이지 쪽 조각도 따른다.
-      const detail = JSON.stringify({ cmd, player: RC.youtube.shortsPlayer, any: RC.youtube.shortsPlayerAny });
+      const detail = JSON.stringify({ cmd, player: sel || RC.youtube.shortsPlayer, any: sel || RC.youtube.shortsPlayerAny });
       document.dispatchEvent(new CustomEvent('lzk-yt-cc', { detail }));
     });
+  }
+
+  // 유튜브 영상의 말 언어 — 자막 목록의 자동 자막(asr) 언어가 곧 말 언어다(자동 자막 없이 한국어 자막뿐이면 한국어로 본다).
+  // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '자막 번역' 을 켜 두면 도우미가 한국어
+  // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
+  const ytSpoken = new Map();
+  const ytSpokenBusy = new Set();
+  const ytSpokenFrom = (tracks) => {
+    const asr = tracks.find((t) => t.endsWith(':asr'));
+    if (asr) return asr.split(':')[0].toLowerCase();
+    return tracks.length && tracks.every((t) => /^ko/i.test(t)) ? 'ko' : '';
+  };
+  const ytKoreanVideo = () => YOUTUBE && /^ko/.test(ytSpoken.get(ytVideoId()) || '');
+
+  // 확장의 페이지 쪽 조각에 지금 영상의 자막 목록을 묻는다(넘긴 직후면 플레이어가 바뀔 때까지 0.3초씩 3초까지).
+  async function ytLearnSpoken() {
+    const id = ytVideoId();
+    if (!YOUTUBE || !id || ytSpoken.has(id) || ytSpokenBusy.has(id)) return;
+    ytSpokenBusy.add(id);
+    try {
+      const sel = ytIsShorts() ? null : RC.youtube.player;
+      for (let i = 0; i < 10 && ytVideoId() === id; i++) {
+        const cc = await ytCaptions('peek', sel);
+        if (!cc) return; // 조각이 없다(몽키)
+        if (cc.id === id && cc.tracks) {
+          ytSpoken.set(id, ytSpokenFrom(cc.tracks));
+          return;
+        }
+        await sleep(300);
+      }
+    } finally {
+      ytSpokenBusy.delete(id);
+    }
   }
 
   // 플레이어가 이 영상의 자막을 부르게 한다: 자막(CC)을 껐다 켜거나, 꺼져 있으면 켰다가 원래대로 끈다.
@@ -5716,7 +5751,10 @@
       // 꺼 둔 계정이면 부르지 않으니(사용자 2026-11-02: 외국어가 나오면 CC 가 켜지고 한국어 자막도 저절로) 잠깐
       // 켜서 부르게 하고 받으면 원래대로 끈다 — 우리 한국어 자막만 보이게.
       const tracks = cc && cc.id === id ? cc.tracks : null;
-      if (tracks) d.tracks = tracks;
+      if (tracks) {
+        d.tracks = tracks;
+        ytSpoken.set(id, ytSpokenFrom(tracks));
+      }
       // 자막이 하나도 없는 쇼츠, 또는 저절로 켰는데 한국어 자막뿐인 쇼츠(한국어 영상) — CC 를 켜지 않고 기다리지도
       // 않는다. 자막이 없는 쇼츠는 바로 크롬 실시간 자막으로 넘어간다(전에는 10초 넘게 다시 받아 보느라 그동안
       // 자막이 없었다). 한국어 쇼츠에 CC 를 켜 두면 유튜브 한국어 자막이 떴다.
@@ -5795,7 +5833,13 @@
         const p = new URL(base).searchParams;
         const spoken = p.get('lang') || '';
         const asr = p.get('kind') === 'asr';
-        if (d.auto && /^ko/i.test(spoken)) return null; // 한국어 영상 — 저절로 켤 까닭이 없다
+        if (/^ko/i.test(spoken)) {
+          // 한국어 영상 — 우리 한국어 자막은 영상의 한국어 자막과 겹치기만 한다. 손으로 켜 둔 것이 다음 영상으로 이어져도
+          // 띄우지 않는다(사용자 2026-11-03).
+          ytSpoken.set(id, 'ko');
+          d.status = '한국어 영상이라 한국어 자막을 덧붙이지 않습니다';
+          return null;
+        }
         const tries = [];
         if (!/^ko/i.test(spoken) && has('ko', '')) tries.push(['ko', '']);
         if (asr && has(spoken, '')) tries.push([spoken, '']);
@@ -6271,9 +6315,15 @@
     }
     // 자막을 꺼 두었거나 우리 자막(자막 파일)이 나오는 영상도 5초마다 묻기는 한다 — 확장이 묻는 동안 도우미가 크롬
     // 자막 창(검은 상자)을 화면 밖으로 치워 둔다(사용자 2026-11-02: 쇼츠·페이스북에서 그 창이 댓글을 가려 불편). 답은 안 쓴다.
-    const quiet = !want || dubOwns(v);
+    if (YOUTUBE) ytLearnSpoken();
+    const korean = ytKoreanVideo();
+    const quiet = !want || dubOwns(v) || korean;
     if (quiet) {
       if (want) liveVideo = null;
+      if (korean) {
+        liveHide();
+        liveSetState('korean');
+      }
       if (Date.now() - liveQuietAt < 5000) return;
       liveQuietAt = Date.now();
     }

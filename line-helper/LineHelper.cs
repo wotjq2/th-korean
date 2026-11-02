@@ -322,6 +322,11 @@ class LangBar : FloatForm
     // 켤 때부터). 번역은 엔진(스크립트)이 같은 목록·언어별 용어집으로 한다.
     public static readonly string[][] Langs = RemoteConfig.Languages();
     const int CellW = 26, CellH = 22, Gap = 5, BothW = 34;
+    // 한 줄에 이만큼까지, 넘치면 위로 줄을 더한다(막대는 입력칸 위에 붙어 위로 자란다). 2026-11-03 사용자가 쓰는
+    // 사람이 많은 언어 20개를 넣어 22개가 됐다 — 한 줄이면 600px 가 넘었다.
+    const int MaxCols = 12;
+    static int Cols { get { return Math.Min(Langs.Length, MaxCols); } }
+    static int Rows { get { return (Langs.Length + Cols - 1) / Cols; } }
     readonly Font font = new Font("Malgun Gothic", 9f, FontStyle.Bold);
     readonly ToolTip tip = new ToolTip();
     public bool Busy;
@@ -329,14 +334,16 @@ class LangBar : FloatForm
 
     public LangBar()
     {
-        ClientSize = new Size(CellW * Langs.Length + Gap + BothW + 2, CellH + 2);
+        ClientSize = new Size(CellW * Cols + Gap + BothW + 2, Rows * (CellH + 1) + 1);
         BackColor = Color.FromArgb(200, 200, 205);
         tip.ShowAlways = true;
         tip.SetToolTip(this, "언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다.");
     }
 
-    // 마지막 칸(+한) = 바꾼 말과 한국어 원문을 같이 보내기.
-    Rectangle BothRect { get { return new Rectangle(1 + CellW * Langs.Length + Gap, 1, BothW - 1, CellH); } }
+    static Rectangle CellRect(int i) { return new Rectangle(1 + i % Cols * CellW, 1 + i / Cols * (CellH + 1), CellW - 1, CellH); }
+
+    // 마지막 칸(+한) = 바꾼 말과 한국어 원문을 같이 보내기. 줄이 여럿이면 세로로 길게.
+    Rectangle BothRect { get { return new Rectangle(1 + CellW * Cols + Gap, 1, BothW - 1, Rows * (CellH + 1) - 1); } }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -344,14 +351,14 @@ class LangBar : FloatForm
         TextFormatFlags tf = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding;
         for (int i = 0; i < Langs.Length; i++)
         {
-            Rectangle r = new Rectangle(1 + i * CellW, 1, CellW - 1, CellH);
+            Rectangle r = CellRect(i);
             bool on = Langs[i][0] == App.Lang;
             Color bg = on ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (i == hover ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
             using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, r);
             TextRenderer.DrawText(g, Langs[i][1], font, r, on ? Color.White : Color.FromArgb(70, 70, 75), tf);
         }
         using (SolidBrush gap = new SolidBrush(Color.FromArgb(120, 120, 128)))
-            g.FillRectangle(gap, 1 + CellW * Langs.Length - 1, 0, Gap + 1, Height);
+            g.FillRectangle(gap, 1 + CellW * Cols - 1, 0, Gap + 1, Height);
         Rectangle br = BothRect;
         Color bbg = App.Both ? Color.FromArgb(33, 118, 255) : (hover == Langs.Length ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
         using (SolidBrush b = new SolidBrush(bbg)) g.FillRectangle(b, br);
@@ -361,8 +368,9 @@ class LangBar : FloatForm
     int CellAt(Point p)
     {
         if (BothRect.Contains(p)) return Langs.Length;
-        int i = (p.X - 1) / CellW;
-        return p.X >= 1 && i >= 0 && i < Langs.Length ? i : -1;
+        if (p.X < 1 || p.Y < 1) return -1;
+        int col = (p.X - 1) / CellW, row = (p.Y - 1) / (CellH + 1), i = row * Cols + col;
+        return col < Cols && i < Langs.Length ? i : -1;
     }
 
     protected override void OnMouseMove(MouseEventArgs e) { int h = CellAt(e.Location); if (h != hover) { hover = h; Invalidate(); } }

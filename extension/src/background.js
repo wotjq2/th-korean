@@ -12,7 +12,23 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     return true; // 답을 나중에 보낸다
   }
   if (m && m.t === 'helper') {
+    // 사람이 창에서 끈 동안(크롬을 다시 켤 때까지)은 영상이 돌아도 저절로 다시 켜지 않는다(helper-auto).
+    if (m.manual && (m.cmd === 'stop' || m.cmd === 'start')) chrome.storage.session.set({ helperUserStopped: m.cmd === 'stop' });
     helperCall(m.cmd, m.manual).then(reply);
+    return true;
+  }
+  if (m && m.t === 'helper-auto') {
+    // 영상이 재생 중인데 도우미가 답하지 않는다(꺼졌다 — 작업 관리자로 끝내는 등) — '크롬과 함께 켜기' 면 다시 켠다.
+    // 1분에 한 번만, 사람이 창에서 끈 뒤에는 켜지 않는다.
+    if (Date.now() - helperAutoAt < 60000) {
+      reply(false);
+      return undefined;
+    }
+    helperAutoAt = Date.now();
+    chrome.storage.session
+      .get('helperUserStopped')
+      .then(({ helperUserStopped }) => (helperUserStopped ? false : helperAutoStart().then(() => true)))
+      .then(reply, () => reply(false));
     return true;
   }
   if (m && m.t === 'open-tab' && /^(https:\/\/|chrome:\/\/settings\/)/.test(String(m.url))) {
@@ -32,6 +48,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
 // ---------------------------------------------------------------------------
 
 const HELPER_HOST = 'com.th_korean.helper';
+let helperAutoAt = 0;
 
 async function helperCall(cmd, manual) {
   try {

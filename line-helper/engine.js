@@ -88,7 +88,7 @@ function installStubs(version) {
 const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
-  'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary',
+  'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang',
 ];
 
 let T = null;
@@ -131,8 +131,13 @@ async function toLang(text, lang) {
     const { thai, via } = await T.chatKoreanToThai(text);
     return { out: thai, via };
   }
-  const info = (T.TYPE_LANGS || []).find((l) => l.id === lang);
-  if (!info) throw new Error(`모르는 언어: ${lang}`);
+  // 언어 목록·언어별 용어집은 스크립트의 원격 설정(config.json languages)을 그대로 따른다. 목록에 없는 코드는
+  // 그 코드로 구글 번역만(도우미의 언어 막대가 먼저 새 목록을 받았을 때).
+  const info = (T.TYPE_LANGS || []).find((l) => l.id === lang) || { id: lang, mt: lang };
+  if (T.koreanToLang) {
+    const r = await T.koreanToLang(text, info);
+    return { out: r.thai, via: r.via };
+  }
   const hit = (lang === 'en' || lang === 'zh') && T.koEnZhLookup && T.koEnZhLookup(text, lang);
   if (hit) return { out: hit, via: '용어집' };
   return { out: await T.freeTranslateOne(text, 'ko', info.mt), via: '번역' };

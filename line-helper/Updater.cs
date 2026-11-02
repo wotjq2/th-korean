@@ -94,6 +94,16 @@ static class Updater
     static void Run(bool manual)
     {
         ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; // TLS 1.2 (GitHub)
+        // 원격 설정(config.json): 웹스토어 확장 id 가 더해졌으면 크롬에 다시 알린다. 언어 막대는 다음에 켤 때부터.
+        try
+        {
+            if (RemoteConfig.Refresh())
+            {
+                Log.Write("업데이트: 원격 설정(config.json)이 바뀌었습니다");
+                ChromeLink.Register();
+            }
+        }
+        catch (Exception e) { Log.Write("원격 설정 받기 실패: " + e.Message); }
         object[] list = (object[])json.DeserializeObject(Get("https://api.github.com/repos/" + Repo + "/contents/" + Folder + "?ref=main"));
         List<string> changed = new List<string>();
         foreach (object o in list)

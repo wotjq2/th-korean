@@ -174,6 +174,24 @@ function GM_openInTab(url) {
   }
 }
 
+// 확장에 함께 넣은 파일의 주소(사진 글자 읽기 엔진 tesseract/…). 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 해서
+// 엔진을 확장 안에 넣었다. 몽키에는 이 함수가 없다 — 스크립트는 그때 예전처럼 CDN 주소를 쓴다.
+function GM_extensionURL(path) {
+  return chrome.runtime.getURL(path);
+}
+
+// 번역 도우미가 꺼져 있을 때 켜 달라고 한다(확장 설정 '크롬과 함께 켜기' 가 켜져 있을 때만 — background.js).
+// 도우미가 꺼지면(작업 관리자로 끝내는 등) 크롬 실시간 자막도 영상 위 자막도 멈추므로, 영상이 재생 중인데
+// 도우미가 답하지 않으면 스크립트가 부른다.
+function GM_helperAutoStart() {
+  if (!gmAlive()) return;
+  try {
+    chrome.runtime.sendMessage({ t: 'helper-auto' }).catch(() => {});
+  } catch {
+    gmAlive();
+  }
+}
+
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;

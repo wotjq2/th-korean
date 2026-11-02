@@ -20,10 +20,17 @@ using Microsoft.Win32;
 static class ChromeLink
 {
     public const string HostName = "com.th_korean.helper";
-    // 이 exe 를 부를 수 있는 확장. 압축해제로 불러온 통합 번역(extension/build.js 의 DEV_KEY 로 고정한 id).
-    // 웹스토어에 올리면 스토어가 준 id 도 여기 더한다.
-    static readonly string[] Origins = { "chrome-extension://agcbmglciepeobcgkniefahkaiigjkjk/" };
+    // 이 exe 를 부를 수 있는 확장. 압축해제로 불러온 통합 번역(extension/build.js 의 DEV_KEY 로 고정한 id)과,
+    // 원격 설정(config.json 의 helper.extensionIds)에 적은 id — 웹스토어가 준 id 는 그 파일에 적는다(이 코드는 그대로).
+    const string DevId = "agcbmglciepeobcgkniefahkaiigjkjk";
     static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+
+    static string[] Origins()
+    {
+        List<string> ids = new List<string> { DevId };
+        foreach (string id in RemoteConfig.ExtensionIds()) if (!ids.Contains(id)) ids.Add(id);
+        return ids.ConvertAll(id => "chrome-extension://" + id + "/").ToArray();
+    }
 
     public static bool IsHostCall(string[] args)
     {
@@ -140,11 +147,93 @@ static class ChromeLink
             m["description"] = "번역 도우미 — 통합 번역 확장에서 켜고 끄기";
             m["path"] = exe;
             m["type"] = "stdio";
-            m["allowed_origins"] = Origins;
+            m["allowed_origins"] = Origins();
             File.WriteAllText(file, json.Serialize(m), new UTF8Encoding(false));
             foreach (string root in new string[] { @"Software\Google\Chrome\NativeMessagingHosts\", @"Software\Microsoft\Edge\NativeMessagingHosts\" })
                 using (RegistryKey k = Registry.CurrentUser.CreateSubKey(root + HostName)) k.SetValue("", file);
         }
         catch (Exception e) { Log.Write("크롬 확장 연결 등록 실패: " + e.Message); }
+    }
+}
+
+// 원격 설정(저장소의 config.json) 중 도우미가 쓰는 칸 — 크롬 웹스토어에 올린 뒤로 코드를 고치지 않고 바꾸려고.
+//   helper.extensionIds : 이 도우미를 부를 수 있는 확장 id(웹스토어가 준 id)
+//   languages           : LINE 언어 막대(태·미·중 …) — 확장의 입력 언어와 같은 목록
+// 업데이트 확인 때(켜고 1분 뒤, 6시간마다) 받아 data\config.json 에 두고, 그 사본을 읽는다. 없거나 틀리면 기본값.
+// 확장(th-korean.user.js 의 rcBuild)과 같은 규칙으로 꼴을 맞춰 본다 — 틀린 칸은 버린다.
+static class RemoteConfig
+{
+    const string Url = "https://raw.githubusercontent.com/wotjq2/th-korean/main/config.json";
+    static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+    static readonly System.Text.RegularExpressions.Regex IdRe = new System.Text.RegularExpressions.Regex("^[a-p]{32}$");
+    static readonly System.Text.RegularExpressions.Regex LangRe = new System.Text.RegularExpressions.Regex("^[a-z]{2,3}(-[A-Za-z]{2,4})?$");
+    public static readonly string[][] DefaultLangs = {
+        new[] { "th", "태", "태국어" }, new[] { "en", "미", "영어" }, new[] { "zh", "중", "중국어" },
+        new[] { "ja", "일", "일본어" }, new[] { "ru", "러", "러시아어" }, new[] { "he", "이", "히브리어" },
+        new[] { "pl", "폴", "폴란드어" },
+    };
+
+    static string FilePath { get { return Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data", "config.json"); } }
+
+    static Dictionary<string, object> Load()
+    {
+        try
+        {
+            if (File.Exists(FilePath)) return json.DeserializeObject(File.ReadAllText(FilePath, Encoding.UTF8)) as Dictionary<string, object>;
+        }
+        catch (Exception) { /* 틀린 사본 — 기본값 */ }
+        return null;
+    }
+
+    // 새로 받아 바뀌었으면 사본을 갈아 끼우고 true. 받은 글이 JSON 객체가 아니면 버린다.
+    public static bool Refresh()
+    {
+        string text;
+        using (System.Net.WebClient wc = new System.Net.WebClient())
+        {
+            wc.Encoding = Encoding.UTF8;
+            wc.Headers["User-Agent"] = "th-korean-helper";
+            text = wc.DownloadString(Url);
+        }
+        if (!(json.DeserializeObject(text) is Dictionary<string, object>)) return false;
+        string old = File.Exists(FilePath) ? File.ReadAllText(FilePath, Encoding.UTF8) : "";
+        if (old == text) return false;
+        Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+        File.WriteAllText(FilePath, text, new UTF8Encoding(false));
+        return true;
+    }
+
+    public static List<string> ExtensionIds()
+    {
+        List<string> ids = new List<string>();
+        Dictionary<string, object> c = Load();
+        Dictionary<string, object> h = c != null && c.ContainsKey("helper") ? c["helper"] as Dictionary<string, object> : null;
+        object[] list = h != null && h.ContainsKey("extensionIds") ? h["extensionIds"] as object[] : null;
+        if (list != null) foreach (object o in list) { string s = o as string; if (s != null && IdRe.IsMatch(s)) ids.Add(s); }
+        return ids;
+    }
+
+    // { id, 단추 글자, 이름 } — 태국어는 늘 둔다(메신저·LINE 받기가 기대어 있다).
+    public static string[][] Languages()
+    {
+        List<string[]> out_ = new List<string[]>();
+        Dictionary<string, object> c = Load();
+        object[] list = c != null && c.ContainsKey("languages") ? c["languages"] as object[] : null;
+        if (list != null)
+        {
+            foreach (object o in list)
+            {
+                Dictionary<string, object> l = o as Dictionary<string, object>;
+                if (l == null) continue;
+                string id = l.ContainsKey("id") ? l["id"] as string : null, label = l.ContainsKey("label") ? l["label"] as string : null,
+                    name = l.ContainsKey("name") ? l["name"] as string : null;
+                if (id == null || !LangRe.IsMatch(id) || string.IsNullOrEmpty(label) || label.Length > 3 || string.IsNullOrEmpty(name) || name.Length > 20) continue;
+                if (out_.Exists(x => x[0] == id)) continue;
+                out_.Add(new[] { id, label, name });
+            }
+        }
+        if (out_.Count == 0) return DefaultLangs;
+        if (!out_.Exists(x => x[0] == "th")) out_.Insert(0, DefaultLangs[0]);
+        return out_.ToArray();
     }
 }

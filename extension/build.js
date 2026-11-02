@@ -16,7 +16,6 @@ const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(__dirname, 'src');
-const OUT = path.join(__dirname, 'dist');
 const VENDOR = path.join(__dirname, 'vendor');
 const ICONS = path.join(__dirname, 'icons');
 
@@ -25,6 +24,21 @@ const DESCRIPTION =
   '외국어 사이트·메신저·영상을 한국어로 — 태국 쇼핑몰 검색·읽기, 페이스북 메신저, 유튜브·웹 영상 더빙(자막+목소리), 입력칸 한국어→외국어, 사진 속 글자';
 // @connect 에 없지만 스크립트가 확장 권한으로 부르는 주소(사진 글자 읽기 Vision).
 const EXTRA_HOSTS = ['vision.googleapis.com'];
+// 사진 글자 읽기(Tesseract) 엔진. 몽키판은 CDN 에서 받지만, 크롬 웹스토어는 밖에서 받은 코드를 돌리지 못하게 해서
+// (Manifest V3) 확장 안에 넣는다. 받은 파일은 sha256 을 맞춰 본다. 태국어 자료(tha.traineddata)는 코드가 아니라
+// 자료라서 예전처럼 처음 쓸 때 받는다.
+const OCR_FILES = [
+  ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js', 'aca1229639fc9907d86f96e825955a2b7c5716d17f3bc3acd71f9c7ab66181fc'],
+  ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-lstm.wasm.js', '8f04aa0cc81e7bde33f80e92fa01a7a665f0b4884d098acf5de9c7104a11dfaa'],
+  ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-simd-lstm.wasm.js', 'ce20eda9533cbed1e6c2b4276fbae1e0adc61b6754b5513084be601787b457cf'],
+];
+// node extension/build.js --store : 웹스토어에 올릴 판. 개발용 고정 id 열쇠(key)를 빼고(스토어가 거부한다)
+// extension/store/통합번역-<판>.zip 을 만든다. 스토어가 준 id 는 config.json 의 helper.extensionIds 에 적으면
+// 번역 도우미가 받아 준다(도우미 코드는 고치지 않는다).
+const STORE = process.argv.includes('--store');
+// 웹스토어판은 따로 만든다 — dist 는 이 PC 크롬이 압축해제로 불러 쓰는 곳이라, key 없이 덮으면 확장 id 가 바뀌어
+// 번역 도우미와의 연결이 끊긴다.
+const OUT = path.join(__dirname, STORE ? 'store/dist' : 'dist');
 // 압축해제로 불러와도 확장 id 가 폴더 위치와 상관없이 늘 같게(agcbmglciepeobcgkniefahkaiigjkjk).
 // 번역 도우미(line-helper/ChromeLink.cs)가 이 id 만 받아 준다. 웹스토어에 올릴 때는 이 줄을 빼고
 // 스토어가 준 id 를 ChromeLink.Origins 에 더한다.
@@ -82,6 +96,12 @@ async function main() {
   ].join('\n');
   fs.writeFileSync(path.join(OUT, 'content.js'), content);
 
+  fs.mkdirSync(path.join(OUT, 'tesseract'), { recursive: true });
+  for (const [url, sha] of OCR_FILES) {
+    const file = await vendorFile(`${url}#sha256=${sha}`);
+    fs.copyFileSync(file, path.join(OUT, 'tesseract', path.basename(file)));
+  }
+
   for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
   const icons = {};
   for (const s of [16, 32, 48, 128]) {
@@ -98,7 +118,7 @@ async function main() {
     name: NAME,
     version: h.version,
     description: DESCRIPTION,
-    key: DEV_KEY,
+    ...(STORE ? {} : { key: DEV_KEY }),
     icons,
     action: { default_title: NAME, default_popup: 'popup.html', default_icon: icons },
     background: { service_worker: 'background.js' },
@@ -121,11 +141,24 @@ async function main() {
         world: 'MAIN',
       },
     ],
+    // 사진 글자 읽기 엔진 — 페이지 안의 인식기(worker)가 이 파일들을 불러 쓴다.
+    web_accessible_resources: [{ resources: ['tesseract/*'], matches: ['http://*/*', 'https://*/*'] }],
   };
   fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
-  console.log(`통합 번역 ${h.version} → ${OUT}`);
+  console.log(`통합 번역 ${h.version} → ${OUT}${STORE ? ' (웹스토어판: 개발용 key 없음)' : ''}`);
   console.log(`  content.js ${(Buffer.byteLength(content) / 1024).toFixed(0)} KB, 접속 주소 ${hosts.length}개, 함께 넣은 파일: ${vendored.join(', ') || '없음'}`);
+  if (STORE) {
+    // 윈도우 tar(bsdtar)는 -a 로 이름이 .zip 이면 zip 으로 묶는다.
+    const dir = path.join(__dirname, 'store');
+    fs.mkdirSync(dir, { recursive: true });
+    const zip = path.join(dir, `통합번역-${h.version}.zip`);
+    fs.rmSync(zip, { force: true });
+    // Git Bash 의 tar(GNU)는 'E:' 를 원격 주소로 읽어 실패했다 — 윈도우 tar.exe 를 직접 부른다.
+    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    require('child_process').execFileSync(tar, ['-a', '-c', '-f', zip, '-C', OUT, '.']);
+    console.log(`  웹스토어에 올릴 파일: ${zip} (${(fs.statSync(zip).size / 1024 / 1024).toFixed(1)} MB)`);
+  }
 }
 
 main().catch((e) => {

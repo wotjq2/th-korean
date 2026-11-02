@@ -8,5 +8,9 @@ line-helper/node_modules/
 # 도우미가 켤 때 크롬에 알리려고 exe 옆에 쓰는 설명 파일(ChromeLink.Register)
 line-helper/com.th_korean.helper.json
 
-# 통합 번역 확장: node extension/build.js 가 만드는 폴더(크롬에 불러오는 곳)
+# 통합 번역 확장: node extension/build.js 가 만드는 폴더(크롬에 불러오는 곳)와 웹스토어에 올릴 zip(--store)
 extension/dist/
+extension/store/
+# 사진 글자 읽기 엔진(8 MB) — build.js 가 jsdelivr 에서 받아 sha256 을 맞춰 보고 여기에 둔다
+extension/vendor/worker.min.js
+extension/vendor/tesseract-core-*.js

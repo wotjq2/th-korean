@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.27.6
+// @version      1.28.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -56,6 +56,210 @@
   const FREE_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
   // gtx 가 막혔을 때 쓰는 같은 서버의 크롬 사전 확장용 주소(freeRaw).
   const FREE_ALT_ENDPOINT = 'https://translate.googleapis.com/translate_a/t';
+
+  // ---------------------------------------------------------------------------
+  // 원격 설정(config.json) — 코드를 고치지 않고(크롬 웹스토어에 다시 올리지 않고) 바꾸는 값들
+  //
+  // 사용자(2026-11-02): 웹스토어에 올린 뒤로는 언어를 더하거나 고칠 때 소스를 만지지 않게. 웹스토어는 확장이 밖에서
+  // 받은 코드를 돌리지 못하게 하므로 바꿀 수 있는 것은 '값' 뿐이다. 이 저장소(wotjq2/th-korean)의 config.json 을 받아
+  // 이 브라우저에 사본으로 두고(RC_STORE), 페이지를 열 때 그 사본을 읽는다. 사본이 RC_TTL 보다 오래되면 뒤에서 새로
+  // 받아 다음 페이지부터 쓴다. 받은 값은 글자·숫자·목록으로만 쓰고(실행하지 않는다) 칸마다 꼴과 범위를 맞춰 본다 —
+  // 틀린 칸은 버리고 아래 RC_DEFAULT 를 쓴다(쉼표 하나 틀려도 다른 칸·기능은 그대로). 칸 설명과 예: config.json.
+  // 코드 저장소에 두는 까닭: 용어집 저장소는 브라우저마다 쓰기 토큰이 있어, 새어 나가도 번역 주소·선택자는 못 바꾸게.
+  // ---------------------------------------------------------------------------
+  const RC_SOURCES = [
+    { url: 'https://raw.githubusercontent.com/wotjq2/th-korean/main/config.json' },
+    {
+      url: 'https://api.github.com/repos/wotjq2/th-korean/contents/config.json?ref=main',
+      headers: { Accept: 'application/vnd.github.raw' },
+    },
+  ];
+  const RC_STORE = 'remoteConfig'; // { text, at }
+  const RC_TTL = 60 * 60 * 1000;
+  const RC_DEFAULT = {
+    // 입력칸의 한국어를 바꿀 언어('번역' 단추를 누르면 펼쳐지는 줄). id·mt = 구글 번역 언어 코드(mt 가 다르면 mt 로
+    // 번역), label = 단추 글자 하나, glossary = th-korean-glossary 저장소의 '한국어=그 언어' 파일(있으면 먼저 본다).
+    languages: [
+      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
+      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
+      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
+      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語' },
+      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU' },
+      { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית' },
+      { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL' },
+    ],
+    // 무료 번역 주소를 써 보는 차례: gtx(translate_a/single), dict(translate_a/t)
+    translate: { order: ['gtx', 'dict'] },
+    video: {
+      liveMaxChars: 60, // 실시간 자막을 영상 위에 보일 때 끝에서 이만큼(글자)
+      liveMaxAgeMs: 6000, // 이만큼 새 말이 없으면 실시간 자막을 내린다
+      subFontTall: 26, // 세로 영상(쇼츠·릴스) 자막 글자 = 영상 폭 / 이 값
+      subFontWide: 19, // 가로 영상 자막 글자 = 영상 높이 / 이 값
+      subBottomTall: 0.22, // 세로 영상 자막을 영상 아래에서 띄우는 높이(영상 높이에 대한 비율)
+      subBottomWide: 0.12,
+    },
+    // 영상 위 '한국어 자막' 단추 자리: auto(영상 왼쪽 밖에 자리가 있으면 거기, 없으면 안쪽 왼쪽 위에서 조금 아래),
+    // outside-left, top-left, top-right, bottom-left. hosts 로 사이트마다 따로.
+    chip: { place: 'auto', hosts: {} },
+    youtube: {
+      shortsPlayer: 'ytd-reel-video-renderer[is-active] #shorts-player',
+      shortsPlayerAny: '#shorts-player',
+      player: '#movie_player',
+      ccButton: '.ytp-subtitles-button',
+      rightControls: '.ytp-right-controls',
+      adShowing: 'ad-showing',
+    },
+    ocr: { lang: 'tha' }, // 사진 글자 읽기 언어(Tesseract, 'tha+eng' 처럼 여럿)
+    shops: {}, // 검색 가로채기 사이트(라자다·쇼피 칸 고치기, 새 쇼핑몰 더하기) — SITES 참고
+  };
+
+  const rcNum = (v, d, min, max) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d);
+  const rcStr = (v, d, re) => (typeof v === 'string' && v.length <= 300 && (!re || re.test(v)) ? v : d);
+  // 선택자는 문법이 맞는지만 본다(페이지 쪽 엔진에는 document 가 없다 — 그때는 글자만 본다).
+  function rcSel(v, d) {
+    if (typeof v !== 'string' || !v.trim() || v.length > 300) return d;
+    try {
+      if (typeof document !== 'undefined' && document.createDocumentFragment) document.createDocumentFragment().querySelector(v);
+      return v;
+    } catch {
+      return d;
+    }
+  }
+  const RC_LANG = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
+
+  function rcLanguages(list) {
+    const out = [];
+    for (const l of Array.isArray(list) ? list : []) {
+      if (!l || typeof l !== 'object') continue;
+      const id = rcStr(l.id, '', RC_LANG);
+      const label = rcStr(l.label, '', /^.{1,3}$/u);
+      const name = rcStr(l.name, '', /^.{1,20}$/u);
+      if (!id || !label || !name || out.some((x) => x.id === id)) continue;
+      out.push({
+        id,
+        label,
+        name,
+        mt: rcStr(l.mt, id, RC_LANG),
+        chip: rcStr(l.chip, `→ ${id.toUpperCase()}`, /^.{1,20}$/u),
+        glossary: rcStr(l.glossary, '', /^[\w.-]{1,60}\.txt$/),
+      });
+    }
+    if (!out.length) return RC_DEFAULT.languages;
+    // 태국어는 쇼핑몰·메신저·태국어 페이지가 기대어 있어 늘 둔다.
+    if (!out.some((l) => l.id === 'th')) out.unshift(RC_DEFAULT.languages[0]);
+    return out;
+  }
+
+  // 쇼핑몰 칸: 이미 있는 사이트(lazada·shopee)는 적은 칸만 바꾸고, 새 키는 label·host·searchUrl·inputSelectors 가
+  // 다 있어야 더한다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며, 그 사이트 주소여야 한다.
+  function rcShops(o) {
+    const out = {};
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+    for (const [key, s] of Object.entries(o)) {
+      if (!/^[a-z0-9_]{2,20}$/.test(key) || !s || typeof s !== 'object') continue;
+      const host = rcStr(s.host, '', /^[a-z0-9.-]+\.[a-z]{2,}$/);
+      const shop = {};
+      if (s.label != null) shop.label = rcStr(s.label, undefined, /^.{1,30}$/u);
+      if (host) shop.host = host;
+      if (Array.isArray(s.inputSelectors)) shop.inputSelectors = s.inputSelectors.map((x) => rcSel(x, '')).filter(Boolean);
+      for (const k of ['widgetSelector', 'buttonSelector']) if (s[k] != null) shop[k] = rcSel(s[k], undefined);
+      if (s.queryParam != null) shop.queryParam = rcStr(s.queryParam, undefined, /^[\w-]{1,30}$/);
+      for (const k of ['spa', 'broadInputFallback']) if (typeof s[k] === 'boolean') shop[k] = s[k];
+      if (s.langHint != null) shop.langHint = rcStr(s.langHint, undefined, RC_LANG);
+      if (typeof s.searchUrl === 'string' && s.searchUrl.includes('{q}')) {
+        try {
+          const u = new URL(s.searchUrl.replace('{q}', 'q'));
+          const h = host || (SITES_BUILTIN_HOSTS[key] || '');
+          if (u.protocol === 'https:' && h && (u.hostname === h || u.hostname.endsWith(`.${h}`))) shop.searchUrl = s.searchUrl;
+        } catch {
+          /* 틀린 주소 — 버린다 */
+        }
+      }
+      for (const k of Object.keys(shop)) if (shop[k] === undefined) delete shop[k];
+      out[key] = shop;
+    }
+    return out;
+  }
+  const SITES_BUILTIN_HOSTS = { lazada: 'lazada.co.th', shopee: 'shopee.co.th' };
+  const RC_VIDEO_RANGE = {
+    liveMaxChars: [10, 400],
+    liveMaxAgeMs: [1000, 60000],
+    subFontTall: [5, 100],
+    subFontWide: [5, 100],
+    subBottomTall: [0, 0.9],
+    subBottomWide: [0, 0.9],
+  };
+
+  function rcBuild(text) {
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = null;
+    }
+    if (!j || typeof j !== 'object' || Array.isArray(j)) j = {};
+    const D = RC_DEFAULT;
+    const v = j.video || {};
+    const yt = j.youtube || {};
+    const chip = j.chip || {};
+    const places = ['auto', 'outside-left', 'top-left', 'top-right', 'bottom-left'];
+    const hosts = {};
+    if (chip.hosts && typeof chip.hosts === 'object') {
+      for (const [h, p] of Object.entries(chip.hosts)) if (/^[a-z0-9.-]+$/.test(h) && places.includes(p)) hosts[h] = p;
+    }
+    const order = Array.isArray(j.translate && j.translate.order)
+      ? [...new Set(j.translate.order.filter((x) => x === 'gtx' || x === 'dict'))]
+      : [];
+    return {
+      languages: rcLanguages(j.languages),
+      translate: { order: order.length ? order : D.translate.order },
+      video: Object.fromEntries(Object.entries(D.video).map(([k, d]) => [k, rcNum(v[k], d, ...RC_VIDEO_RANGE[k])])),
+      chip: { place: places.includes(chip.place) ? chip.place : D.chip.place, hosts },
+      youtube: Object.fromEntries(
+        Object.entries(D.youtube).map(([k, d]) => [k, k === 'adShowing' ? rcStr(yt[k], d, /^[\w-]{1,40}$/) : rcSel(yt[k], d)])
+      ),
+      ocr: { lang: rcStr(j.ocr && j.ocr.lang, D.ocr.lang, /^[a-z_]{3,10}(\+[a-z_]{3,10}){0,3}$/) },
+      shops: rcShops(j.shops),
+    };
+  }
+
+  let rcStore = GM_getValue(RC_STORE, null);
+  const RC = rcBuild(rcStore && rcStore.text);
+
+  // 사본이 오래됐으면 뒤에서 새로 받는다(이 페이지는 이미 읽은 값으로 돈다). 받기에 실패하면 10분 뒤 다시.
+  function rcRefresh() {
+    if (rcStore && Date.now() - rcStore.at < RC_TTL) return;
+    const old = rcStore && rcStore.text;
+    const tryAt = (i) => {
+      if (i >= RC_SOURCES.length) {
+        rcStore = { text: old || '', at: Date.now() - RC_TTL + 10 * 60 * 1000 };
+        GM_setValue(RC_STORE, rcStore);
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: RC_SOURCES[i].url,
+        headers: RC_SOURCES[i].headers || {},
+        timeout: 10000,
+        onload: (r) => {
+          let ok = false;
+          try {
+            const j = JSON.parse(r.responseText);
+            ok = r.status === 200 && j && typeof j === 'object' && !Array.isArray(j);
+          } catch {
+            ok = false;
+          }
+          if (!ok) return tryAt(i + 1);
+          rcStore = { text: r.responseText, at: Date.now() };
+          GM_setValue(RC_STORE, rcStore);
+        },
+        onerror: () => tryAt(i + 1),
+        ontimeout: () => tryAt(i + 1),
+      });
+    };
+    tryAt(0);
+  }
+  setTimeout(rcRefresh, 3000);
 
   // ---------------------------------------------------------------------------
   // 사이트별 설정
@@ -132,6 +336,17 @@
       langHint: 'th',
     },
   };
+
+  // 원격 설정(config.json 의 shops)으로 칸을 바꾸거나 새 쇼핑몰을 더한다 — 선택자가 바뀐 쇼핑몰을 웹스토어 심사 없이
+  // 고치려고(rcShops 가 꼴을 맞춰 봤다). 새 쇼핑몰은 label·host·searchUrl·inputSelectors 가 다 있어야 한다.
+  for (const [key, s] of Object.entries(RC.shops)) {
+    const base = SITES[key];
+    if (!base && !(s.label && s.host && s.searchUrl && s.inputSelectors && s.inputSelectors.length)) continue;
+    const site = { spa: true, broadInputFallback: false, widgetSelector: '', buttonSelector: '', queryParam: 'q', ...base, ...s };
+    if (s.host) site.match = new RegExp(`(^|\\.)${s.host.replace(/\./g, '\\.')}$`);
+    if (s.searchUrl) site.searchUrl = (q) => s.searchUrl.replace('{q}', encodeURIComponent(q));
+    SITES[key] = site;
+  }
 
   // @match 는 추가했는데 위 표에 항목을 빠뜨린 경우. 예전에는 라자다 설정으로 떨어져서
   // 검색이 엉뚱하게 lazada.co.th 로 날아갔다. 그보다는 검색 기능만 끄고 알리는 편이 낫다.
@@ -690,20 +905,21 @@
   let gtxBlockedUntil = 0;
   const isBlocked = (e) => e.rateLimited || /^HTTP 429/.test(e.message);
 
+  // 두 주소를 원격 설정(config.json 의 translate.order)의 차례로 써 본다. 구글이 한쪽을 막으면(2026-10-27 gtx 429)
+  // 설정만 바꿔 다른 쪽을 먼저 쓰게 한다 — 스크립트·확장을 다시 올리지 않는다.
   async function freeRaw(text, from, to, timeout) {
-    if (Date.now() >= gtxBlockedUntil) {
+    const order = RC.translate.order;
+    for (let i = 0; i < order.length; i++) {
+      const gtx = order[i] === 'gtx';
+      if (gtx && Date.now() < gtxBlockedUntil && i < order.length - 1) continue;
       try {
-        return await freeGtx(text, from, to, timeout);
+        return await (gtx ? freeGtx : freeAlt)(text, from, to, timeout);
       } catch (e) {
         if (!isBlocked(e)) throw e;
-        gtxBlockedUntil = Date.now() + 10 * 60 * 1000;
+        if (gtx) gtxBlockedUntil = Date.now() + 10 * 60 * 1000;
       }
     }
-    try {
-      return await freeAlt(text, from, to, timeout);
-    } catch (e) {
-      throw isBlocked(e) ? new RateLimited() : e;
-    }
+    throw new RateLimited();
   }
 
   async function freeGtx(text, from, to, timeout) {
@@ -2230,8 +2446,8 @@
       -webkit-box-decoration-break: clone; box-decoration-break: clone;
     }
     .lzk-dubsub[hidden], #lzk-dubchip[hidden] { display: none !important; }
-    html[data-lzk-dubsubs] #movie_player .ytp-caption-window-container,
-    html[data-lzk-dubsubs] #shorts-player .ytp-caption-window-container { display: none !important; }
+    html[data-lzk-dubsubs] ${RC.youtube.player} .ytp-caption-window-container,
+    html[data-lzk-dubsubs] ${RC.youtube.shortsPlayerAny} .ytp-caption-window-container { display: none !important; }
     #lzk-dubchip {
       position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
       background: rgba(15, 20, 110, .92); color: #fff; padding: 7px 11px; cursor: pointer;
@@ -2451,9 +2667,11 @@
   let ocrIdleTimer = null;
 
   async function makeOcrWorker() {
-    const w = await Tesseract.createWorker('tha', 1, {
-      workerPath: `${OCR_LIB}/worker.min.js`,
-      corePath: OCR_CORE,
+    // 확장(통합 번역)은 엔진을 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다. 몽키판은 CDN.
+    const local = typeof GM_extensionURL === 'function';
+    const w = await Tesseract.createWorker(RC.ocr.lang, 1, {
+      workerPath: local ? GM_extensionURL('tesseract/worker.min.js') : `${OCR_LIB}/worker.min.js`,
+      corePath: local ? GM_extensionURL('tesseract') : OCR_CORE,
     });
     // 태국어 모델은 숫자·영어도 읽는다. 영어 자료(5MB)는 받지 않는다.
     await w.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' });
@@ -4288,16 +4506,9 @@
   // 사이트 포함)의 입력칸에서 한국어 + Enter → 그 언어. 아무것도 안 고르면 전처럼 태국어 페이지만
   // 태국어로 바꾼다. 태국어는 용어집, 영어·중국어는 샘플 용어집(KO_EN_ZH_TSV)에 통째로 맞으면 그 값, 아니면 무료 번역.
   const TYPE_LANG_KEY = 'typeLang';
-  const TYPE_LANGS = [
-    { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
-    { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
-    { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
-    // 아래 넷은 용어집 없이 구글 번역만(사용자 요청 2026-10-23). '이' = 이스라엘 → 히브리어.
-    { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語' },
-    { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU' },
-    { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית' },
-    { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL' },
-  ];
+  // 언어 목록은 원격 설정(config.json 의 languages — 기본값은 RC_DEFAULT: 태·미·중·일·러·이·폴). 언어를 더하거나
+  // 이름·번역 코드·용어집 파일을 바꿀 때 이 코드는 고치지 않는다. 일·러·이·폴 은 용어집 없이 구글 번역만(2026-10-23).
+  const TYPE_LANGS = RC.languages;
   // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
   // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.
   const KO_EN_ZH_TSV = `
@@ -4591,12 +4802,55 @@
     }
   }
 
-  // 고른 언어로. 태국어는 용어집(+문장 번역), 영어·중국어는 샘플 용어집에 통째로 맞으면 그 값, 아니면 무료 번역.
+  // 언어별 용어집(config.json 의 languages[].glossary) — th-korean-glossary 저장소의 '한국어=그 언어' 파일(태국어
+  // glossary.txt 와 같은 꼴). 처음 쓸 때 받아 이 브라우저에 사본으로 두고 1시간마다 새로 받는다. 언어를 더할 때 용어집도
+  // 파일 하나와 config.json 한 줄이면 된다(코드는 그대로).
+  const LANG_GLOSSARY_TTL = 60 * 60 * 1000;
+  const langGlossaryMaps = new Map(); // 파일 → Map(squash(한국어) → 그 언어)
+
+  async function langGlossaryMap(file) {
+    const key = `langGlossary:${file}`;
+    let store = GM_getValue(key, null);
+    if (!store || Date.now() - store.at > LANG_GLOSSARY_TTL) {
+      try {
+        const text = await request({
+          method: 'GET',
+          url: `https://raw.githubusercontent.com/${GLOSSARY_REPO}/main/${file}`,
+          timeout: 8000,
+        });
+        store = { text: String(text || ''), at: Date.now() };
+        GM_setValue(key, store);
+        langGlossaryMaps.delete(file);
+      } catch {
+        if (!store) return null; // 처음인데 못 받았다 — 이번엔 구글 번역만
+      }
+    }
+    if (!langGlossaryMaps.has(file)) {
+      const m = new Map();
+      for (const [k, v] of Object.entries(parseGlossary(store.text).map)) m.set(squash(k), v);
+      langGlossaryMaps.set(file, m);
+    }
+    return langGlossaryMaps.get(file);
+  }
+
+  // 입력 전체가 용어집 키와 맞을 때만(KO_EN_ZH_TSV 와 같은 규칙: 끝 문장부호는 떼고, 물음이면 값도 물음이어야).
+  async function langGlossaryLookup(value, lang) {
+    if (!lang.glossary) return '';
+    const m = await langGlossaryMap(lang.glossary);
+    const v = m && m.get(squash(value.replace(/[\s.!?~,？！]+$/, '')));
+    if (!v || (/[?？]\s*$/.test(value) && !/[?？]\s*$/.test(v))) return '';
+    return v;
+  }
+
+  // 고른 언어로. 태국어는 용어집(+문장 번역), 다른 언어는 그 언어의 용어집(있으면) → 영어·중국어 샘플 용어집 →
+  // 무료 번역.
   async function koreanToLang(value, lang) {
     if (lang.id === 'th') {
       await ensureGlossary();
       return koreanToThai(value);
     }
+    const own = await langGlossaryLookup(value, lang).catch(() => '');
+    if (own) return { thai: own, via: '용어집' };
     const hit = (lang.id === 'en' || lang.id === 'zh') && koEnZhLookup(value, lang.id);
     if (hit) return { thai: hit, via: '용어집' };
     return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: '번역' };
@@ -5219,8 +5473,9 @@
     // 제목을 가리지 않게 조금 위에 둔다.
     // 사용자(2026-11-01): 쇼츠에서 폭/18 도 아직 크다 → 세로는 폭/26, 가로는 높이/19. 창의 '자막 크기' 로 더 조절.
     const tall = r.height > r.width;
-    const base = tall ? r.width / 26 : Math.min(r.height / 19, r.width / 30);
-    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * (tall ? 0.22 : 0.12)}px`;
+    // 나누는 값·띄우는 높이는 원격 설정(video.subFontTall·subFontWide·subBottomTall·subBottomWide).
+    const base = tall ? r.width / RC.video.subFontTall : Math.min(r.height / RC.video.subFontWide, r.width / (RC.video.subFontWide * 1.58));
+    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * (tall ? RC.video.subBottomTall : RC.video.subBottomWide)}px`;
     dubSubEl.style.fontSize = `${Math.round(Math.max(12, Math.min(40, base * (dubCfg.subScale || 1))))}px`;
   }
 
@@ -5243,7 +5498,7 @@
       return;
     }
     dubPlaceSub();
-    if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains('ad-showing')) {
+    if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) {
       if (d.cur !== -2) {
         d.cur = -2;
         dubHush();
@@ -5313,7 +5568,7 @@
     dubStatus();
     dubSyncButton();
     try {
-      const cues = YOUTUBE && video.closest('#movie_player, #shorts-player') ? await ytLoadCues(d) : dubTrackCues(d);
+      const cues = YOUTUBE && video.closest(`${RC.youtube.player}, ${RC.youtube.shortsPlayerAny}`) ? await ytLoadCues(d) : dubTrackCues(d);
       if (d !== dub) return;
       if (cues) dubSetCues(d, cues);
       else if (auto) return dubStop();
@@ -5379,8 +5634,8 @@
     new URL(location.href).searchParams.get('v') || (/^\/shorts\/([\w-]+)/.exec(location.pathname) || [])[1] || '';
   const ytPlayer = () =>
     ytIsShorts()
-      ? document.querySelector('ytd-reel-video-renderer[is-active] #shorts-player') || document.querySelector('#shorts-player')
-      : document.getElementById('movie_player');
+      ? document.querySelector(RC.youtube.shortsPlayer) || document.querySelector(RC.youtube.shortsPlayerAny)
+      : document.querySelector(RC.youtube.player);
   const ytVideo = () => ytPlayer()?.querySelector('video') || null;
 
   function ytCues(j) {
@@ -5420,7 +5675,9 @@
       };
       timer = setTimeout(done, 500);
       document.addEventListener('lzk-yt-cc-done', done);
-      document.dispatchEvent(new CustomEvent('lzk-yt-cc', { detail: cmd }));
+      // 플레이어 선택자도 함께 넘긴다 — 원격 설정(youtube.shortsPlayer)을 고치면 페이지 쪽 조각도 따른다.
+      const detail = JSON.stringify({ cmd, player: RC.youtube.shortsPlayer, any: RC.youtube.shortsPlayerAny });
+      document.dispatchEvent(new CustomEvent('lzk-yt-cc', { detail }));
     });
   }
 
@@ -5430,7 +5687,7 @@
     const got = () => ytTimedtext.get(id) || [];
     if (got().length && !fresh) return got();
     const player = ytPlayer();
-    for (let i = 0; i < 180 && player && player.classList.contains('ad-showing'); i++) {
+    for (let i = 0; i < 180 && player && player.classList.contains(RC.youtube.adShowing); i++) {
       if (d !== dub) return [];
       d.status = '광고가 끝나면 시작합니다…';
       dubStatus();
@@ -5451,7 +5708,7 @@
     // 광고가 끝나며 플레이어가 이미 자막을 불렀으면 그것으로 — 다시 켜도 새로 부르지 않아 기다리기만 했다.
     if (!ccOff) await sleep(1500);
     if (got().length && !fresh) return got();
-    const btn = player && player.querySelector('.ytp-subtitles-button');
+    const btn = player && player.querySelector(RC.youtube.ccButton);
     if (!btn || btn.style.display === 'none' || btn.getAttribute('aria-disabled') === 'true') {
       // 쇼츠 플레이어에는 CC 단추가 없다. 대신 영상을 틀 때 스스로 자막을 부르므로 조금 더 기다린다. 유튜브 CC 를
       // 꺼 둔 계정이면 부르지 않으니(사용자 2026-11-02: 외국어가 나오면 CC 가 켜지고 한국어 자막도 저절로) 잠깐
@@ -5584,7 +5841,7 @@
 
   function ytMountButton() {
     if (!/^\/watch/.test(location.pathname)) return;
-    const bar = document.querySelector('#movie_player .ytp-right-controls');
+    const bar = document.querySelector(`${RC.youtube.player} ${RC.youtube.rightControls}`);
     if (!bar || bar.querySelector('.lzk-dub-btn')) return;
     const b = markNoTranslate(document.createElement('button'));
     b.className = 'ytp-button lzk-dub-btn';
@@ -5592,7 +5849,7 @@
     b.textContent = '한';
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      dubTogglePanel(document.querySelector('#movie_player video'), b);
+      dubTogglePanel(document.querySelector(`${RC.youtube.player} video`), b);
     });
     bar.prepend(b);
     dubSyncButton();
@@ -5831,13 +6088,30 @@
     dubPanel.style.top = `${r.top - h - 10 > 8 ? r.top - h - 10 : Math.min(window.innerHeight - h - 8, r.bottom + 8)}px`;
   }
 
-  // 다른 사이트: 영상 위에 마우스를 올리면 왼쪽 위에 '한국어 자막' 단추.
+  // 다른 사이트: 영상 위에 마우스를 올리면 '한국어 자막' 단추.
+  // 자리(원격 설정 chip.place, 사이트마다 chip.hosts): auto = 영상 왼쪽 밖에 자리가 있으면 거기(릴스·쇼츠처럼 세로
+  // 영상 옆이 비어 있는 곳), 없으면 영상 안 왼쪽 위에서 48px 아래. 예전처럼 안쪽 왼쪽 위에 두니 페이스북 릴스의 소리
+  // 켜기 단추를 덮어, 소리를 켜려다 우리 창이 열렸다(2026-11-02 진짜 크롬 시험).
+  function dubChipPlace(r) {
+    const place = RC.chip.hosts[location.hostname] || RC.chip.place;
+    const w = dubChip.offsetWidth || 90;
+    const h = dubChip.offsetHeight || 26;
+    const out = r.left - w - 6;
+    if ((place === 'auto' || place === 'outside-left') && out >= 4) return [out, r.top + 8];
+    if (place === 'top-left') return [r.left + 8, r.top + 8];
+    if (place === 'top-right') return [r.right - w - 8, r.top + 8];
+    if (place === 'bottom-left') return [r.left + 8, Math.max(r.top + 8, r.bottom - h - 64)];
+    return [r.left + 8, r.top + Math.min(48, Math.max(8, r.height / 2 - h))];
+  }
+
   function dubChipAt(x, y) {
     if (dubChip && dubChip.matches(':hover')) return;
+    // 단추가 영상 밖(왼쪽)에 있으면 영상에서 단추로 마우스를 옮기는 사이에도 사라지지 않게 그쪽을 조금 넓혀 본다.
+    const pad = (el) => (dubChip && !dubChip.hidden && dubChip.lzkVideo === el ? (dubChip.offsetWidth || 90) + 16 : 0);
     const v = [...document.querySelectorAll('video')].find((el) => {
-      if (YOUTUBE && !el.closest('#shorts-player')) return false;
+      if (YOUTUBE && !el.closest(RC.youtube.shortsPlayerAny)) return false;
       const r = el.getBoundingClientRect();
-      return r.width >= 135 && r.height >= 135 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      return r.width >= 135 && r.height >= 135 && x >= r.left - pad(el) && x <= r.right && y >= r.top && y <= r.bottom;
     });
     if (!v) {
       if (dubChip) dubChip.hidden = true;
@@ -5855,11 +6129,11 @@
     dubChip.lzkVideo = v;
     const host = dubHost(v);
     if (dubChip.parentNode !== host) host.appendChild(dubChip);
-    const r = v.getBoundingClientRect();
-    dubChip.style.left = `${r.left + 8}px`;
-    dubChip.style.top = `${r.top + 8}px`;
     dubChip.hidden = false;
-    dubSyncButton();
+    dubSyncButton(); // 글자가 바뀌면 폭도 바뀐다 — 자리를 재기 전에
+    const [cx, cy] = dubChipPlace(v.getBoundingClientRect());
+    dubChip.style.left = `${Math.round(cx)}px`;
+    dubChip.style.top = `${Math.round(cy)}px`;
   }
 
   // --- 크롬 실시간 자막 → 영상 위 (자막 파일이 없는 영상: 페이스북·틱톡·자막 없는 유튜브) ---
@@ -5868,10 +6142,10 @@
   // 띄운다(사용자 2026-11-01: 크롬 자막 창 말고 영상에 합쳐서). 그 영상에 우리 자막(자막 파일·유튜브 대본)이
   // 나오고 있으면 쓰지 않는다. 도우미가 없으면 점점 드물게(최대 30초) 묻는다.
   const LIVE_URL = 'http://127.0.0.1:38291/caption';
-  const LIVE_MAX_AGE = 6000; // 이만큼 새 말이 없으면 자막을 내린다
+  const LIVE_MAX_AGE = RC.video.liveMaxAgeMs; // 이만큼 새 말이 없으면 자막을 내린다(원격 설정 video.liveMaxAgeMs)
   // 크롬 자막 창은 말을 문단으로 쌓아 가서(사용자 크롬 2026-11-02: 한 문단이 줄 3~5개) 끝의 두 줄도 길다. 유튜브 자막처럼
   // 끝에서 60자 안쪽만, 문장이나 낱말 경계에서 잘라 보인다.
-  const LIVE_MAX_CHARS = 60;
+  const LIVE_MAX_CHARS = RC.video.liveMaxChars; // 원격 설정 video.liveMaxChars
   function liveTail(t) {
     if (t.length <= LIVE_MAX_CHARS) return t;
     const s = t.slice(-LIVE_MAX_CHARS);
@@ -5897,8 +6171,13 @@
   // (1.27.5 의 '크롬이 한국어로 듣는 중' 안내는 뺐다 — 크롬 156 은 받아 적는 언어를 스스로 알아내서(사용자 2026-11-02
   // 화면: 설정은 한국어인데 '태국어(자동 감지됨)') 틀린 안내가 한국 영상 위에까지 떴다.)
   const LIVE_CC_HINT = "크롬 '실시간 자막' 이 꺼져 있어 한국어 자막을 만들 수 없습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 설정 열기";
+  // 페이스북·틱톡은 영상이 소리 꺼진 채로 돈다 — 크롬은 소리 꺼진 영상은 받아 적지 않아, 소리를 켜기 전에는 자막이
+  // 없다(2026-11-02 진짜 크롬 시험). 탭마다 한 번, 소리가 꺼져 있는 동안만 영상 위에 알린다.
+  const LIVE_MUTED_HINT = '소리를 켜면 한국어 자막이 나옵니다 (크롬은 소리 꺼진 영상은 받아 적지 않습니다)';
   let liveHinted = false;
+  let liveMutedHinted = false;
   let liveHintUntil = 0;
+  let liveHintText = '';
   // 자막을 꺼 두었거나 우리 자막이 나오는 영상에서 도우미에게 마지막으로 물은 때(크롬 자막 창 치우기용)
   let liveQuietAt = 0;
   // 지금 재생 중인 영상(과 그 주소), 그 영상이 재생되기 시작한 때 — 넘긴 뒤 앞 영상의 말을 버리는 데 쓴다
@@ -6008,8 +6287,14 @@
       if (!liveHinted && state === 'ccoff') {
         liveHinted = true;
         liveHintUntil = Date.now() + 9000;
+        liveHintText = LIVE_CC_HINT;
+      } else if (!liveMutedHinted && state === 'muted') {
+        liveMutedHinted = true;
+        liveHintUntil = Date.now() + 7000;
+        liveHintText = LIVE_MUTED_HINT;
       }
-      if (Date.now() < liveHintUntil) text = LIVE_CC_HINT;
+      if (liveHintText === LIVE_MUTED_HINT && state !== 'muted') liveHintUntil = 0; // 소리를 켰다 — 안내를 거둔다
+      if (Date.now() < liveHintUntil) text = liveHintText;
       if (!text) return liveHide();
       liveVideo = v;
       dubShowSub(text);
@@ -6017,6 +6302,8 @@
     };
     const fail = () => {
       liveFails++;
+      // 도우미가 답하지 않는다(꺼졌다) — 확장이면 '크롬과 함께 켜기' 설정에 따라 다시 켜 달라고 한다(1분에 한 번).
+      if (typeof GM_helperAutoStart === 'function') GM_helperAutoStart();
       liveNext = Date.now() + Math.min(30000, 1500 * liveFails);
       done('', 'none');
     };

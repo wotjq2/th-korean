@@ -318,11 +318,9 @@ class FloatForm : Form
 // LINE 입력칸 바로 위 오른쪽에 붙는 언어 막대. 고른 칸을 다시 누르면 끈다.
 class LangBar : FloatForm
 {
-    public static readonly string[][] Langs = {
-        new[] { "th", "태", "태국어" }, new[] { "en", "미", "영어" }, new[] { "zh", "중", "중국어" },
-        new[] { "ja", "일", "일본어" }, new[] { "ru", "러", "러시아어" }, new[] { "he", "이", "히브리어" },
-        new[] { "pl", "폴", "폴란드어" },
-    };
+    // 원격 설정(config.json 의 languages)에서 — 언어를 더하거나 바꿀 때 이 코드는 고치지 않는다(바뀐 목록은 다음에
+    // 켤 때부터). 번역은 엔진(스크립트)이 같은 목록·언어별 용어집으로 한다.
+    public static readonly string[][] Langs = RemoteConfig.Languages();
     const int CellW = 26, CellH = 22, Gap = 5, BothW = 34;
     readonly Font font = new Font("Malgun Gothic", 9f, FontStyle.Bold);
     readonly ToolTip tip = new ToolTip();
@@ -921,7 +919,8 @@ static class App
             LoadSettings();
             // 파일 이름을 바꾼 뒤에도(LineHelper.exe → 번역도우미.exe) 윈도우 켤 때 지금 파일로 뜨게 경로를 다시 적는다.
             try { if (AutoStart) AutoStart = true; } catch { }
-            Log.Write("시작 — 대상 " + target + ", 언어 " + (Lang == "" ? "끔" : Lang));
+            Log.Write("시작 — 대상 " + target + ", 언어 " + (Lang == "" ? "끔" : Lang) + ", 언어 막대 "
+                + string.Join("·", Array.ConvertAll(LangBar.Langs, l => l[1])));
             engine = new Engine(dir);
             ui = new Control();
             ui.CreateControl();

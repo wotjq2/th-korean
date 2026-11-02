@@ -1,0 +1,49 @@
+{
+  "_설명": "통합 번역(크롬 확장)·태국 사이트 한국어(몽키)·번역 도우미가 함께 읽는 원격 설정. 고쳐서 GitHub 에 올리면 브라우저는 1시간 안에(다음 페이지부터), 번역 도우미는 6시간 안에(언어 막대는 다음에 켤 때부터) 따른다. 크롬 웹스토어 심사가 필요 없다. 값만 읽고(코드로 실행하지 않는다) 칸마다 꼴을 맞춰 보아, 틀린 칸은 무시하고 프로그램에 적힌 기본값을 쓴다. 저장 전에 JSON 문법(쉼표·따옴표)만 확인할 것.",
+
+  "languages": [
+    { "id": "th", "label": "태", "name": "태국어", "mt": "th", "chip": "→ ไทย" },
+    { "id": "en", "label": "미", "name": "영어", "mt": "en", "chip": "→ EN" },
+    { "id": "zh", "label": "중", "name": "중국어", "mt": "zh-CN", "chip": "→ 中文" },
+    { "id": "ja", "label": "일", "name": "일본어", "mt": "ja", "chip": "→ 日本語" },
+    { "id": "ru", "label": "러", "name": "러시아어", "mt": "ru", "chip": "→ RU" },
+    { "id": "he", "label": "이", "name": "히브리어", "mt": "he", "chip": "→ עברית" },
+    { "id": "pl", "label": "폴", "name": "폴란드어", "mt": "pl", "chip": "→ PL" }
+  ],
+  "_languages": "입력칸의 한국어를 바꿀 언어(사이트의 '번역' 단추·LINE 언어 막대). id = 구글 번역 언어 코드(ko·th·en·vi·id·ms·km·lo·my·fr …), label = 단추 글자(1~3자), name = 이름, mt = 번역에 쓸 코드가 id 와 다를 때(중국어 zh-CN), chip = 입력칸 옆 표시. 용어집을 쓰려면 \"glossary\": \"glossary-vi.txt\" 처럼 th-korean-glossary 저장소의 파일 이름을 적는다(한 줄에 '한국어=그 언어', 태국어 glossary.txt 와 같은 꼴) — 입력 전체가 용어집 줄과 맞으면 그 값, 아니면 구글 번역. 태국어(th)는 빼도 늘 들어간다. 예: { \"id\": \"vi\", \"label\": \"베\", \"name\": \"베트남어\", \"chip\": \"→ VI\", \"glossary\": \"glossary-vi.txt\" }",
+
+  "translate": { "order": ["gtx", "dict"] },
+  "_translate": "무료 구글 번역 주소를 써 보는 차례. gtx = translate_a/single, dict = translate_a/t(크롬 사전 확장 주소). 한쪽이 막히면(2026-10-27 gtx 429) [\"dict\", \"gtx\"] 로 바꾼다.",
+
+  "video": {
+    "liveMaxChars": 60,
+    "liveMaxAgeMs": 6000,
+    "subFontTall": 26,
+    "subFontWide": 19,
+    "subBottomTall": 0.22,
+    "subBottomWide": 0.12
+  },
+  "_video": "영상 자막. liveMaxChars = 크롬 실시간 자막을 영상 위에 보일 때 끝에서 몇 글자(10~400), liveMaxAgeMs = 새 말이 없으면 내리기까지(1000~60000ms), subFontTall/subFontWide = 자막 글자 크기(세로 영상 폭 / 값, 가로 영상 높이 / 값 — 클수록 작은 글자, 5~100), subBottomTall/subBottomWide = 영상 아래에서 띄우는 높이(영상 높이에 대한 비율 0~0.9).",
+
+  "chip": { "place": "auto", "hosts": {} },
+  "_chip": "영상 위 '한국어 자막' 단추 자리. auto = 영상 왼쪽 밖에 자리가 있으면 거기, 없으면 안쪽 왼쪽 위에서 조금 아래. 그 밖에 outside-left, top-left, top-right, bottom-left. 사이트마다: \"hosts\": { \"www.tiktok.com\": \"top-right\" }",
+
+  "youtube": {
+    "shortsPlayer": "ytd-reel-video-renderer[is-active] #shorts-player",
+    "shortsPlayerAny": "#shorts-player",
+    "player": "#movie_player",
+    "ccButton": ".ytp-subtitles-button",
+    "rightControls": ".ytp-right-controls",
+    "adShowing": "ad-showing"
+  },
+  "_youtube": "유튜브 화면의 CSS 선택자. 유튜브가 화면을 바꿔 한국어 자막·'한' 단추가 안 붙으면 여기만 고친다. adShowing 은 광고 중일 때 플레이어에 붙는 클래스 이름.",
+
+  "ocr": { "lang": "tha" },
+  "_ocr": "사진 속 글자 읽기 언어(Tesseract 언어 이름 — tha, eng, chi_sim, jpn, vie … 여럿이면 'tha+eng'). 언어를 더할수록 처음 받는 자료가 커지고 느려진다.",
+
+  "shops": {},
+  "_shops": "한국어 검색어를 태국어로 바꿔 검색해 주는 쇼핑몰. 라자다(lazada)·쇼피(shopee)는 바뀐 칸만 적으면 고쳐진다. 새 쇼핑몰은 label·host·searchUrl·inputSelectors 를 다 적는다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며 그 사이트 주소여야 한다. 예: \"shops\": { \"shopee\": { \"inputSelectors\": [\"input[name=keyword]\"] }, \"bigc\": { \"label\": \"빅씨\", \"host\": \"bigc.co.th\", \"searchUrl\": \"https://www.bigc.co.th/search?q={q}\", \"inputSelectors\": [\"input[type=search]\"], \"queryParam\": \"q\" } }",
+
+  "helper": { "extensionIds": [] },
+  "_helper": "번역 도우미(윈도우 프로그램)를 켜고 끌 수 있는 크롬 확장 id. 개발용(압축해제) id agcbmglciepeobcgkniefahkaiigjkjk 는 늘 들어간다. 크롬 웹스토어에 올린 뒤 스토어가 준 id(영어 소문자 32자)를 여기에 더한다 — 예: [\"abcdefghijklmnopabcdefghijklmnop\"]."
+}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.0
+// @version      1.28.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -67,12 +67,14 @@
   // 틀린 칸은 버리고 아래 RC_DEFAULT 를 쓴다(쉼표 하나 틀려도 다른 칸·기능은 그대로). 칸 설명과 예: config.json.
   // 코드 저장소에 두는 까닭: 용어집 저장소는 브라우저마다 쓰기 토큰이 있어, 새어 나가도 번역 주소·선택자는 못 바꾸게.
   // ---------------------------------------------------------------------------
+  // API 먼저 — raw 주소는 CDN 이 몇 분 늦게 줘서(2026-11-02 아랍어·힌디어를 더한 직후 raw 는 아직 옛 목록), 그때
+  // 받은 브라우저는 옛 사본을 1시간 더 썼다. API 는 IP 당 시간 60회라 1시간에 한 번은 넉넉하다(용어집과 같은 차례).
   const RC_SOURCES = [
-    { url: 'https://raw.githubusercontent.com/wotjq2/th-korean/main/config.json' },
     {
       url: 'https://api.github.com/repos/wotjq2/th-korean/contents/config.json?ref=main',
       headers: { Accept: 'application/vnd.github.raw' },
     },
+    { url: 'https://raw.githubusercontent.com/wotjq2/th-korean/main/config.json' },
   ];
   const RC_STORE = 'remoteConfig'; // { text, at }
   const RC_TTL = 60 * 60 * 1000;

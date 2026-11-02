@@ -192,6 +192,18 @@ function GM_helperAutoStart() {
   }
 }
 
+// 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기 — 확장은 크롬 설정을 못 바꿔 background.js 가 설정 창을 작게 열고 번역
+// 도우미가 그 단추를 눌러 준다. 답: { ok, state: 'on'/'off'/'', error }. 몽키에는 이 함수가 없다(스크립트는 설정 창만 연다).
+function GM_chromeLiveTranslate(on) {
+  if (!gmAlive()) return Promise.resolve(null);
+  try {
+    return chrome.runtime.sendMessage({ t: 'cc-translate', on: !!on });
+  } catch {
+    gmAlive();
+    return Promise.resolve(null);
+  }
+}
+
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;

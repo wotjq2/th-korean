@@ -14,6 +14,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using System.Windows.Automation;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -69,6 +70,17 @@ static class ChromeLink
         object v;
         string cmd = req.TryGetValue("cmd", out v) ? Convert.ToString(v) : "";
         bool manual = req.TryGetValue("manual", out v) && v is bool && (bool)v;
+        if (cmd == "cc-translate")
+        {
+            // 크롬 '실시간 번역' 켜기·끄기 — 확장이 크롬 설정(접근성)을 작은 창으로 열어 두면 그 단추를 눌러 준다
+            // (확장은 크롬 설정을 바꿀 수 없다). 답의 state = 누른 뒤 상태(on/off), 단추를 못 찾으면 ''.
+            bool on = req.TryGetValue("on", out v) && v is bool && (bool)v;
+            string state = LiveTranslateSwitch.Set(on, 10000);
+            Dictionary<string, object> r = Reply(state == (on ? "on" : "off"), IsRunning(mutexName));
+            r["state"] = state;
+            if (state == "") r["error"] = "크롬 설정에서 '실시간 번역' 단추를 찾지 못했습니다";
+            return r;
+        }
         bool running = IsRunning(mutexName);
         if (cmd == "start" && !running)
         {
@@ -203,6 +215,22 @@ static class RemoteConfig
         return true;
     }
 
+    // helper.liveTranslate.toggle / page — 크롬 설정의 '실시간 번역' 단추 이름, 설정 창 제목의 앞부분(크롬 한국어·영어판).
+    // 크롬이 이름을 바꾸면 config.json 만 고친다.
+    public static string[] LiveTranslateNames() { return Strings("toggle", new[] { "실시간 번역", "자막 번역", "Live translate", "Live Translate" }); }
+    public static string[] SettingsPageNames() { return Strings("page", new[] { "설정", "Settings" }); }
+
+    static string[] Strings(string key, string[] fallback)
+    {
+        Dictionary<string, object> c = Load();
+        Dictionary<string, object> h = c != null && c.ContainsKey("helper") ? c["helper"] as Dictionary<string, object> : null;
+        Dictionary<string, object> lt = h != null && h.ContainsKey("liveTranslate") ? h["liveTranslate"] as Dictionary<string, object> : null;
+        object[] list = lt != null && lt.ContainsKey(key) ? lt[key] as object[] : null;
+        List<string> out_ = new List<string>();
+        if (list != null) foreach (object o in list) { string s = o as string; if (!string.IsNullOrEmpty(s) && s.Length <= 40) out_.Add(s); }
+        return out_.Count > 0 ? out_.ToArray() : fallback;
+    }
+
     public static List<string> ExtensionIds()
     {
         List<string> ids = new List<string>();
@@ -235,5 +263,41 @@ static class RemoteConfig
         if (out_.Count == 0) return DefaultLangs;
         if (!out_.Exists(x => x[0] == "th")) out_.Insert(0, DefaultLangs[0]);
         return out_.ToArray();
+    }
+}
+
+// 크롬 설정 › 접근성의 '실시간 번역' 단추를 UI Automation 으로 찾아 켜거나 끈다(통합 번역 창의 '크롬 실시간 번역' 칸 —
+// 사용자 2026-11-03: 한국어 영상만 볼 때 끄고, 외국어 영상에서 켜고 싶다). 확장이 설정 창을 작게 열어 두고 부른다.
+// 설정 창이 뜰 때까지 timeoutMs 동안 다시 본다. 돌려주는 것: 누른 뒤 상태 "on"/"off", 못 찾으면 "".
+static class LiveTranslateSwitch
+{
+    public static string Set(bool on, int timeoutMs)
+    {
+        string[] names = RemoteConfig.LiveTranslateNames();
+        string[] pages = RemoteConfig.SettingsPageNames();
+        Condition chrome = new PropertyCondition(AutomationElement.ClassNameProperty, "Chrome_WidgetWin_1");
+        DateTime end = DateTime.Now.AddMilliseconds(timeoutMs);
+        while (DateTime.Now < end)
+        {
+            foreach (AutomationElement w in AutomationElement.RootElement.FindAll(TreeScope.Children, chrome))
+            {
+                string title = w.Current.Name ?? "";
+                if (!Array.Exists(pages, p => title.StartsWith(p))) continue; // 설정 창만(다른 창의 큰 페이지는 뒤지지 않는다)
+                foreach (string n in names)
+                {
+                    AutomationElement b = w.FindFirst(TreeScope.Descendants, new AndCondition(
+                        new PropertyCondition(AutomationElement.NameProperty, n),
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)));
+                    object pat;
+                    if (b == null || !b.TryGetCurrentPattern(TogglePattern.Pattern, out pat)) continue;
+                    TogglePattern t = (TogglePattern)pat;
+                    if ((t.Current.ToggleState == ToggleState.On) != on) t.Toggle();
+                    for (int i = 0; i < 10 && (t.Current.ToggleState == ToggleState.On) != on; i++) Thread.Sleep(100);
+                    return t.Current.ToggleState == ToggleState.On ? "on" : "off";
+                }
+            }
+            Thread.Sleep(300);
+        }
+        return "";
     }
 }

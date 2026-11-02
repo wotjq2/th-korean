@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.2
+// @version      1.28.3
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5686,7 +5686,7 @@
   }
 
   // 유튜브 영상의 말 언어 — 자막 목록의 자동 자막(asr) 언어가 곧 말 언어다(자동 자막 없이 한국어 자막뿐이면 한국어로 본다).
-  // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '자막 번역' 을 켜 두면 도우미가 한국어
+  // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '실시간 번역' 을 켜 두면 도우미가 한국어
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
   const ytSpokenBusy = new Set();
@@ -5970,7 +5970,7 @@
     toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!on);
     const cc = dubPanel.querySelector('.lzk-dub-cc');
-    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet' || (liveState === 'ok' && liveCc.tr)));
+    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet'));
     if (!on)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
@@ -5996,7 +5996,7 @@
       r.value = Math.round(dubCfg[r.dataset.k] * 100);
       r.previousSibling.textContent = `${r.dataset.label} ${r.value}%`;
     }
-    for (const c of dubPanel.querySelectorAll('input[type=checkbox]')) c.checked = !!dubCfg[c.dataset.k];
+    for (const c of dubPanel.querySelectorAll('input[type=checkbox]')) c.checked = c.dataset.k === 'chromeTr' ? !!liveCc.tr : !!dubCfg[c.dataset.k];
     dubPanel.querySelector('.lzk-dub-voicebox').hidden = !dubCfg.voiceOn;
   }
 
@@ -6108,6 +6108,8 @@
         if (!on) dubShowSub('');
       }),
       range('자막 크기', 'subScale', dubPlaceSub, 50, 150),
+      // 크롬 설정의 '실시간 번역'(사용자 2026-11-03: 이 창에서 껐다 켜게). 상태는 도우미가 읽은 크롬 설정(liveCc.tr).
+      check("크롬 '실시간 번역' (끄면 한국어 영상엔 자막을 안 띄우고, 외국어는 단어집으로 옮김)", 'chromeTr', chromeLiveTranslate),
       // 다른 사이트는 '한국어 자막 켜기' 자체가 자동(켜 두면 영상마다)이라 따로 두지 않는다.
       ...(YOUTUBE ? [check('외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)', 'autoSubs')] : [])
     );
@@ -6210,7 +6212,32 @@
   // ok: 띄우는 중, pause: 이 영상에서 자막을 띄우다 말이 멈춤, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐,
   // korean: 한국어 말이라 비워 둠, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, off: 도우미에서 꺼 둠, none: 도우미 없음
   let liveState = '';
-  let liveCc = {}; // 도우미가 읽은 크롬 설정: lang(받아 적는 언어), tr(크롬 자막 번역)
+  let liveCc = {}; // 도우미가 읽은 크롬 설정: lang(받아 적는 언어), tr(크롬 실시간 번역)
+  let liveCcHoldUntil = 0;
+
+  // 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기. 확장은 크롬 설정을 바꿀 수 없어 설정 창을 작게 열고 번역 도우미가 그
+  // 단추를 눌러 준다(background.js ccTranslate). 도우미가 없거나 몽키면 설정을 열어 직접 누르게 한다.
+  async function chromeLiveTranslate(on) {
+    const cb = dubPanel && dubPanel.querySelector('input[data-k="chromeTr"]');
+    if (cb) cb.disabled = true;
+    let r = null;
+    try {
+      if (typeof GM_chromeLiveTranslate === 'function') r = await GM_chromeLiveTranslate(on);
+    } catch {
+      r = null;
+    }
+    if (cb) cb.disabled = false;
+    if (r && r.ok) {
+      liveCc = { ...liveCc, tr: r.state === 'on' };
+      liveCcHoldUntil = Date.now() + 30000;
+      toast(on ? "크롬 '실시간 번역' 을 켰습니다 — 크롬이 번역합니다(한국어 영상에도 자막)" : "크롬 '실시간 번역' 을 껐습니다 — 외국어는 단어집으로 옮기고 한국어 영상은 비워 둡니다", 5000);
+    } else {
+      GM_openInTab(LIVE_SETTINGS);
+      toast(`크롬 설정을 열었습니다 — '실시간 번역' 을 ${on ? '켜' : '꺼'} 주세요${r && r.error ? ` (${r.error})` : ''}`, 7000);
+    }
+    dubSyncPanel();
+    dubStatus();
+  }
   let liveHad = false; // 지금 영상에서 자막을 띄운 적이 있다(말이 멈춘 사이를 '받아 적힌 말 없음' 으로 알리지 않게)
   const LIVE_SETTINGS = 'chrome://settings/accessibility';
   // 크롬 실시간 자막이 꺼져 있으면 탭마다 한 번, 재생 중인 영상 아래에 잠깐 알린다(창을 열지 않아도 보이게).
@@ -6263,10 +6290,10 @@
 
   function liveNote() {
     const why = {
-      // 크롬 '자막 번역' 을 켜 두면 한국 영상도 한국어로 와서 가려낼 수 없다 — 끄면 도우미가 한국어 말은 비워 둔다.
+      // 크롬 '실시간 번역' 을 켜 두면 한국 영상도 한국어로 와서 가려낼 수 없다 — 끄면 도우미가 한국어 말은 비워 둔다.
       ok: `크롬 실시간 자막을 한국어로 띄우는 중 (${
         liveCc.tr
-          ? "크롬이 번역 중이라 한국 영상에도 자막이 나옵니다 — 아래 단추로 크롬 설정을 열어 '자막 번역' 을 끄면 단어집으로 옮기고 한국 영상은 비워 둡니다"
+          ? "크롬이 번역 중이라 한국어 영상에도 자막이 나옵니다 — 아래 '크롬 실시간 번역' 을 끄면 단어집으로 옮기고 한국어 영상은 비워 둡니다"
           : '단어집 먼저 · 한국 영상은 비워 둠'
       })`,
       korean: '한국어로 말하는 영상이라 자막을 띄우지 않습니다',
@@ -6373,9 +6400,11 @@
         }
         const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < Date.now() - liveSince; // 이 영상을 틀고 나서 바뀐 말
         const text = fresh ? liveTail(String(j.text || '').split('\n').slice(-2).join(' ')) : '';
+        if (j && Date.now() < liveCcHoldUntil) j.ccTr = liveCc.tr; // 방금 창에서 바꿨다 — 크롬이 설정 파일을 쓰기까지
         if (j && (j.ccLang || '') + !!j.ccTr !== (liveCc.lang || '') + !!liveCc.tr) {
           liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
           dubStatus();
+          dubSyncPanel();
         }
         done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.ko ? 'korean' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
       },

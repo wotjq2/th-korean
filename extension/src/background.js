@@ -31,6 +31,10 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       .then(reply, () => reply(false));
     return true;
   }
+  if (m && m.t === 'cc-translate') {
+    ccTranslate(!!m.on, sender).then(reply);
+    return true;
+  }
   if (m && m.t === 'open-tab' && /^(https:\/\/|chrome:\/\/settings\/)/.test(String(m.url))) {
     chrome.tabs.create({ url: m.url, index: sender.tab ? sender.tab.index + 1 : undefined }).then(
       () => reply(true),
@@ -56,6 +60,32 @@ async function helperCall(cmd, manual) {
   } catch (e) {
     // 'Specified native messaging host not found.' = 도우미가 없거나 아직 한 번도 켜지지 않았다
     return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+// 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기(사용자 2026-11-03: 창에서 껐다 켜게). 확장은 크롬 설정을 바꿀 수 없어
+// 설정을 보던 탭 옆에 잠깐 열고 번역 도우미가 그 단추를 눌러 준다(UI Automation — ChromeLink.cs LiveTranslateSwitch).
+// 탭은 끝나면 닫고 보던 탭으로 돌아간다. 작은 팝업 창(windows.create type popup)으로 열었더니 크롬이 그 창의 페이지를
+// UI Automation 에 내놓지 않아 도우미가 단추를 못 찾았다(2026-11-03 시험). 도우미가 없으면 ok:false(스크립트가 설정을
+// 열어 직접 누르게 한다).
+async function ccTranslate(on, sender) {
+  let tab = null;
+  const from = sender && sender.tab;
+  const t0 = Date.now();
+  try {
+    tab = await chrome.tabs.create({
+      url: 'chrome://settings/accessibility',
+      active: true,
+      ...(from ? { index: from.index + 1, openerTabId: from.id, windowId: from.windowId } : {}),
+    });
+    const opened = Date.now() - t0;
+    const r = await chrome.runtime.sendNativeMessage(HELPER_HOST, { cmd: 'cc-translate', on });
+    return { ...r, ms: { opened, total: Date.now() - t0 } };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    if (tab) chrome.tabs.remove(tab.id).catch(() => {});
+    if (from) chrome.tabs.update(from.id, { active: true }).catch(() => {});
   }
 }
 

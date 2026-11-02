@@ -59,6 +59,9 @@
   "shops": {},
   "_shops": "한국어 검색어를 태국어로 바꿔 검색해 주는 쇼핑몰. 라자다(lazada)·쇼피(shopee)는 바뀐 칸만 적으면 고쳐진다. 새 쇼핑몰은 label·host·searchUrl·inputSelectors 를 다 적는다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며 그 사이트 주소여야 한다. 예: \"shops\": { \"shopee\": { \"inputSelectors\": [\"input[name=keyword]\"] }, \"bigc\": { \"label\": \"빅씨\", \"host\": \"bigc.co.th\", \"searchUrl\": \"https://www.bigc.co.th/search?q={q}\", \"inputSelectors\": [\"input[type=search]\"], \"queryParam\": \"q\" } }",
 
-  "helper": { "extensionIds": [] },
-  "_helper": "번역 도우미(윈도우 프로그램)를 켜고 끌 수 있는 크롬 확장 id. 개발용(압축해제) id agcbmglciepeobcgkniefahkaiigjkjk 는 늘 들어간다. 크롬 웹스토어에 올린 뒤 스토어가 준 id(영어 소문자 32자)를 여기에 더한다 — 예: [\"abcdefghijklmnopabcdefghijklmnop\"]."
+  "helper": {
+    "extensionIds": [],
+    "liveTranslate": { "toggle": ["실시간 번역", "자막 번역", "Live translate", "Live Translate"], "page": ["설정", "Settings"] }
+  },
+  "_helper": "liveTranslate = 통합 번역 창의 '크롬 실시간 번역' 칸이 누르는 크롬 설정 단추 이름(toggle)과 설정 창 제목 앞부분(page) — 크롬이 이름을 바꾸면 여기만. extensionIds = 번역 도우미(윈도우 프로그램)를 켜고 끌 수 있는 크롬 확장 id. 개발용(압축해제) id agcbmglciepeobcgkniefahkaiigjkjk 는 늘 들어간다. 크롬 웹스토어에 올린 뒤 스토어가 준 id(영어 소문자 32자)를 여기에 더한다 — 예: [\"abcdefghijklmnopabcdefghijklmnop\"]."
 }

@@ -32,7 +32,11 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     return true;
   }
   if (m && m.t === 'cc-translate') {
-    ccTranslate(!!m.on, sender).then(reply);
+    ccSettings({ cmd: 'cc-translate', on: !!m.on }, sender).then(reply);
+    return true;
+  }
+  if (m && m.t === 'cc-reset') {
+    ccSettings({ cmd: 'cc-reset' }, sender).then(reply);
     return true;
   }
   if (m && m.t === 'open-tab' && /^(https:\/\/|chrome:\/\/settings\/)/.test(String(m.url))) {
@@ -63,12 +67,13 @@ async function helperCall(cmd, manual) {
   }
 }
 
-// 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기(사용자 2026-11-03: 창에서 껐다 켜게). 확장은 크롬 설정을 바꿀 수 없어
-// 설정을 보던 탭 옆에 잠깐 열고 번역 도우미가 그 단추를 눌러 준다(UI Automation — ChromeLink.cs LiveTranslateSwitch).
+// 크롬 설정 › 접근성의 단추 누르기 — cc-translate: '실시간 번역' 켜기·끄기(사용자 2026-11-03: 창에서 껐다 켜게),
+// cc-reset: '실시간 자막' 껐다 켜기(자막 창이 닫혀 멈춘 크롬 되살리기). 확장은 크롬 설정을 바꿀 수 없어
+// 설정을 보던 탭 옆에 잠깐 열고 번역 도우미가 그 단추를 눌러 준다(UI Automation — ChromeLink.cs ChromeCaptionSwitch).
 // 탭은 끝나면 닫고 보던 탭으로 돌아간다. 작은 팝업 창(windows.create type popup)으로 열었더니 크롬이 그 창의 페이지를
 // UI Automation 에 내놓지 않아 도우미가 단추를 못 찾았다(2026-11-03 시험). 도우미가 없으면 ok:false(스크립트가 설정을
 // 열어 직접 누르게 한다).
-async function ccTranslate(on, sender) {
+async function ccSettings(msg, sender) {
   let tab = null;
   const from = sender && sender.tab;
   const t0 = Date.now();
@@ -79,7 +84,7 @@ async function ccTranslate(on, sender) {
       ...(from ? { index: from.index + 1, openerTabId: from.id, windowId: from.windowId } : {}),
     });
     const opened = Date.now() - t0;
-    const r = await chrome.runtime.sendNativeMessage(HELPER_HOST, { cmd: 'cc-translate', on });
+    const r = await chrome.runtime.sendNativeMessage(HELPER_HOST, msg);
     return { ...r, ms: { opened, total: Date.now() - t0 } };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };

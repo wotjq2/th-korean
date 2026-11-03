@@ -9,8 +9,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Automation;
@@ -99,6 +102,7 @@ static class LiveCaption
                     d["ccLang"] = ccLang;
                     d["ccTr"] = ccTr;
                     d["ko"] = latest.Length == 0 && (DateTime.Now - koreanAt).TotalSeconds < 6;
+                    d["dead"] = dead;
                     lastPolled = DateTime.Now;
                     byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
@@ -227,7 +231,9 @@ static class LiveCaption
         if (stopping) return 1000;
         if (!On) { Untuck(); Publish(""); Hide(); return 1000; }
         if (label == null) label = Find();
-        if (label == null) { Publish(""); Hide(); return 1500; }
+        if (label == null) { Publish(""); Hide(); CheckDead(); return 1500; }
+        dead = false;
+        missingSince = DateTime.MinValue;
         bool tuck = WantTuck();
         if (tuck) Tuck(); else Untuck();
         System.Windows.Rect b = label.Current.BoundingRectangle;
@@ -319,6 +325,89 @@ static class LiveCaption
         }
         return null;
     }
+
+    // ---- 크롬 자막 창이 닫혀 실시간 자막이 멈춤 ----
+    // 2026-11-03 사용자 크롬: 아침에 되던 실시간 자막이 어느새 어떤 영상에서도 안 나왔다. 크롬은 '실시간 자막' 이 켜져
+    // 있으면 시작할 때 자막 창(숨은 창, 주인 창 없음)을 한 번 만들어 두는데, 그 창이 없어져 있었고 소리가 나도 받아 적지
+    // 않았다. 시험 크롬(2026-11-04): 그 창을 닫으면 다시 생기지 않고, 설정의 '실시간 자막' 을 껐다 켜면 새로 생긴다.
+    // 확장이 묻는 동안 5초마다 숨은 창까지 뒤져, 자막 글자 칸이 든 크롬 창이 하나도 없으면(크롬이 켜진 지 30초, 없어진 지
+    // 15초가 지나면) 확장에 dead 로 알린다 — 확장이 '크롬 실시간 자막 고치기'(ChromeLink cc-reset)를 내민다.
+    static volatile bool dead;
+    static DateTime missingSince = DateTime.MinValue;
+    static DateTime deadChecked = DateTime.MinValue;
+
+    static void CheckDead()
+    {
+        if ((DateTime.Now - deadChecked).TotalSeconds < 5 || (DateTime.Now - lastPolled).TotalSeconds > 60) return;
+        deadChecked = DateTime.Now;
+        List<int> pids = ChromePids();
+        if (ccState != "on" || pids == null || !SodaReady() || CaptionWindowExists(pids))
+        {
+            if (dead) Log.Write("실시간 자막: 크롬 자막 창이 다시 생겼습니다");
+            dead = false;
+            missingSince = DateTime.MinValue;
+            return;
+        }
+        if (missingSince == DateTime.MinValue) missingSince = DateTime.Now;
+        if (dead || (DateTime.Now - missingSince).TotalSeconds < 15) return;
+        dead = true;
+        Log.Write("실시간 자막: 크롬 자막 창이 없습니다 — 크롬이 받아 적지 않습니다(설정의 '실시간 자막' 을 껐다 켜면 되살아남)");
+    }
+
+    // 켜져 있는 크롬 프로세스들. 크롬이 켜진 지 30초가 안 됐으면(자막 창을 만들 틈) 또는 크롬이 없으면 null.
+    static List<int> ChromePids()
+    {
+        List<int> ids = new List<int>();
+        DateTime first = DateTime.MaxValue;
+        foreach (Process p in Process.GetProcessesByName("chrome"))
+        {
+            try { if (p.StartTime < first) first = p.StartTime; } catch (Exception) { }
+            ids.Add(p.Id);
+            p.Dispose();
+        }
+        return ids.Count == 0 || (DateTime.Now - first).TotalSeconds < 30 ? null : ids;
+    }
+
+    // 크롬은 받아 적는 언어 꾸러미를 다 받기 전에는 자막 창을 만들지 않는다 — 막 켠 사람에게 '멈춤' 이라 하지 않게.
+    static bool SodaReady()
+    {
+        string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google\\Chrome\\User Data");
+        string soda = Path.Combine(root, "SODA");
+        return Directory.Exists(soda) && Directory.GetDirectories(soda).Length > 0
+            && Directory.Exists(Path.Combine(root, "SODALanguagePacks", ccLang.Length > 0 ? ccLang : "en-US"));
+    }
+
+    // 크롬의 주인 없는 창(숨은 것까지) 가운데 자막 글자 칸이 든 것이 있는가. 숨은 자막 창도 UI Automation 으로 글자 칸이
+    // 보인다(2026-11-04 사용자 크롬, 70ms). 이름이 있는 창만 본다(크롬의 이름 없는 숨은 창은 많다).
+    static bool CaptionWindowExists(List<int> pids)
+    {
+        List<IntPtr> wins = new List<IntPtr>();
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            uint pid;
+            Native.GetWindowThreadProcessId(h, out pid);
+            if (!pids.Contains((int)pid) || Native.GetWindow(h, 4) != IntPtr.Zero || GetWindowTextLength(h) == 0) return true; // 4 = GW_OWNER
+            StringBuilder c = new StringBuilder(32);
+            GetClassName(h, c, c.Capacity);
+            if (c.ToString() == "Chrome_WidgetWin_1") wins.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        PropertyCondition cap = new PropertyCondition(AutomationElement.ClassNameProperty, "CaptionBubbleLabel");
+        foreach (IntPtr h in wins)
+        {
+            // 보이는 큰 창(브라우저)은 건너뛴다 — 보이는 자막 창은 Find 가 이미 찾는다.
+            Native.RECT r;
+            if (Native.IsWindowVisible(h) && Native.GetWindowRect(h, out r) && (r.Right - r.Left > 1400 || r.Bottom - r.Top > 900)) continue;
+            try { if (AutomationElement.FromHandle(h).FindFirst(TreeScope.Descendants, cap) != null) return true; }
+            catch (Exception) { }
+        }
+        return false;
+    }
+
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc fn, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
 
     // 보이는 줄마다 한 칸. glued[i] = 앞 줄 끝에 빈칸이 없다(크롬이 낱말 가운데서 줄을 바꿨다 — 낱말 사이에서
     // 바꾼 줄은 끝에 빈칸이 남는다).

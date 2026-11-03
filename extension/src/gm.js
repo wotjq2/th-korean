@@ -204,6 +204,18 @@ function GM_chromeLiveTranslate(on) {
   }
 }
 
+// 크롬 '실시간 자막' 껐다 켜기 — 크롬 자막 창이 닫혀 받아 적기가 멈췄을 때(도우미가 dead 로 알림). 답은 위와 같다
+// (state 'on' = 다시 켰다). 몽키에는 이 함수가 없다.
+function GM_chromeLiveReset() {
+  if (!gmAlive()) return Promise.resolve(null);
+  try {
+    return chrome.runtime.sendMessage({ t: 'cc-reset' });
+  } catch {
+    gmAlive();
+    return Promise.resolve(null);
+  }
+}
+
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;

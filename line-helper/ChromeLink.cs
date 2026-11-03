@@ -75,10 +75,19 @@ static class ChromeLink
             // 크롬 '실시간 번역' 켜기·끄기 — 확장이 크롬 설정(접근성)을 작은 창으로 열어 두면 그 단추를 눌러 준다
             // (확장은 크롬 설정을 바꿀 수 없다). 답의 state = 누른 뒤 상태(on/off), 단추를 못 찾으면 ''.
             bool on = req.TryGetValue("on", out v) && v is bool && (bool)v;
-            string state = LiveTranslateSwitch.Set(on, 10000);
+            string state = ChromeCaptionSwitch.SetTranslate(on, 10000);
             Dictionary<string, object> r = Reply(state == (on ? "on" : "off"), IsRunning(mutexName));
             r["state"] = state;
             if (state == "") r["error"] = "크롬 설정에서 '실시간 번역' 단추를 찾지 못했습니다";
+            return r;
+        }
+        if (cmd == "cc-reset")
+        {
+            // 크롬 '실시간 자막' 껐다 켜기 — 자막 창이 닫혀 멈춘 크롬을 되살린다(LiveCaption.CheckDead). 같은 설정 창에서.
+            string state = ChromeCaptionSwitch.ResetCaption(10000);
+            Dictionary<string, object> r = Reply(state == "on", IsRunning(mutexName));
+            r["state"] = state;
+            if (state == "") r["error"] = "크롬 설정에서 '실시간 자막' 단추를 찾지 못했습니다";
             return r;
         }
         bool running = IsRunning(mutexName);
@@ -218,6 +227,7 @@ static class RemoteConfig
     // helper.liveTranslate.toggle / page — 크롬 설정의 '실시간 번역' 단추 이름, 설정 창 제목의 앞부분(크롬 한국어·영어판).
     // 크롬이 이름을 바꾸면 config.json 만 고친다.
     public static string[] LiveTranslateNames() { return Strings("toggle", new[] { "실시간 번역", "자막 번역", "Live translate", "Live Translate" }); }
+    public static string[] LiveCaptionNames() { return Strings("captionToggle", new[] { "실시간 자막", "Live Caption", "Live caption" }); }
     public static string[] SettingsPageNames() { return Strings("page", new[] { "설정", "Settings" }); }
 
     static string[] Strings(string key, string[] fallback)
@@ -266,14 +276,37 @@ static class RemoteConfig
     }
 }
 
-// 크롬 설정 › 접근성의 '실시간 번역' 단추를 UI Automation 으로 찾아 켜거나 끈다(통합 번역 창의 '크롬 실시간 번역' 칸 —
-// 사용자 2026-11-03: 한국어 영상만 볼 때 끄고, 외국어 영상에서 켜고 싶다). 확장이 설정 창을 작게 열어 두고 부른다.
+// 크롬 설정 › 접근성의 켜기·끄기 단추를 UI Automation 으로 찾아 누른다. 확장이 설정을 탭으로 열어 두고 부른다.
 // 설정 창이 뜰 때까지 timeoutMs 동안 다시 본다. 돌려주는 것: 누른 뒤 상태 "on"/"off", 못 찾으면 "".
-static class LiveTranslateSwitch
+static class ChromeCaptionSwitch
 {
-    public static string Set(bool on, int timeoutMs)
+    // '실시간 번역'(통합 번역 창의 '크롬 실시간 번역' 칸 — 사용자 2026-11-03: 한국어 영상만 볼 때 끄고, 외국어 영상에서 켜고 싶다).
+    public static string SetTranslate(bool on, int timeoutMs)
     {
-        string[] names = RemoteConfig.LiveTranslateNames();
+        TogglePattern t = Find(RemoteConfig.LiveTranslateNames(), timeoutMs);
+        return t == null ? "" : Flip(t, on);
+    }
+
+    // '실시간 자막' 을 껐다 켠다(통합 번역 창의 '크롬 실시간 자막 고치기'). 크롬은 끌 때 자막 창을 치우고 켤 때 새로 만든다
+    // (2026-11-04 시험 크롬) — 닫혀 버린 자막 창이 되살아난다. 돌려주는 것: 다시 켠 뒤 상태, 못 찾으면 "".
+    public static string ResetCaption(int timeoutMs)
+    {
+        TogglePattern t = Find(RemoteConfig.LiveCaptionNames(), timeoutMs);
+        if (t == null) return "";
+        Flip(t, false);
+        Thread.Sleep(700); // 크롬이 자막 기능을 내릴 틈
+        return Flip(t, true);
+    }
+
+    static string Flip(TogglePattern t, bool on)
+    {
+        if ((t.Current.ToggleState == ToggleState.On) != on) t.Toggle();
+        for (int i = 0; i < 10 && (t.Current.ToggleState == ToggleState.On) != on; i++) Thread.Sleep(100);
+        return t.Current.ToggleState == ToggleState.On ? "on" : "off";
+    }
+
+    static TogglePattern Find(string[] names, int timeoutMs)
+    {
         string[] pages = RemoteConfig.SettingsPageNames();
         Condition chrome = new PropertyCondition(AutomationElement.ClassNameProperty, "Chrome_WidgetWin_1");
         DateTime end = DateTime.Now.AddMilliseconds(timeoutMs);
@@ -285,19 +318,18 @@ static class LiveTranslateSwitch
                 if (!Array.Exists(pages, p => title.StartsWith(p))) continue; // 설정 창만(다른 창의 큰 페이지는 뒤지지 않는다)
                 foreach (string n in names)
                 {
-                    AutomationElement b = w.FindFirst(TreeScope.Descendants, new AndCondition(
+                    // 같은 이름의 단추가 여럿이면 켜기·끄기가 되는 것을 쓴다.
+                    foreach (AutomationElement b in w.FindAll(TreeScope.Descendants, new AndCondition(
                         new PropertyCondition(AutomationElement.NameProperty, n),
-                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)));
-                    object pat;
-                    if (b == null || !b.TryGetCurrentPattern(TogglePattern.Pattern, out pat)) continue;
-                    TogglePattern t = (TogglePattern)pat;
-                    if ((t.Current.ToggleState == ToggleState.On) != on) t.Toggle();
-                    for (int i = 0; i < 10 && (t.Current.ToggleState == ToggleState.On) != on; i++) Thread.Sleep(100);
-                    return t.Current.ToggleState == ToggleState.On ? "on" : "off";
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button))))
+                    {
+                        object pat;
+                        if (b.TryGetCurrentPattern(TogglePattern.Pattern, out pat)) return (TogglePattern)pat;
+                    }
                 }
             }
             Thread.Sleep(300);
         }
-        return "";
+        return null;
     }
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.5
+// @version      1.28.6
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5992,7 +5992,10 @@
     toggle.textContent = on ? '한국어 자막 끄기' : '한국어 자막 켜기';
     toggle.toggleAttribute('data-on', !!on);
     const cc = dubPanel.querySelector('.lzk-dub-cc');
-    if (cc) cc.hidden = !(on && (!mine || dub.failed) && (liveState === 'ccoff' || liveState === 'quiet'));
+    if (cc) {
+      cc.hidden = !(on && (!mine || dub.failed) && ['ccoff', 'quiet', 'dead'].includes(liveState));
+      cc.textContent = liveState === 'dead' ? '크롬 실시간 자막 고치기' : '크롬 실시간 자막 설정 열기';
+    }
     if (!on)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
@@ -6062,10 +6065,10 @@
       else if (dub && dub.video === video) dubStop();
       else dubStart(video);
     });
-    // 크롬 '실시간 자막' 이 꺼져 있거나 받아 적힌 말이 없을 때만 보인다.
+    // 크롬 '실시간 자막' 이 꺼져 있거나 받아 적힌 말이 없을 때만 보인다. 멈췄으면(dead) '고치기' — 껐다 켜 준다.
     const cc = el('button', 'lzk-dub-cc', '크롬 실시간 자막 설정 열기');
     cc.hidden = true;
-    cc.addEventListener('click', () => GM_openInTab(LIVE_SETTINGS));
+    cc.addEventListener('click', () => (liveState === 'dead' ? chromeLiveReset() : GM_openInTab(LIVE_SETTINGS)));
     p.append(head, el('div', 'lzk-dub-status'), cc, toggle);
     const check = (text, k, onChange) => {
       const lab = el('label', 'lzk-dub-check');
@@ -6232,10 +6235,12 @@
   let liveFails = 0;
   let liveNext = 0;
   // ok: 띄우는 중, pause: 이 영상에서 자막을 띄우다 말이 멈춤, quiet: 받아 적힌 말 없음, muted: 영상 소리 꺼짐,
-  // korean: 한국어 말이라 비워 둠, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, off: 도우미에서 꺼 둠, none: 도우미 없음
+  // korean: 한국어 말이라 비워 둠, ccoff: 크롬 설정에서 실시간 자막을 꺼 둠, dead: 크롬 자막 창이 닫혀 받아 적기가 멈춤,
+  // off: 도우미에서 꺼 둠, none: 도우미 없음
   let liveState = '';
   let liveCc = {}; // 도우미가 읽은 크롬 설정: lang(받아 적는 언어), tr(크롬 실시간 번역)
   let liveCcHoldUntil = 0;
+  let liveDeadHoldUntil = 0; // 방금 고쳤다 — 도우미가 새 자막 창을 다시 볼 때까지(5초마다) 'dead' 를 믿지 않는다
 
   // 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기. 확장은 크롬 설정을 바꿀 수 없어 설정 창을 작게 열고 번역 도우미가 그
   // 단추를 눌러 준다(background.js ccTranslate). 도우미가 없거나 몽키면 설정을 열어 직접 누르게 한다.
@@ -6249,15 +6254,44 @@
       r = null;
     }
     if (cb) cb.disabled = false;
-    if (r && r.ok) {
+    // 누른 뒤 상태(state)가 와야 바꾼 것이다 — 1.28.3 전의 번역 도우미는 이 명령을 모르면서도 ok 만 돌려줘, 크롬 설정은
+    // 그대로인데 '껐습니다' 가 떴다(2026-11-03, 도우미가 아직 새 판을 받기 전). 그때는 설정을 열어 직접 누르게 한다.
+    const done = r && r.ok && (r.state === 'on' || r.state === 'off');
+    if (done) {
       liveCc = { ...liveCc, tr: r.state === 'on' };
       liveCcHoldUntil = Date.now() + 30000;
       toast(on ? "크롬 '실시간 번역' 을 켰습니다 — 크롬이 번역합니다(한국어 영상에도 자막)" : "크롬 '실시간 번역' 을 껐습니다 — 외국어는 단어집으로 옮기고 한국어 영상은 비워 둡니다", 5000);
     } else {
+      const why = r && r.ok ? '번역 도우미가 옛 판이라 직접 눌러야 합니다 — 도우미는 6시간 안에 저절로 새 판이 됩니다' : r && r.error;
       GM_openInTab(LIVE_SETTINGS);
-      toast(`크롬 설정을 열었습니다 — '실시간 번역' 을 ${on ? '켜' : '꺼'} 주세요${r && r.error ? ` (${r.error})` : ''}`, 7000);
+      toast(`크롬 설정을 열었습니다 — '실시간 번역' 을 ${on ? '켜' : '꺼'} 주세요${why ? ` (${why})` : ''}`, 7000);
     }
     dubSyncPanel();
+    dubStatus();
+  }
+
+  // 크롬 '실시간 자막' 껐다 켜기. 크롬은 실시간 자막 창(숨은 창)을 켤 때 한 번 만들고, 그 창이 닫히면 크롬을 다시 켤
+  // 때까지 어떤 영상도 받아 적지 않는다(2026-11-03 사용자 크롬 — 창을 닫아도 최소화된 다른 크롬 창 때문에 크롬이 안
+  // 꺼져 '다시 켰는데도' 그대로였다). 설정에서 껐다 켜면 그 창이 새로 생긴다 — 번역 도우미가 그 단추를 눌러 준다.
+  async function chromeLiveReset() {
+    const btn = dubPanel && dubPanel.querySelector('.lzk-dub-cc');
+    if (btn) btn.disabled = true;
+    let r = null;
+    try {
+      if (typeof GM_chromeLiveReset === 'function') r = await GM_chromeLiveReset();
+    } catch {
+      r = null;
+    }
+    if (btn) btn.disabled = false;
+    if (r && r.ok && r.state === 'on') {
+      liveDeadHoldUntil = Date.now() + 15000;
+      liveSetState('quiet');
+      toast("크롬 '실시간 자막' 을 껐다 켰습니다 — 이제 소리가 나는 영상을 다시 받아 적습니다", 5000);
+    } else {
+      const why = r && r.ok ? '번역 도우미가 옛 판이라 직접 눌러야 합니다 — 도우미는 6시간 안에 저절로 새 판이 됩니다' : r && r.error;
+      GM_openInTab(LIVE_SETTINGS);
+      toast(`크롬 설정을 열었습니다 — '실시간 자막' 을 껐다가 다시 켜 주세요${why ? ` (${why})` : ''}`, 8000);
+    }
     dubStatus();
   }
   let liveHad = false; // 지금 영상에서 자막을 띄운 적이 있다(말이 멈춘 사이를 '받아 적힌 말 없음' 으로 알리지 않게)
@@ -6269,8 +6303,10 @@
   // 페이스북·틱톡은 영상이 소리 꺼진 채로 돈다 — 크롬은 소리 꺼진 영상은 받아 적지 않아, 소리를 켜기 전에는 자막이
   // 없다(2026-11-02 진짜 크롬 시험). 탭마다 한 번, 소리가 꺼져 있는 동안만 영상 위에 알린다.
   const LIVE_MUTED_HINT = '소리를 켜면 한국어 자막이 나옵니다 (크롬은 소리 꺼진 영상은 받아 적지 않습니다)';
+  const LIVE_DEAD_HINT = "크롬 실시간 자막이 멈췄습니다 — 영상 위 '한국어 자막' 단추 › 크롬 실시간 자막 고치기";
   let liveHinted = false;
   let liveMutedHinted = false;
+  let liveDeadHinted = false;
   let liveHintUntil = 0;
   let liveHintText = '';
   // 자막을 꺼 두었거나 우리 자막이 나오는 영상에서 도우미에게 마지막으로 물은 때(크롬 자막 창 치우기용)
@@ -6327,10 +6363,11 @@
       pause: '말이 멈춘 사이 — 다시 말하면 자막이 나옵니다',
       quiet: '크롬이 받아 적은 말이 아직 없습니다. 말이 없는(음악만 있는) 영상이거나, 크롬이 그 언어를 받아 적지 못합니다',
       ccoff: "크롬 '실시간 자막' 이 꺼져 있습니다 — 아래 단추로 크롬 설정을 열어 '실시간 자막' 을 켜 주세요",
+      dead: "크롬 실시간 자막이 멈췄습니다(크롬의 자막 창이 닫혀 다시 생기지 않음) — 아래 '크롬 실시간 자막 고치기' 를 누르세요",
       off: "번역 도우미 트레이의 '크롬 실시간 자막을 한국어로 덮기' 를 켜 주세요",
       none: '번역 도우미가 꺼져 있습니다',
     }[liveState];
-    return ['ok', 'pause', 'ccoff', 'korean'].includes(liveState) ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
+    return ['ok', 'pause', 'ccoff', 'dead', 'korean'].includes(liveState) ? why : `자막 파일이 없는 영상은 크롬 실시간 자막으로${why ? ` — ${why}` : ''}`;
   }
 
   // 다른 사이트의 '한국어 자막 켜기·끄기' — 영상 하나가 아니라 켜 둔 동안 재생하는 영상마다.
@@ -6389,6 +6426,10 @@
         liveHinted = true;
         liveHintUntil = Date.now() + 9000;
         liveHintText = LIVE_CC_HINT;
+      } else if (!liveDeadHinted && state === 'dead') {
+        liveDeadHinted = true;
+        liveHintUntil = Date.now() + 9000;
+        liveHintText = LIVE_DEAD_HINT;
       } else if (!liveMutedHinted && state === 'muted') {
         liveMutedHinted = true;
         liveHintUntil = Date.now() + 7000;
@@ -6423,12 +6464,14 @@
         const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < Date.now() - liveSince; // 이 영상을 틀고 나서 바뀐 말
         const text = fresh ? liveTail(String(j.text || '').split('\n').slice(-2).join(' ')) : '';
         if (j && Date.now() < liveCcHoldUntil) j.ccTr = liveCc.tr; // 방금 창에서 바꿨다 — 크롬이 설정 파일을 쓰기까지
+        if (j && Date.now() < liveDeadHoldUntil) j.dead = false;
         if (j && (j.ccLang || '') + !!j.ccTr !== (liveCc.lang || '') + !!liveCc.tr) {
           liveCc = { lang: j.ccLang || '', tr: !!j.ccTr };
           dubStatus();
           dubSyncPanel();
         }
-        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.ko ? 'korean' : j.cc === 'off' ? 'ccoff' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
+        // dead 는 소리를 켜도 소용없어 muted 보다 먼저 알린다.
+        done(text, !j ? 'none' : !j.on ? 'off' : text ? 'ok' : j.ko ? 'korean' : j.cc === 'off' ? 'ccoff' : j.dead ? 'dead' : v.muted || v.volume === 0 ? 'muted' : 'quiet');
       },
       onerror: fail,
       ontimeout: fail,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.4
+// @version      1.28.5
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5689,7 +5689,7 @@
   // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '실시간 번역' 을 켜 두면 도우미가 한국어
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
-  const ytSpokenBusy = new Set();
+  const ytSpokenBusy = new Map(); // 영상 id → 묻는 중인 약속(같이 기다린다)
   // 자동 자막이 없는 영상(라이브 등 — 사용자 2026-11-03: 한국어 라이브 뉴스 위에 우리 자막이 겹쳤다)은 제목·채널 이름·
   // 태그의 글자로 가늠한다. 태그와 채널 이름은 유튜브가 번역해 보이지 않는다. 한글 한 글자는 라틴 글자 2.5개로 친다
   // ('MBC 뉴스 LIVE' 같은 섞인 제목).
@@ -5709,24 +5709,23 @@
   const ytKoreanVideo = () => YOUTUBE && /^ko/.test(ytSpoken.get(ytVideoId()) || '');
 
   // 확장의 페이지 쪽 조각에 지금 영상의 자막 목록을 묻는다(넘긴 직후면 플레이어가 바뀔 때까지 0.3초씩 3초까지).
-  async function ytLearnSpoken() {
+  // 묻는 중이면 그 약속을 돌려준다 — 자막 파일을 받기 전(ytLoadCues)에도 기다릴 수 있게.
+  function ytLearnSpoken() {
     const id = ytVideoId();
-    if (!YOUTUBE || !id || ytSpoken.has(id) || ytSpokenBusy.has(id)) return;
-    ytSpokenBusy.add(id);
-    try {
+    if (!YOUTUBE || !id || ytSpoken.has(id)) return Promise.resolve();
+    if (ytSpokenBusy.has(id)) return ytSpokenBusy.get(id);
+    const job = (async () => {
       const sel = ytIsShorts() ? null : RC.youtube.player;
       for (let i = 0; i < 10 && ytVideoId() === id; i++) {
         const cc = await ytCaptions('peek', sel);
-        if (!cc) return; // 조각이 없다(몽키)
-        if (cc.id === id && cc.tracks) {
-          ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta));
-          return;
-        }
+        // 조각이 없다(몽키) — '' (모름)로 적어 둔다. 안 적으면 0.7초마다(liveTick) 0.5초씩 기다리며 다시 물었다.
+        if (!cc) return ytSpoken.set(id, '');
+        if (cc.id === id && cc.tracks) return ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta));
         await sleep(300);
       }
-    } finally {
-      ytSpokenBusy.delete(id);
-    }
+    })().finally(() => ytSpokenBusy.delete(id));
+    ytSpokenBusy.set(id, job);
+    return job;
   }
 
   // 플레이어가 이 영상의 자막을 부르게 한다: 자막(CC)을 껐다 켜거나, 꺼져 있으면 켰다가 원래대로 끈다.
@@ -5806,6 +5805,15 @@
     d.videoId = id;
     d.status = '자막 주소 받는 중…';
     dubStatus();
+    // 한국어 영상이면(자막 목록 — ytSpokenFrom) CC 를 껐다 켜 보지도 않는다.
+    const koVideo = () => /^ko/.test(ytSpoken.get(id) || '');
+    const KO_VIDEO = '한국어 영상이라 한국어 자막을 덧붙이지 않습니다';
+    await ytLearnSpoken();
+    if (d !== dub) return null;
+    if (koVideo()) {
+      d.status = KO_VIDEO;
+      return null;
+    }
     let urls = await ytCaptureTimedtext(id, d);
     if (d !== dub) return null;
     if (d.noCaptions && !urls.length) {
@@ -5844,13 +5852,16 @@
         const p = new URL(base).searchParams;
         const spoken = p.get('lang') || '';
         const asr = p.get('kind') === 'asr';
-        if (/^ko/i.test(spoken)) {
-          // 한국어 영상 — 우리 한국어 자막은 영상의 한국어 자막과 겹치기만 한다. 손으로 켜 둔 것이 다음 영상으로 이어져도
-          // 띄우지 않는다(사용자 2026-11-03).
+        // 한국어 영상 — 우리 한국어 자막은 영상의 한국어 자막과 겹치기만 한다. 손으로 켜 둔 것이 다음 영상으로 이어져도
+        // 띄우지 않는다(사용자 2026-11-03). 플레이어가 부른 자막이 한국어라도 사람이 만든 것(kind 없음)이면 말은 외국어일
+        // 수 있다 — 한국어 화면의 계정은 TED 같은 외국어 영상에서도 한국어 자막을 먼저 부른다. 그래서 자막 목록으로 안
+        // 말 언어(ytSpoken)를 먼저 보고, 모를 때만 한국어 자동 자막(asr)을 한국어 말로 친다.
+        if (koVideo() || (!ytSpoken.get(id) && asr && /^ko/i.test(spoken))) {
           ytSpoken.set(id, 'ko');
-          d.status = '한국어 영상이라 한국어 자막을 덧붙이지 않습니다';
+          d.status = KO_VIDEO;
           return null;
         }
+        if (d.auto && /^ko/i.test(spoken)) return null; // 사람이 만든 한국어 자막이 있는 외국어 영상 — 유튜브 CC 로 보면 된다
         const tries = [];
         if (!/^ko/i.test(spoken) && has('ko', '')) tries.push(['ko', '']);
         if (asr && has(spoken, '')) tries.push([spoken, '']);

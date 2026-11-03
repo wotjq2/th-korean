@@ -229,6 +229,12 @@ static class RemoteConfig
     public static string[] LiveTranslateNames() { return Strings("toggle", new[] { "실시간 번역", "자막 번역", "Live translate", "Live Translate" }); }
     public static string[] LiveCaptionNames() { return Strings("captionToggle", new[] { "실시간 자막", "Live Caption", "Live caption" }); }
     public static string[] SettingsPageNames() { return Strings("page", new[] { "설정", "Settings" }); }
+    // helper.liveTranslate.notes — 크롬 '실시간 번역' 이 자막에 붙이는 괄호 설명에 드는 낱말. 이 낱말이 든 괄호는 영상에 띄우지 않는다.
+    public static string[] CaptionNoteWords()
+    {
+        return Strings("notes", new[] { "불완전", "아마도", "나머지", "텍스트", "원문", "번역", "문맥", "맥락", "문장", "추측", "불분명", "알아들", "들리지",
+            "incomplete", "unclear", "probably", "the rest", "translat", "text" });
+    }
 
     static string[] Strings(string key, string[] fallback)
     {

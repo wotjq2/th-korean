@@ -35,8 +35,24 @@ static class LiveCaption
     static readonly Regex Foreign = new Regex("[฀-๿A-Za-z぀-ヿ一-鿿]");
     static readonly Regex ThaiGap = new Regex("([฀-๿])\\s+(?=[฀-๿])");
     static readonly Regex ThaiRun = new Regex("[฀-๿][฀-๿\\s]*");
-    // 크롬 '자막 번역' 이 덜 들린 말에 붙이는 메모 — '(문장이 불완전합니다).' 가 영상 위에 그대로 떴다(2026-11-02 틱톡).
-    static readonly Regex ChromeNote = new Regex("\\s*\\([^()]*불완전[^()]*\\)\\.?");
+    // 크롬 '실시간 번역' 이 덜 들린 말에 붙이는 괄호 설명 — '(문장이 불완전합니다).', '(아마도 … 것 같습니다)',
+    // '(나머지 텍스트는 …)' 가 영상 위에 그대로 떴다(2026-11-02·03). 설명에 드는 낱말은 config.json helper.liveTranslate.notes.
+    // 크롬이 줄을 바꿔 두 줄에 걸친 괄호도, 아직 받아 적는 마지막 줄의 닫히지 않은 괄호도 지운다.
+    static Regex notes;
+    static DateTime notesAt = DateTime.MinValue;
+
+    public static string StripNotes(string text)
+    {
+        if (notes == null || (DateTime.Now - notesAt).TotalSeconds > 60)
+        {
+            List<string> w = new List<string>();
+            foreach (string s in RemoteConfig.CaptionNoteWords()) w.Add(Regex.Escape(s));
+            string any = "(?:" + string.Join("|", w.ToArray()) + ")";
+            notes = new Regex("\\s*[(（](?:[^()（）]*" + any + "[^()（）]*[)）]\\.?|[^()（）\\n]*" + any + "[^()（）\\n]*$)", RegexOptions.IgnoreCase);
+            notesAt = DateTime.Now;
+        }
+        return notes.Replace(text, "");
+    }
 
     // UI 스레드에서 부른다(덮개 창을 그 스레드에 만든다).
     public static void Start(Engine e)
@@ -280,12 +296,15 @@ static class LiveCaption
             {
                 string k = lines[i];
                 if (!allKorean && (!done.TryGetValue(lines[i], out k) || k.Length == 0)) continue;
-                k = ChromeNote.Replace(k, "").Trim();
+                k = k.Trim();
                 if (k.Length == 0) continue;
                 if (glued[i] && ko.Count > 0 && Hangul.IsMatch(lines[i]) && Hangul.IsMatch(lines[i - 1])) ko[ko.Count - 1] += k;
                 else ko.Add(k);
             }
         }
+        string shown = StripNotes(string.Join("\n", ko.ToArray()));
+        ko = new List<string>();
+        foreach (string s in shown.Split('\n')) if (s.Trim().Length > 0) ko.Add(s.Trim());
         Publish(string.Join("\n", ko.ToArray()));
         // 확장이 이 한국어를 받아 영상 위에 띄우고 있으면 크롬 자막 창은 치워 두었으니 덮지 않는다.
         if (ko.Count == 0 || allKorean || WantTuck()) { Hide(); return 350; }

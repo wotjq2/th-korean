@@ -5,7 +5,8 @@
 // 자막 목록(getPlayerResponse)은 페이지 쪽 자바스크립트에만 있어서, 번역 스크립트(확장의 격리된 쪽)가 문서
 // 이벤트 'lzk-yt-cc' 로 부탁하면 여기서 부르고 'lzk-yt-cc-done' 으로 답한다(둘 다 JSON 글자).
 //   부탁: { cmd: 'peek'(보기만) / 'on' / 'off', player, any: 쇼츠 플레이어 선택자 — 스크립트의 원격 설정에서 }
-//   답:   { was: 부르기 전 CC 'on' / 'off' / 'none', id: 영상 id, tracks: ['th:asr', 'en', …] 또는 null(모름) }
+//   답:   { was: 부르기 전 CC 'on' / 'off' / 'none', id: 영상 id, tracks: ['th:asr', 'en', …] 또는 null(모름),
+//           meta: { title, author, keywords, live } }
 // 선택자를 스크립트가 넘기므로 유튜브가 바뀌어도 config.json 만 고치면 이 파일은 그대로다.
 // ---------------------------------------------------------------------------
 
@@ -34,7 +35,11 @@ document.addEventListener('lzk-yt-cc', (e) => {
     if (p && typeof p.toggleSubtitlesOn === 'function') {
       try {
         const r = p.getPlayerResponse();
-        out.id = (r && r.videoDetails && r.videoDetails.videoId) || '';
+        const v = (r && r.videoDetails) || {};
+        out.id = v.videoId || '';
+        // 자막 목록이 없는 영상(라이브 등)의 말 언어를 가늠할 단서 — 제목·채널 이름·태그(태그와 채널 이름은 유튜브가
+        // 번역해 보이지 않는다).
+        out.meta = { title: v.title || '', author: v.author || '', keywords: (v.keywords || []).slice(0, 30), live: !!v.isLiveContent };
         const list = r && r.captions && r.captions.playerCaptionsTracklistRenderer;
         out.tracks = ((list && list.captionTracks) || []).map((t) => t.languageCode + (t.kind ? `:${t.kind}` : ''));
       } catch {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.3
+// @version      1.28.4
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -5690,10 +5690,21 @@
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
   const ytSpokenBusy = new Set();
-  const ytSpokenFrom = (tracks) => {
-    const asr = tracks.find((t) => t.endsWith(':asr'));
+  // 자동 자막이 없는 영상(라이브 등 — 사용자 2026-11-03: 한국어 라이브 뉴스 위에 우리 자막이 겹쳤다)은 제목·채널 이름·
+  // 태그의 글자로 가늠한다. 태그와 채널 이름은 유튜브가 번역해 보이지 않는다. 한글 한 글자는 라틴 글자 2.5개로 친다
+  // ('MBC 뉴스 LIVE' 같은 섞인 제목).
+  const ytMostlyHangul = (meta) => {
+    if (!meta) return false;
+    const s = [meta.title, meta.author, ...(meta.keywords || [])].join(' ');
+    const ko = (s.match(/[가-힣]/g) || []).length;
+    const other = (s.match(/[A-Za-z฀-๿぀-ヿ一-鿿Ѐ-ӿ؀-ۿऀ-ॿ]/g) || []).length;
+    return ko > 0 && ko * 2.5 >= other;
+  };
+  const ytSpokenFrom = (tracks, meta) => {
+    const asr = (tracks || []).find((t) => t.endsWith(':asr'));
     if (asr) return asr.split(':')[0].toLowerCase();
-    return tracks.length && tracks.every((t) => /^ko/i.test(t)) ? 'ko' : '';
+    if (tracks && tracks.length && tracks.every((t) => /^ko/i.test(t))) return 'ko';
+    return ytMostlyHangul(meta) ? 'ko' : '';
   };
   const ytKoreanVideo = () => YOUTUBE && /^ko/.test(ytSpoken.get(ytVideoId()) || '');
 
@@ -5708,7 +5719,7 @@
         const cc = await ytCaptions('peek', sel);
         if (!cc) return; // 조각이 없다(몽키)
         if (cc.id === id && cc.tracks) {
-          ytSpoken.set(id, ytSpokenFrom(cc.tracks));
+          ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta));
           return;
         }
         await sleep(300);
@@ -5753,7 +5764,7 @@
       const tracks = cc && cc.id === id ? cc.tracks : null;
       if (tracks) {
         d.tracks = tracks;
-        ytSpoken.set(id, ytSpokenFrom(tracks));
+        ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta));
       }
       // 자막이 하나도 없는 쇼츠, 또는 저절로 켰는데 한국어 자막뿐인 쇼츠(한국어 영상) — CC 를 켜지 않고 기다리지도
       // 않는다. 자막이 없는 쇼츠는 바로 크롬 실시간 자막으로 넘어간다(전에는 10초 넘게 다시 받아 보느라 그동안
@@ -9096,6 +9107,10 @@
   const siteStart = MESSENGER ? messengerInit : GENERIC ? genericInit : init;
   // 영상 더빙은 모든 사이트에서(라자다 상품 영상·메신저 영상도). 번역 도우미 엔진(node)에는 영상이 없다.
   const start = () => {
+    // HTML 문서가 아니거나(SVG·XML·RSS 파일을 바로 연 것) 본문이 없으면 띄울 자리도 옮길 글도 없다 — 시작하지 않는다.
+    // 그런 문서에서 '시작 실패: Cannot read properties of null (reading 'appendChild')' 가 확장 오류로 쌓였다
+    // (사용자 2026-11-03). 번역 도우미 엔진(node)에는 HTMLElement 가 없다 — 그쪽은 여기까지 오지 않는다.
+    if (typeof HTMLElement !== 'undefined' && (!(document.documentElement instanceof HTMLElement) || !document.body)) return;
     siteStart();
     if (typeof HTMLVideoElement !== 'undefined') videoDubInit();
   };

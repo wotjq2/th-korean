@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.6
+// @version      1.28.7
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -4837,11 +4837,12 @@
   }
 
   // 입력 전체가 용어집 키와 맞을 때만(KO_EN_ZH_TSV 와 같은 규칙: 끝 문장부호는 떼고, 물음이면 값도 물음이어야).
+  // 아랍어·우르두어 물음표는 '؟' 라서 함께 본다(없으면 '얼마예요?' 가 아랍어 용어집을 못 썼다).
   async function langGlossaryLookup(value, lang) {
     if (!lang.glossary) return '';
     const m = await langGlossaryMap(lang.glossary);
     const v = m && m.get(squash(value.replace(/[\s.!?~,？！]+$/, '')));
-    if (!v || (/[?？]\s*$/.test(value) && !/[?？]\s*$/.test(v))) return '';
+    if (!v || (/[?？]\s*$/.test(value) && !/[?？؟]\s*$/.test(v))) return '';
     return v;
   }
 

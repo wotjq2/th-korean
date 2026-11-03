@@ -9109,8 +9109,10 @@
   const start = () => {
     // HTML 문서가 아니거나(SVG·XML·RSS 파일을 바로 연 것) 본문이 없으면 띄울 자리도 옮길 글도 없다 — 시작하지 않는다.
     // 그런 문서에서 '시작 실패: Cannot read properties of null (reading 'appendChild')' 가 확장 오류로 쌓였다
-    // (사용자 2026-11-03). 번역 도우미 엔진(node)에는 HTMLElement 가 없다 — 그쪽은 여기까지 오지 않는다.
-    if (typeof HTMLElement !== 'undefined' && (!(document.documentElement instanceof HTMLElement) || !document.body)) return;
+    // (사용자 2026-11-03). 크롬의 XML 보기는 HTML 처럼 보이는 요소를 달아 두지만 문서는 XML 이라 새로 만든 요소가 HTML
+    // 요소가 아니다(dataset 이 없어 단추를 달다 멈췄다) — 그래서 만든 요소가 HTML 인지로 본다.
+    // 번역 도우미 엔진(node)에는 HTMLElement 가 없다 — 그쪽은 여기까지 오지 않는다.
+    if (typeof HTMLElement !== 'undefined' && (!document.body || !(document.createElement('div') instanceof HTMLElement))) return;
     siteStart();
     if (typeof HTMLVideoElement !== 'undefined') videoDubInit();
   };

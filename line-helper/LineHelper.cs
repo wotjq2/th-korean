@@ -322,23 +322,46 @@ class LangBar : FloatForm
     // 켤 때부터). 번역은 엔진(스크립트)이 같은 목록·언어별 용어집으로 한다.
     public static readonly string[][] Langs = RemoteConfig.Languages();
     const int CellW = 26, CellH = 22, Gap = 5, BothW = 34;
-    // 한 줄에 이만큼까지, 넘치면 위로 줄을 더한다(막대는 입력칸 위에 붙어 위로 자란다). 2026-11-03 사용자가 쓰는
-    // 사람이 많은 언어 20개를 넣어 22개가 됐다 — 한 줄이면 600px 가 넘었다.
+    // 한 줄에 이만큼까지, 넘치면 줄을 더한다. 2026-11-03 사용자가 쓰는 사람이 많은 언어 20개를 넣어 22개가 됐다 —
+    // 한 줄이면 600px 가 넘었다.
     const int MaxCols = 12;
+    // 평소에는 '번역' 단추 하나(웹의 입력 언어 막대와 같게). 사용자(2026-11-04): 22개 칸이 입력칸 위 오른쪽에 늘 떠 있어
+    // 내가 보낸 말풍선을 가렸다. 단추를 누르면 언어 칸이 단추 왼쪽 위로 펼쳐지고, 언어를 고르거나 단추를 다시 누르면 접힌다.
+    public const int PillW = 76, PillH = 24;
+    const int PillHit = -2;
     static int Cols { get { return Math.Min(Langs.Length, MaxCols); } }
     static int Rows { get { return (Langs.Length + Cols - 1) / Cols; } }
+    static int GridW { get { return CellW * Cols + Gap + BothW + 2; } }
+    static int GridH { get { return Rows * (CellH + 1) + 1; } }
     readonly Font font = new Font("Malgun Gothic", 9f, FontStyle.Bold);
     readonly ToolTip tip = new ToolTip();
     public bool Busy;
+    public bool Expanded { get; private set; }
     int hover = -1;
 
     public LangBar()
     {
-        ClientSize = new Size(CellW * Cols + Gap + BothW + 2, Rows * (CellH + 1) + 1);
         BackColor = Color.FromArgb(200, 200, 205);
+        Relayout();
         tip.ShowAlways = true;
-        tip.SetToolTip(this, "언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다.");
+        tip.SetToolTip(this, "번역: 누르면 언어 칸이 펼쳐집니다. 언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다.");
     }
+
+    public void SetExpanded(bool on)
+    {
+        if (on == Expanded) return;
+        Point corner = new Point(Right, Bottom); // 단추(오른쪽 아래)가 제자리에 있게 — 다음 PlaceBar(0.15초)를 기다리지 않는다
+        Expanded = on;
+        hover = -1;
+        Relayout();
+        if (Visible) ShowAt(new Rectangle(corner.X - Width, corner.Y - Height, Width, Height));
+        Invalidate();
+    }
+
+    void Relayout() { ClientSize = Expanded ? new Size(GridW + Gap + PillW, Math.Max(GridH, PillH)) : new Size(PillW, PillH); }
+
+    // '번역' 단추는 늘 창의 오른쪽 아래 — 펼쳐도 같은 자리에 남아(PlaceBar 가 오른쪽 아래를 맞춘다) 다시 누르면 접힌다.
+    Rectangle PillRect { get { return new Rectangle(ClientSize.Width - PillW, ClientSize.Height - PillH, PillW, PillH); } }
 
     static Rectangle CellRect(int i) { return new Rectangle(1 + i % Cols * CellW, 1 + i / Cols * (CellH + 1), CellW - 1, CellH); }
 
@@ -349,26 +372,41 @@ class LangBar : FloatForm
     {
         Graphics g = e.Graphics;
         TextFormatFlags tf = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding;
-        for (int i = 0; i < Langs.Length; i++)
+        string onLabel = "";
+        for (int i = 0; i < Langs.Length; i++) if (Langs[i][0] == App.Lang) onLabel = Langs[i][1];
+        if (Expanded)
         {
-            Rectangle r = CellRect(i);
-            bool on = Langs[i][0] == App.Lang;
-            Color bg = on ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (i == hover ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
-            using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, r);
-            TextRenderer.DrawText(g, Langs[i][1], font, r, on ? Color.White : Color.FromArgb(70, 70, 75), tf);
+            for (int i = 0; i < Langs.Length; i++)
+            {
+                Rectangle r = CellRect(i);
+                bool on = Langs[i][0] == App.Lang;
+                Color bg = on ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (i == hover ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
+                using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, r);
+                TextRenderer.DrawText(g, Langs[i][1], font, r, on ? Color.White : Color.FromArgb(70, 70, 75), tf);
+            }
+            using (SolidBrush gap = new SolidBrush(Color.FromArgb(120, 120, 128)))
+                g.FillRectangle(gap, 1 + CellW * Cols - 1, 0, Gap + 1, GridH);
+            Rectangle br = BothRect;
+            Color bbg = App.Both ? Color.FromArgb(33, 118, 255) : (hover == Langs.Length ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
+            using (SolidBrush b = new SolidBrush(bbg)) g.FillRectangle(b, br);
+            TextRenderer.DrawText(g, "+한", font, br, App.Both ? Color.White : Color.FromArgb(70, 70, 75), tf);
         }
-        using (SolidBrush gap = new SolidBrush(Color.FromArgb(120, 120, 128)))
-            g.FillRectangle(gap, 1 + CellW * Cols - 1, 0, Gap + 1, Height);
-        Rectangle br = BothRect;
-        Color bbg = App.Both ? Color.FromArgb(33, 118, 255) : (hover == Langs.Length ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
-        using (SolidBrush b = new SolidBrush(bbg)) g.FillRectangle(b, br);
-        TextRenderer.DrawText(g, "+한", font, br, App.Both ? Color.White : Color.FromArgb(70, 70, 75), tf);
+        // '번역' 단추: 고른 언어가 있으면 '번역·태'(초록, 바꾸는 중이면 주황), +한 이 켜져 있으면 끝에 '+한'.
+        Rectangle pr = PillRect;
+        bool lang = onLabel.Length > 0;
+        Color pbg = lang ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (hover == PillHit || Expanded ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
+        using (SolidBrush b = new SolidBrush(pbg)) g.FillRectangle(b, pr);
+        using (Pen p = new Pen(Color.FromArgb(150, 150, 158))) g.DrawRectangle(p, pr.X, pr.Y, pr.Width - 1, pr.Height - 1);
+        string text = (lang ? "번역·" + onLabel : "번역") + (App.Both ? " +한" : "");
+        TextRenderer.DrawText(g, text, font, pr, lang ? Color.White : Color.FromArgb(50, 50, 55), tf | TextFormatFlags.EndEllipsis);
     }
 
     int CellAt(Point p)
     {
+        if (PillRect.Contains(p)) return PillHit;
+        if (!Expanded) return -1;
         if (BothRect.Contains(p)) return Langs.Length;
-        if (p.X < 1 || p.Y < 1) return -1;
+        if (p.X < 1 || p.Y < 1 || p.Y >= GridH) return -1;
         int col = (p.X - 1) / CellW, row = (p.Y - 1) / (CellH + 1), i = row * Cols + col;
         return col < Cols && i < Langs.Length ? i : -1;
     }
@@ -378,9 +416,12 @@ class LangBar : FloatForm
     protected override void OnMouseDown(MouseEventArgs e)
     {
         int i = CellAt(e.Location);
-        if (i < 0 || e.Button != MouseButtons.Left) return;
-        if (i == Langs.Length) App.SetBoth(!App.Both);
-        else App.SetLang(Langs[i][0] == App.Lang ? "" : Langs[i][0]);
+        if (e.Button != MouseButtons.Left) return;
+        if (i == PillHit) { SetExpanded(!Expanded); return; }
+        if (i < 0) return;
+        if (i == Langs.Length) { App.SetBoth(!App.Both); return; } // +한 은 고른 뒤에도 펼친 채로(언어도 고를 수 있게)
+        App.SetLang(Langs[i][0] == App.Lang ? "" : Langs[i][0]);
+        SetExpanded(false);
     }
 }
 
@@ -1287,9 +1328,12 @@ static class App
         IntPtr fg = Native.GetForegroundWindow();
         bool keep = fg == barHwnd || fg == noteHwnd || (menu != null && menu.Visible);
         HoverLabels(fg);
-        if (r.IsEmpty && !keep) { if (bar.Visible) bar.Hide(); return; }
+        if (r.IsEmpty && !keep) { if (bar.Visible) { bar.Hide(); bar.SetExpanded(false); } return; }
         if (r.IsEmpty) return;
-        Point p = new Point(r.Right - bar.Width, r.Top - bar.Height - 2);
+        // '번역' 단추는 입력칸 안 오른쪽 아래에 둔다. 예전처럼 입력칸 위에 띄우면 내가 보낸 말풍선(오른쪽 아래)을 가렸고,
+        // 입력칸 위쪽에 두면 치는 글을 가렸다(사용자 2026-11-04). 펼친 언어 칸은 단추에서 왼쪽 위로 자란다(고르는 동안만).
+        Point corner = new Point(r.Right - 6, r.Bottom - 4);
+        Point p = new Point(corner.X - bar.Width, corner.Y - bar.Height);
         if (bar.Location != p || !bar.Visible) bar.ShowAt(new Rectangle(p, bar.Size));
     }
 

@@ -189,8 +189,14 @@ static class RemoteConfig
     static readonly System.Text.RegularExpressions.Regex IdRe = new System.Text.RegularExpressions.Regex("^[a-p]{32}$");
     static readonly System.Text.RegularExpressions.Regex LangRe = new System.Text.RegularExpressions.Regex("^[a-z]{2,3}(-[A-Za-z]{2,4})?$");
     public static readonly string[][] DefaultLangs = {
+        // config.json 과 같은 목록 — 처음 깐 도우미가 원격 설정을 받기 전에 쓴다(예전 7개 그대로였다, 2026-11-04).
         new[] { "th", "태", "태국어" }, new[] { "en", "미", "영어" }, new[] { "zh", "중", "중국어" },
-        new[] { "ja", "일", "일본어" }, new[] { "ru", "러", "러시아어" }, new[] { "he", "이", "히브리어" },
+        new[] { "hi", "힌", "힌디어" }, new[] { "es", "스", "스페인어" }, new[] { "ar", "아", "아랍어" },
+        new[] { "fr", "프", "프랑스어" }, new[] { "bn", "벵", "벵골어" }, new[] { "pt", "포", "포르투갈어" },
+        new[] { "ru", "러", "러시아어" }, new[] { "ur", "우", "우르두어" }, new[] { "id", "인", "인도네시아어" },
+        new[] { "de", "독", "독일어" }, new[] { "ja", "일", "일본어" }, new[] { "mr", "마", "마라티어" },
+        new[] { "te", "텔", "텔루구어" }, new[] { "tr", "터", "튀르키예어" }, new[] { "ta", "타", "타밀어" },
+        new[] { "yue", "광", "광둥어" }, new[] { "vi", "베", "베트남어" }, new[] { "he", "이", "히브리어" },
         new[] { "pl", "폴", "폴란드어" },
     };
 

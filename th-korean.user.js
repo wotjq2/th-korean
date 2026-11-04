@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.8
+// @version      1.28.9
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -81,14 +81,31 @@
   const RC_DEFAULT = {
     // 입력칸의 한국어를 바꿀 언어('번역' 단추를 누르면 펼쳐지는 줄). id·mt = 구글 번역 언어 코드(mt 가 다르면 mt 로
     // 번역), label = 단추 글자 하나, glossary = th-korean-glossary 저장소의 '한국어=그 언어' 파일(있으면 먼저 본다).
+    // config.json 과 같은 목록 — 처음 깐 브라우저의 첫 페이지와 처음 깐 번역 도우미는 원격 설정을 받기 전에 이 값을 쓴다
+    // (2026-11-04 예전 7개 그대로라 첫 화면에 언어 7개, 언어별 용어집 없음).
     languages: [
       { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
-      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN' },
-      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文' },
-      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語' },
-      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU' },
-      { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית' },
-      { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL' },
+      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt' },
+      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt' },
+      { id: 'hi', label: '힌', name: '힌디어', mt: 'hi', chip: '→ हिन्दी', glossary: 'glossary-hi.txt' },
+      { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt' },
+      { id: 'ar', label: '아', name: '아랍어', mt: 'ar', chip: '→ العربية', glossary: 'glossary-ar.txt' },
+      { id: 'fr', label: '프', name: '프랑스어', mt: 'fr', chip: '→ FR', glossary: 'glossary-fr.txt' },
+      { id: 'bn', label: '벵', name: '벵골어', mt: 'bn', chip: '→ বাংলা', glossary: 'glossary-bn.txt' },
+      { id: 'pt', label: '포', name: '포르투갈어', mt: 'pt', chip: '→ PT', glossary: 'glossary-pt.txt' },
+      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU', glossary: 'glossary-ru.txt' },
+      { id: 'ur', label: '우', name: '우르두어', mt: 'ur', chip: '→ اردو', glossary: 'glossary-ur.txt' },
+      { id: 'id', label: '인', name: '인도네시아어', mt: 'id', chip: '→ ID', glossary: 'glossary-id.txt' },
+      { id: 'de', label: '독', name: '독일어', mt: 'de', chip: '→ DE', glossary: 'glossary-de.txt' },
+      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語', glossary: 'glossary-ja.txt' },
+      { id: 'mr', label: '마', name: '마라티어', mt: 'mr', chip: '→ मराठी', glossary: 'glossary-mr.txt' },
+      { id: 'te', label: '텔', name: '텔루구어', mt: 'te', chip: '→ తెలుగు', glossary: 'glossary-te.txt' },
+      { id: 'tr', label: '터', name: '튀르키예어', mt: 'tr', chip: '→ TR', glossary: 'glossary-tr.txt' },
+      { id: 'ta', label: '타', name: '타밀어', mt: 'ta', chip: '→ தமிழ்', glossary: 'glossary-ta.txt' },
+      { id: 'yue', label: '광', name: '광둥어', mt: 'yue', chip: '→ 粵語', glossary: 'glossary-yue.txt' },
+      { id: 'vi', label: '베', name: '베트남어', mt: 'vi', chip: '→ VI', glossary: 'glossary-vi.txt' },
+      { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית', glossary: 'glossary-he.txt' },
+      { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL', glossary: 'glossary-pl.txt' },
     ],
     // 무료 번역 주소를 써 보는 차례: gtx(translate_a/single), dict(translate_a/t)
     translate: { order: ['gtx', 'dict'] },

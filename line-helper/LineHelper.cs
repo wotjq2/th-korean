@@ -887,7 +887,9 @@ static class App
 {
     public static string Lang = "";
     public static bool Receive = true;
-    public static bool Both;              // 바꾼 말 아래 한국어 원문도 같이 보내기
+    // 바꾼 말 아래 한국어 원문도 같이 보내기(+한). 기본으로 켠다 — 사용자(2026-11-04): 내가 보낸 말은 말풍선 안에
+    // 한국어가 함께 있는 쪽이 좋고, 말풍선 옆에 덧그린 한국어 딱지는 싫다(그래서 내 말풍선에는 딱지를 그리지 않는다).
+    public static bool Both = true;
     public static bool ShowKorean = true; // 말풍선 옆에 한국어
     static string target = "LINE";
     static Overlay overlay;
@@ -1033,6 +1035,7 @@ static class App
 
     static void LoadSettings()
     {
+        bool bothSet = false; // bothdefault=1 이 있으면 +한 을 사람이 고른 값 그대로 둔다
         try
         {
             foreach (string line in File.ReadAllLines(settingsFile))
@@ -1043,19 +1046,26 @@ static class App
                 if (k == "lang") Lang = v;
                 if (k == "receive") Receive = v != "0";
                 if (k == "both") Both = v == "1";
+                if (k == "bothdefault") bothSet = true;
                 if (k == "korean") ShowKorean = v != "0";
                 if (k == "livecaption") LiveCaption.On = v != "0";
                 if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin")) ScreenKorean.Lang = v;
             }
         }
         catch { }
+        // 예전 판의 설정(+한 기본 꺼짐)은 한 번만 켜 둔다. 그 뒤에 트레이·막대에서 끄면 그대로 둔다.
+        if (!bothSet)
+        {
+            Both = true;
+            SaveSettings();
+        }
     }
 
     static void SaveSettings()
     {
         try
         {
-            File.WriteAllText(settingsFile, "lang=" + Lang + "\r\nreceive=" + (Receive ? "1" : "0") + "\r\nboth=" + (Both ? "1" : "0")
+            File.WriteAllText(settingsFile, "lang=" + Lang + "\r\nreceive=" + (Receive ? "1" : "0") + "\r\nboth=" + (Both ? "1" : "0") + "\r\nbothdefault=1"
                 + "\r\nkorean=" + (ShowKorean ? "1" : "0") + "\r\nlivecaption=" + (LiveCaption.On ? "1" : "0") + "\r\nscreenlang=" + ScreenKorean.Lang + "\r\n");
         }
         catch { }
@@ -1436,8 +1446,11 @@ static class App
                 }
                 continue;
             }
-            trace.Append(b.Hash.Substring(0, 4));
             dark = Chat.Luma(b.Bg) < 128;
+            // 내가 보낸 말풍선에는 한국어 딱지를 그리지 않는다(읽지도 않는다) — 한국어는 +한 으로 말풍선 안에 같이 간다.
+            // 말풍선 옆 어두운 딱지('↩ 되옮김', '✎ 원문')가 보기 싫다(사용자 2026-11-04).
+            if (b.Mine) { trace.Append("mine"); continue; }
+            trace.Append(b.Hash.Substring(0, 4));
             b.Row.Offset(wr.X, wr.Y);
             b.Box.Offset(wr.X, wr.Y);
             b.InkLeft += wr.X;

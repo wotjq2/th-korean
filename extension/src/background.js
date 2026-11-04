@@ -111,7 +111,9 @@ async function gmXhr(m) {
       headers: m.headers,
       body: m.method === 'GET' || m.method === 'HEAD' ? undefined : m.data,
       signal: ctl.signal,
-      credentials: 'include', // 몽키도 기본으로 쿠키를 함께 보낸다
+      // 쿠키는 보내지 않는다 — 번역·용어집·사진·도우미 어느 것도 로그인이 필요 없고, 번역할 글이 사용자의 구글 계정과
+      // 이어지지 않게(개인정보 처리방침: 보내는 것은 번역할 글뿐). 용어집 저장은 토큰을 머리글로 보낸다.
+      credentials: 'omit',
     });
     const out = {
       status: r.status,

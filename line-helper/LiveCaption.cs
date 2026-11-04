@@ -121,8 +121,10 @@ static class LiveCaption
                     d["dead"] = dead;
                     lastPolled = DateTime.Now;
                     byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
+                    // 'Access-Control-Allow-Origin' 은 붙이지 않는다 — 붙이면 아무 웹사이트나 사용자가 듣는 말(자막)을 읽어 갈 수
+                    // 있다(2026-11-04 전수검사). 확장·몽키는 권한 있는 요청(GM_xmlhttpRequest)이라 이 머리글 없이도 읽는다.
                     byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
-                        + "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.Length + "\r\n\r\n");
+                        + "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.Length + "\r\n\r\n");
                     s.Write(head, 0, head.Length);
                     s.Write(body, 0, body.Length);
                 }

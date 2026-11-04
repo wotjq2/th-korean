@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.9
+// @version      1.28.10
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -892,9 +892,9 @@
 
   // ---------------------------------------------------------------------------
   // 무료 엔진 (키 불필요).
-  // 이 엔드포인트는 q 파라미터를 여러 개 줘도 첫 번째만 번역해 돌려준다(확인함).
-  // 대신 줄바꿈으로 이어 붙이면 줄 순서를 그대로 유지해 주므로 그 방식으로 묶는다.
-  // 줄 수가 어긋나면 해당 묶음만 하나씩 다시 요청한다.
+  // gtx 주소(translate_a/single)는 q 를 여러 개 줘도 첫 번째만 번역한다. 그래서 여러 줄은 dict-chrome-ex
+  // 주소(translate_a/t)에 줄마다 q 를 하나씩 넣어 같은 차례의 배열로 받는다(freeAltMany). 줄바꿈으로 이어 보내는
+  // 예전 방식은 줄 수가 맞아도 짝이 밀릴 수 있어(2026-11-04) 그 주소가 막혔을 때만 쓴다.
   // ---------------------------------------------------------------------------
 
   const FREE_CHUNK_ITEMS = 40;
@@ -985,9 +985,9 @@
   // 줄바꿈으로 이어 보내면 구글이 줄을 합치고 나눠, 줄 수는 맞는데 짝이 밀린 채 캐시에 남았다(2026-11-04
   // 라자다 검색 결과 제목 หูฟังไร้สาย(무선 이어폰) → 앞줄 인사말의 '안녕하세요.').
   let dictBlockedUntil = 0;
-  async function freeAltMany(lines, from, to) {
+  async function freeAltMany(lines, from, to, timeout) {
     const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=${from}&tl=${to}&` + lines.map((l) => `q=${encodeURIComponent(l)}`).join('&');
-    const body = await request({ method: 'GET', url });
+    const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
     let data;
     try {
       data = JSON.parse(body);
@@ -1330,7 +1330,8 @@
     return { thai: out, via: '무료 API' };
   }
 
-  // 용어집에 없는 조각만 무료 API 로 옮긴다. 여러 조각은 줄바꿈으로 묶어 한 번에 보낸다.
+  // 용어집에 없는 조각만 무료 API 로 옮긴다. 여러 조각은 조각마다 따로 넣어 한 번에 보내고 같은 차례로 받는다
+  // (freeAltMany — 줄바꿈으로 이어 보내면 짝이 밀린 채 캐시에 남을 수 있다). 그 주소가 막혔으면 하나씩 묻는다.
   // 실패한 조각은 비워 둔다 — 그러면 검색은 용어집에 걸린 말만으로 나간다.
   async function fillUnknown(unknown) {
     const need = [];
@@ -1340,16 +1341,16 @@
       else need.push(p);
     }
     if (!need.length) return;
-    let lines;
-    try {
-      const joined = await freeRaw(need.map((p) => p.ko).join('\n'), 'ko', 'th', SEARCH_FREE_TIMEOUT);
-      lines = joined.split('\n');
-    } catch (e) {
-      console.warn(`[${APP_NAME}] 검색어 조각을 무료 API 로 옮기지 못했습니다:`, e.message);
-      return;
+    let lines = null;
+    if (Date.now() >= dictBlockedUntil) {
+      try {
+        lines = await freeAltMany(need.map((p) => p.ko), 'ko', 'th', SEARCH_FREE_TIMEOUT);
+      } catch (e) {
+        if (isBlocked(e)) dictBlockedUntil = Date.now() + 10 * 60 * 1000;
+        console.warn(`[${APP_NAME}] 검색어 조각을 한 번에 옮기지 못해 하나씩 묻습니다:`, e.message);
+      }
     }
-    if (lines.length !== need.length) {
-      // 줄 수가 어긋났다 — 하나씩 다시 묻는다.
+    if (!lines) {
       lines = await Promise.all(
         need.map((p) => freeRaw(p.ko, 'ko', 'th', SEARCH_FREE_TIMEOUT).catch(() => ''))
       );
@@ -2280,18 +2281,27 @@
       handleKoreanSearch(input, () => submitSearch(input));
     };
 
+    // 확인 차례(awaitingConfirm)는 검색칸이 아직 태국어일 때만이다. 그 사이 한국어로 다시 쳤으면 새로 바꾼다 —
+    // 안 그러면 다시 친 한국어가 그대로 검색으로 나갔다(2026-11-04 전수검사).
+    const confirming = (input) => {
+      if (!awaitingConfirm) return false;
+      awaitingConfirm = false;
+      return !HANGUL.test(input.value);
+    };
+
     window.addEventListener(
       'keydown',
       (e) => {
-        if (e.key !== 'Enter') return;
+        // 한글 조합 중의 Enter(글자 확정)는 그냥 둔다 — 바로 뒤에 오는 Enter 를 잡는다(메신저·다른 사이트와 같게).
+        // 조합 중 Enter 로 바꾸기를 시작하면 뒤따르는 Enter 가 확인 Enter 로 읽혀 확인 없이 검색됐다.
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
         if (!inSearchWidget(e.target)) return;
         // 대상이 입력창이 아니면(자동완성 목록 등) 실제 검색창을 찾아 쓴다.
         const input = isSearchInput(e.target) ? e.target : getSearchInput();
         if (!input) return;
-        if (awaitingConfirm) {
+        if (confirming(input)) {
           // 확인 Enter. 라자다에 넘기면 자기 상태에 남은 한국어로 검색해 버리므로
           // 여기서도 막고 우리가 직접 태국어 주소로 이동한다.
-          awaitingConfirm = false;
           e.preventDefault();
           e.stopImmediatePropagation();
           submitSearch(input);
@@ -2312,8 +2322,7 @@
         // 로그인·주소 같은 다른 폼까지 건드리지 않도록, 폼 밖으로는 나가지 않는다.
         const input = findInputIn(form);
         if (!input) return;
-        if (awaitingConfirm) {
-          awaitingConfirm = false;
+        if (confirming(input)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           submitSearch(input);
@@ -2339,8 +2348,7 @@
         if (!btn) return;
         const input = getSearchInput();
         if (!input) return;
-        if (awaitingConfirm) {
-          awaitingConfirm = false;
+        if (confirming(input)) {
           e.preventDefault();
           e.stopImmediatePropagation();
           submitSearch(input);
@@ -3889,7 +3897,7 @@
     panel.id = 'lzk-panel';
     markNoTranslate(panel);
     panel.innerHTML = `
-      <h3>${APP_NAME} 설정 <span style="font-weight:400;opacity:.6">· ${SITE.label}</span></h3>
+      <h3>${APP_NAME} 설정 <span id="lzk-site-label" style="font-weight:400;opacity:.6"></span></h3>
 
       <label>검색 용어집 (한국어=태국어, 한 줄에 하나)</label>
       <textarea id="lzk-glossary" placeholder="사무실=สำนักงาน&#10;쇼파=โซฟา"></textarea>
@@ -4012,6 +4020,8 @@
     document.body.appendChild(panel);
 
     const $ = (id) => panel.querySelector(id);
+    // 사이트 이름은 원격 설정(config.json shops.label)에서 올 수 있다 — 글자로만 넣는다(HTML 로 읽히지 않게).
+    $('#lzk-site-label').textContent = `· ${SITE.label}`;
     $('#lzk-provider').value = cfg.aiProvider;
     // 저장된 값이 구버전('groq')이어도 'AI' 항목이 선택되도록 맞춰준다.
     $('#lzk-page-engine').value = usesAI(cfg.pageEngine) ? 'ai' : cfg.pageEngine;
@@ -4562,8 +4572,8 @@
   // 사이트 포함)의 입력칸에서 한국어 + Enter → 그 언어. 아무것도 안 고르면 전처럼 태국어 페이지만
   // 태국어로 바꾼다. 태국어는 용어집, 영어·중국어는 샘플 용어집(KO_EN_ZH_TSV)에 통째로 맞으면 그 값, 아니면 무료 번역.
   const TYPE_LANG_KEY = 'typeLang';
-  // 언어 목록은 원격 설정(config.json 의 languages — 기본값은 RC_DEFAULT: 태·미·중·일·러·이·폴). 언어를 더하거나
-  // 이름·번역 코드·용어집 파일을 바꿀 때 이 코드는 고치지 않는다. 일·러·이·폴 은 용어집 없이 구글 번역만(2026-10-23).
+  // 언어 목록은 원격 설정(config.json 의 languages — 받기 전에는 RC_DEFAULT, 같은 22개와 언어별 용어집). 언어를 더하거나
+  // 이름·번역 코드·용어집 파일을 바꿀 때 이 코드는 고치지 않는다(config.json 과 RC_DEFAULT 를 같이 고친다).
   const TYPE_LANGS = RC.languages;
   // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
   // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.

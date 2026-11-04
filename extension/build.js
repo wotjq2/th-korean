@@ -156,7 +156,9 @@ async function main() {
     fs.rmSync(zip, { force: true });
     // Git Bash 의 tar(GNU)는 'E:' 를 원격 주소로 읽어 실패했다 — 윈도우 tar.exe 를 직접 부른다.
     const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    require('child_process').execFileSync(tar, ['-a', '-c', '-f', zip, '-C', OUT, '.']);
+    // '.' 을 넘기면 항목 이름이 './manifest.json' 이 되어 웹스토어가 '매니페스트를 찾을 수 없습니다' 로 거부했다
+    // (2026-11-04) — 맨 위 파일·폴더 이름을 하나씩 넘긴다.
+    require('child_process').execFileSync(tar, ['-a', '-c', '-f', zip, '-C', OUT, ...fs.readdirSync(OUT)]);
     console.log(`  웹스토어에 올릴 파일: ${zip} (${(fs.statSync(zip).size / 1024 / 1024).toFixed(1)} MB)`);
   }
 }

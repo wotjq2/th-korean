@@ -253,8 +253,9 @@ static class LiveCaption
         bool tuck = WantTuck();
         if (tuck) Tuck(); else Untuck();
         System.Windows.Rect b = label.Current.BoundingRectangle;
-        // 크롬이 자막 창을 내렸다(말이 없음). 치워 둔 창은 화면 밖이라 글자 칸 크기 대신 창이 보이는지로 본다.
-        if (tuck ? !Native.IsWindowVisible(bubble) : b.IsEmpty || b.Width < 30 || b.Height < 10) { Hide(); return 500; }
+        // 크롬이 자막 창을 내렸다(말이 없음). 숨은 창의 글자 칸도 마지막 자리를 그대로 알려 줘서(2026-11-04 사용자 PC:
+        // 영상 탭을 닫은 뒤에도 덮는 창이 화면 가운데 남았다) 창이 보이는지를 먼저 본다. 치워 둔 창은 화면 밖이라 글자 칸 크기는 안 본다.
+        if (!Native.IsWindowVisible(bubble) || (!tuck && (b.IsEmpty || b.Width < 30 || b.Height < 10))) { Hide(); return 500; }
         if (!seen) { seen = true; Log.Write("실시간 자막: 크롬 자막 창을 찾음 — 한국어로 옮깁니다"); }
         List<bool> glued = new List<bool>();
         List<string> lines = Lines(label, glued);

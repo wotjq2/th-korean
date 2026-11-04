@@ -860,7 +860,9 @@ static class Chat
             if (w < 16) continue;
             if (a < 24 && w <= 52) continue; // 프로필 사진
             double cx = (a + b) / 2.0;
-            if (Math.Abs(cx - W / 2.0) < W * 0.08) continue; // 가운데 = 날짜·안내
+            // 가운데 = 날짜·안내. 창 너비 60% 넘는 긴 말풍선은 가운데쯤 걸쳐도 말풍선이다(양옆 여백이 거의 같을 때만 안내)
+            // — 두 줄 꽉 찬 내 말풍선을 날짜 딱지로 보고 건너뛰었다(2026-11-05).
+            if (w < W * 0.6 ? Math.Abs(cx - W / 2.0) < W * 0.08 : Math.Abs(a - (W - b)) < 8) continue;
             List<int> inside = new List<int>();
             for (int y = y0; y < y1; y++)
                 for (int x = a; x < b; x++)
@@ -965,6 +967,13 @@ static class Chat
     }
 
     // 견주기용: 띄어쓰기·문장부호를 뺀다.
+    public static string TextHash(string s)
+    {
+        ulong h = 14695981039346656037UL;
+        foreach (char c in s) { h ^= c; h *= 1099511628211UL; }
+        return h.ToString("x16");
+    }
+
     public static string Norm(string s)
     {
         StringBuilder sb = new StringBuilder();
@@ -1459,7 +1468,46 @@ static class App
     static readonly Dictionary<string, Msg> msgs = new Dictionary<string, Msg>();
     static readonly List<KeyValuePair<string, Bitmap[]>> ocrJobs = new List<KeyValuePair<string, Bitmap[]>>();
     static readonly Dictionary<string, bool> jobMine = new Dictionary<string, bool>();
+    static readonly Dictionary<string, string> jobText = new Dictionary<string, string>(); // LINE 이 알려 준 글(있으면 OCR 안 함)
     static AutomationElement msgList;
+
+    // LINE 26.6 의 줄 이름: 받은 말 '와리사, ค่ะคุณปู่, 오후 4:08', 보낸 말 'ถ้าหิว…, 오후 4:08, 읽음', 스티커 '와리사, , 오후 4:07',
+    // 날짜 줄 '2026년 11월 4일'. 끝의 시각·읽음, 받은 말이면 앞의 보낸 사람을 떼고 글만 돌려준다. 모르는 모양이면 null(그림에서 읽는다).
+    // '읽음' 이 붙어 있으면 내가 보낸 말이다(그림으로 가린 쪽보다 확실).
+    static readonly Regex RowRead = new Regex(@",\s*(읽음|Read|既読|已读|已讀|อ่านแล้ว)(\s*\d+)?\s*$");
+    static readonly Regex RowTime = new Regex(@",\s*(오전|오후|AM|PM|午前|午後|上午|下午)?\s*\d{1,2}:\d{2}(\s*(AM|PM|am|pm|น\.))?\s*$");
+
+    static string RowText(string name, ref bool mine)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        string s = name;
+        Match rd = RowRead.Match(s);
+        if (rd.Success) { s = s.Substring(0, rd.Index); mine = true; }
+        Match t = RowTime.Match(s);
+        if (!t.Success) return null;
+        s = s.Substring(0, t.Index);
+        // 답장: 'parkyh님의 메시지에 대한 와리사님의 답장. parkyh님의 원본 메시지: (인용한 말) 답장: (답한 말)' — 답한 말만.
+        int q = s.IndexOf("님의 원본 메시지: ");
+        if (q >= 0)
+        {
+            int a = s.LastIndexOf(" 답장: ");
+            return a > q ? s.Substring(a + 5).Trim() : null;
+        }
+        if (!mine)
+        {
+            int c = s.IndexOf(", ");
+            if (c < 0) return null;
+            s = s.Substring(c + 2);
+        }
+        return s.Trim();
+    }
+
+    // 한국어가 꽤 들어 있으면('+한' 으로 보낸 말) 옮기지 않는다. 태국어 가운데 낱말 하나('“쑥”')는 옮긴다.
+    static bool HasKorean(string text)
+    {
+        int ko = Hangul.Matches(text).Count;
+        return ko >= 2 && ko * 5 >= Thai.Matches(text).Count;
+    }
     static IntPtr msgListWin = IntPtr.Zero;
     static DateTime msgListAt = DateTime.MinValue;
     static string hoverKey;
@@ -1498,6 +1546,7 @@ static class App
         CacheRequest cr = new CacheRequest();
         cr.Add(AutomationElement.BoundingRectangleProperty);
         cr.Add(AutomationElement.ControlTypeProperty);
+        cr.Add(AutomationElement.NameProperty);
         try
         {
             lr = ToRect(msgList.Current.BoundingRectangle);
@@ -1529,8 +1578,11 @@ static class App
         bool dark = false;
         foreach (AutomationElement it in items)
         {
-            if (it.Cached.ControlType != ControlType.ListItem) continue;
+            // LINE 26.5 까지는 줄이 ListItem(이름 없음), 26.6(2026-11-05) 부터는 Text 이고 이름에 '보낸 사람, 글, 시각, 읽음' 이 들어 있다.
+            ControlType ct = it.Cached.ControlType;
+            if (ct != ControlType.ListItem && ct != ControlType.Text) continue;
             Rectangle r = ToRect(it.Cached.BoundingRectangle);
+            if (r.Bottom <= lr.Top || r.Top >= lr.Bottom) continue; // 화면 밖 줄(26.6 은 대화 전체 줄을 다 알려 준다)
             trace.Append(" ").Append(r.Top - lr.Top).Append(":");
             if (r.Height < 16 || r.Top < lr.Top || r.Bottom > lr.Bottom) { trace.Append("cut"); continue; } // 반쯤 가린 줄은 반쪽 글자를 읽는다
             Rectangle rc = new Rectangle(r.X - wr.X, r.Y - wr.Y, r.Width, r.Height);
@@ -1551,7 +1603,10 @@ static class App
                 continue;
             }
             dark = Chat.Luma(b.Bg) < 128;
-            trace.Append(b.Hash.Substring(0, 4));
+            // LINE 이 글자를 알려 주면(26.6~) 그 글자를 그대로 쓴다 — 그림에서 읽지 않으니 흐린 글자·빠진 모음이 없다.
+            string uiText = RowText(it.Cached.Name, ref b.Mine);
+            string key = uiText != null ? "t" + Chat.TextHash(uiText) + (b.Mine ? "m" : "p") : b.Hash;
+            trace.Append(key.Substring(uiText != null ? 1 : 0, 4));
             b.Row.Offset(wr.X, wr.Y);
             b.Box.Offset(wr.X, wr.Y);
             b.InkLeft += wr.X;
@@ -1560,17 +1615,22 @@ static class App
             lock (msgs)
             {
                 if (msgs.Count > 3000) msgs.Clear();
-                if (!msgs.TryGetValue(b.Hash, out m) || (m.Done && m.Ko == "" && m.FailedAt != DateTime.MinValue && (DateTime.Now - m.FailedAt).TotalSeconds > 20))
+                if (!msgs.TryGetValue(key, out m) || (m.Done && m.Ko == "" && m.FailedAt != DateTime.MinValue && (DateTime.Now - m.FailedAt).TotalSeconds > 20))
                 {
                     m = new Msg();
-                    msgs[b.Hash] = m;
-                    Rectangle box = b.Box;
-                    box.Offset(-wr.X, -wr.Y);
-                    Bitmap[] img = Chat.PrepareOcr(px, wr.Width, box, b.Fill, b.Bg);
+                    msgs[key] = m;
+                    Bitmap[] img = null;
+                    if (uiText == null)
+                    {
+                        Rectangle box = b.Box;
+                        box.Offset(-wr.X, -wr.Y);
+                        img = Chat.PrepareOcr(px, wr.Width, box, b.Fill, b.Bg);
+                    }
                     lock (ocrJobs)
                     {
-                        ocrJobs.Add(new KeyValuePair<string, Bitmap[]>(b.Hash, img));
-                        jobMine[b.Hash] = b.Mine;
+                        ocrJobs.Add(new KeyValuePair<string, Bitmap[]>(key, img));
+                        jobMine[key] = b.Mine;
+                        if (uiText != null) jobText[key] = uiText;
                         Monitor.Pulse(ocrJobs);
                     }
                 }
@@ -1647,6 +1707,7 @@ static class App
         {
             KeyValuePair<string, Bitmap[]> job;
             bool mine;
+            string given;
             lock (ocrJobs)
             {
                 while (ocrJobs.Count == 0) Monitor.Wait(ocrJobs);
@@ -1654,6 +1715,8 @@ static class App
                 ocrJobs.RemoveAt(ocrJobs.Count - 1);
                 mine = jobMine[job.Key];
                 jobMine.Remove(job.Key);
+                if (jobText.TryGetValue(job.Key, out given)) jobText.Remove(job.Key);
+                else given = null;
             }
             Msg m;
             lock (msgs) msgs.TryGetValue(job.Key, out m);
@@ -1661,34 +1724,42 @@ static class App
             string file = Path.Combine(tmp, job.Key + "-4.png"), file3 = Path.Combine(tmp, job.Key + "-3.png");
             try
             {
-                job.Value[0].Save(file, System.Drawing.Imaging.ImageFormat.Png);
-                job.Value[1].Save(file3, System.Drawing.Imaging.ImageFormat.Png);
-                job.Value[0].Dispose();
-                job.Value[1].Dispose();
-                string[] r4 = engine.Call("ocr", "", file, 30000), r3 = engine.Call("ocr", "", file3, 30000);
-                // 두 배율이 같게 읽으면 확실. 다르면 확신도가 높은 쪽인데, 그것도 90 아래면 옮기지 않는다(오역보다 안내).
-                // 둘 다 87 이상이고 한두 글자만 다르면(한쪽이 끝의 모음·성조 하나를 빠뜨림 — 'เธอทําอะไรอยู่' / 'เธอทําอะไรอย',
-                // 2026-11-04 하루에 34번 버려졌다) 확실한 것으로 보고 더 긴(덜 빠뜨린) 쪽을 쓴다.
-                string n4 = Chat.Norm(r4[0]), n3 = Chat.Norm(r3[0]);
-                bool same = n4 == n3;
-                int c4 = ParseInt(r4[1]), c3 = ParseInt(r3[1]);
-                bool near = !same && Math.Min(n4.Length, n3.Length) >= 6 && Math.Min(c4, c3) >= 87 && Chat.Lev(n4, n3) <= 2;
-                string text = same ? r4[0] : near ? (n4.Length >= n3.Length ? r4[0] : r3[0]) : c4 >= c3 ? r4[0] : r3[0];
-                bool sure = same || near || Math.Max(c4, c3) >= 90;
-                if (Debugging)
+                string text;
+                bool sure = true;
+                string[] r4 = null, r3 = null;
+                int c4 = 0, c3 = 0;
+                if (given != null) text = given; // LINE 이 알려 준 글 — 그대로 확실
+                else
                 {
-                    File.Copy(file, Path.Combine(dataDir, "debug-ocr-" + job.Key.Substring(0, 6) + ".png"), true);
-                    Log.Write("읽음 " + job.Key.Substring(0, 6) + " 4배[" + r4[0] + "] " + c4 + " 3배[" + r3[0] + "] " + c3);
+                    job.Value[0].Save(file, System.Drawing.Imaging.ImageFormat.Png);
+                    job.Value[1].Save(file3, System.Drawing.Imaging.ImageFormat.Png);
+                    job.Value[0].Dispose();
+                    job.Value[1].Dispose();
+                    r4 = engine.Call("ocr", "", file, 30000); r3 = engine.Call("ocr", "", file3, 30000);
+                    // 두 배율이 같게 읽으면 확실. 다르면 확신도가 높은 쪽인데, 그것도 90 아래면 옮기지 않는다(오역보다 안내).
+                    // 둘 다 87 이상이고 한두 글자만 다르면(한쪽이 끝의 모음·성조 하나를 빠뜨림 — 'เธอทําอะไรอยู่' / 'เธอทําอะไรอย',
+                    // 2026-11-04 하루에 34번 버려졌다) 확실한 것으로 보고 더 긴(덜 빠뜨린) 쪽을 쓴다.
+                    string n4 = Chat.Norm(r4[0]), n3 = Chat.Norm(r3[0]);
+                    bool same = n4 == n3;
+                    c4 = ParseInt(r4[1]); c3 = ParseInt(r3[1]);
+                    bool near = !same && Math.Min(n4.Length, n3.Length) >= 6 && Math.Min(c4, c3) >= 87 && Chat.Lev(n4, n3) <= 2;
+                    text = same ? r4[0] : near ? (n4.Length >= n3.Length ? r4[0] : r3[0]) : c4 >= c3 ? r4[0] : r3[0];
+                    sure = same || near || Math.Max(c4, c3) >= 90;
+                    if (Debugging)
+                    {
+                        File.Copy(file, Path.Combine(dataDir, "debug-ocr-" + job.Key.Substring(0, 6) + ".png"), true);
+                        Log.Write("읽음 " + job.Key.Substring(0, 6) + " 4배[" + r4[0] + "] " + c4 + " 3배[" + r3[0] + "] " + c3);
+                    }
                 }
                 string ko = "", mark = "";
                 int thai = Thai.Matches(text).Count;
-                if (thai >= 2 && !Hangul.IsMatch(text) && !sure)
+                if (thai >= 2 && !HasKorean(text) && !sure)
                 {
                     ko = "글자가 흐려 확실히 못 읽었어요 — 복사하면 옮겨 줘요";
                     mark = "?";
                     Log.Write("말풍선 확실하지 않음: 4배[" + r4[0] + "] " + c4 + " / 3배[" + r3[0] + "] " + c3);
                 }
-                else if (thai >= 2 && !Hangul.IsMatch(text))
+                else if (thai >= 2 && !HasKorean(text))
                 {
                     if (mine)
                     {
@@ -1697,7 +1768,7 @@ static class App
                         else { ko = engine.Call("ko", "", text, 12000)[0]; mark = "↩"; }
                     }
                     else ko = engine.Call("ko", "", text, 12000)[0];
-                    Log.Write("말풍선 " + (mine ? "(나) " : "") + "[" + text + "] → [" + ko + "]");
+                    Log.Write("말풍선 " + (mine ? "(나) " : "") + (given != null ? "" : "(그림) ") + "[" + text + "] → [" + ko + "]");
                 }
                 m.Thai = text;
                 m.Ko = ko;

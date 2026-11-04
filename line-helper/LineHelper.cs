@@ -500,10 +500,14 @@ class Msg
     public DateTime FailedAt = DateTime.MinValue;
 }
 
-// 말풍선 옆에 붙일 한국어. Avail 은 비어 있는 자리, Drawn 은 실제로 그린 자리(그릴 때 정한다).
+// 말풍선에 붙일 한국어. Avail 은 말풍선 옆의 비어 있는 자리, Drawn 은 실제로 그린 자리(그릴 때 정한다).
+// Box·Fill·MaxBottom: 원래 말풍선 자리와 색, 아래로 늘릴 수 있는 끝(다음 말풍선 위) — 말풍선을 같은 색으로 다시 그려
+// 원래 말 아래 줄에 한국어를 넣는다('+한' 으로 보낸 말과 같은 모양).
 class Label
 {
-    public Rectangle Avail, Hover, Drawn;
+    public Rectangle Avail, Hover, Drawn, Box;
+    public int MaxBottom;
+    public Color Fill;
     public string Text, Thai, Ko;
     public bool Mine, Cut;
 }
@@ -518,6 +522,8 @@ class Overlay : Form
     readonly Font small = new Font("Malgun Gothic", 8f);
     public List<Label> Labels = new List<Label>();
     string lastKey = "";
+    // 다시 그린 말풍선의 글씨 크기(pt). 큰 것부터 넣어 보고 안 들어가면 줄인다. 태국어는 Tahoma(맑은 고딕에는 태국 글자가 없다).
+    static readonly float[] BubbleSizes = { 9.5f, 9f, 8.5f, 8f, 7.5f };
 
     public Overlay()
     {
@@ -592,7 +598,11 @@ class Overlay : Form
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-                foreach (Label l in Labels) DrawLabel(g, l, bounds, bg, fg, accent);
+                foreach (Label l in Labels)
+                {
+                    if (l.Box.IsEmpty) DrawLabel(g, l, bounds, bg, fg, accent);
+                    else DrawBubble(g, l, bounds);
+                }
             }
             App.DebugOverlay(bmp, bounds, Handle);
             IntPtr screen = Native.GetDC(IntPtr.Zero);
@@ -656,6 +666,100 @@ class Overlay : Form
         RectangleF tr = new RectangleF(r.Left + padX + (l.Mine ? 0 : bar), r.Top + padY, textW + 2, (float)need.Height + 1);
         using (SolidBrush b = new SolidBrush(fg)) g.DrawString(l.Text, f, b, tr, sf);
         l.Drawn = new Rectangle(r.X + bounds.X, r.Y + bounds.Y, r.Width, r.Height);
+    }
+
+    // 말풍선을 같은 색으로 다시 그려 첫 줄에 원래 말, 다음 줄에 한국어 — '+한' 으로 보낸 말과 같은 모양(사용자 2026-11-04:
+    // 말풍선 옆 어두운 딱지 대신 이렇게). LINE 말풍선 안에는 글을 넣을 수 없어 그 위에 덧그린다. 넓이는 말풍선 옆 빈자리
+    // (Avail — 상대는 오른쪽, 나는 왼쪽)까지, 높이는 다음 말풍선 위(MaxBottom)까지만 늘린다. 그래도 넘치면 작은 글씨로,
+    // 끝까지 안 들어가면 '…' — 마우스를 올리면 다 보여 준다(HoverLabels).
+    void DrawBubble(Graphics g, Label l, Rectangle bounds)
+    {
+        Rectangle box = l.Box;
+        box.Offset(-bounds.X, -bounds.Y);
+        int outerL = l.Mine ? Math.Min(box.Left, l.Avail.Left - bounds.X) : box.Left;
+        int outerR = l.Mine ? box.Right : Math.Max(box.Right, l.Avail.Right - bounds.X);
+        int maxH = Math.Max(box.Height, l.MaxBottom - bounds.Y - box.Top);
+        const int padX = 10, padY = 5, gapY = 2;
+        // 색은 화면에서 읽은 그 말풍선 색 그대로(상대 회색, 나 초록). 글자색도 '+한' 처럼 두 줄 같게 — 밝은 말풍선엔 검정, 어두운 데엔 흰색.
+        Color ink = Chat.Luma(l.Fill) >= 150 ? Color.FromArgb(25, 25, 28) : Color.FromArgb(242, 242, 245);
+        Color koInk = ink;
+        StringFormat sf = new StringFormat { Trimming = StringTrimming.EllipsisWord };
+        string th = l.Thai ?? "", ko = l.Ko ?? "";
+        Font fTh = null, fKo = null;
+        int w = 0, hTh = 0, hKo = 0;
+        List<string> koRows = null;
+        l.Cut = false;
+        // 먼저 원래 넓이 안에서(줄을 바꾸고 글씨를 조금 줄여) — 옆으로 넓히면 말풍선 옆의 보낸 시각을 덮는다. 그래도 안 들어가면
+        // 옆 빈자리까지 넓힌다(큰 글씨부터 다시).
+        int tries = 3 + BubbleSizes.Length;
+        for (int t = 0; t < tries; t++)
+        {
+            bool widen = t >= 3;
+            float size = BubbleSizes[widen ? t - 3 : t];
+            if (fTh != null) { fTh.Dispose(); fKo.Dispose(); }
+            fTh = new Font("Tahoma", size);
+            fKo = new Font("Malgun Gothic", size);
+            // 넓힐 때는 한 줄로 쓸 만큼 — 원래 말풍선보다 좁아지지 않게, 옆 빈자리보다 넓어지지 않게.
+            int one = (int)Math.Ceiling(Math.Max(g.MeasureString(th, fTh).Width, g.MeasureString(ko, fKo).Width)) + padX * 2;
+            w = widen ? Math.Max(box.Width, Math.Min(one, outerR - outerL)) : box.Width;
+            int textW = w - padX * 2;
+            hTh = (int)Math.Ceiling(g.MeasureString(th, fTh, textW).Height);
+            koRows = WrapWords(g, ko, fKo, textW);
+            int koLine = (int)Math.Ceiling(fKo.GetHeight(g));
+            hKo = koRows.Count * koLine;
+            if (hTh + gapY + hKo + padY * 2 <= maxH) break;
+            if (t == tries - 1)
+            {
+                // 가장 작은 글씨로도 넘친다 — 태국어는 한 줄, 한국어는 남은 높이에 들어가는 줄까지만 쓰고 끝에 '…'.
+                l.Cut = true;
+                hTh = Math.Min(hTh, (int)Math.Ceiling(fTh.GetHeight(g)));
+                int fit = Math.Max(1, (maxH - padY * 2 - gapY - hTh) / koLine);
+                if (koRows.Count > fit)
+                {
+                    koRows = koRows.GetRange(0, fit);
+                    koRows[fit - 1] = koRows[fit - 1] + "…";
+                }
+                hKo = koRows.Count * koLine;
+            }
+        }
+        int h = Math.Max(box.Height, Math.Min(maxH, hTh + gapY + hKo + padY * 2));
+        Rectangle r = new Rectangle(l.Mine ? box.Right - w : box.Left, box.Top, w, h);
+        using (System.Drawing.Drawing2D.GraphicsPath p = Rounded(r, Math.Min(12, h / 2)))
+        using (SolidBrush b = new SolidBrush(Color.FromArgb(255, l.Fill))) g.FillPath(b, p);
+        int y = r.Top + Math.Max(padY, (h - hTh - gapY - hKo) / 2);
+        using (SolidBrush b = new SolidBrush(ink)) g.DrawString(th, fTh, b, new RectangleF(r.Left + padX, y, w - padX * 2 + 2, hTh), sf);
+        StringFormat one1 = new StringFormat(StringFormatFlags.NoWrap) { Trimming = StringTrimming.EllipsisCharacter };
+        int ky = y + hTh + gapY, kh = (int)Math.Ceiling(fKo.GetHeight(g));
+        using (SolidBrush b = new SolidBrush(koInk))
+            foreach (string row in koRows)
+            {
+                g.DrawString(row, fKo, b, new RectangleF(r.Left + padX, ky, w - padX * 2 + 2, kh + 1), one1);
+                ky += kh;
+            }
+        fTh.Dispose();
+        fKo.Dispose();
+        l.Drawn = new Rectangle(r.X + bounds.X, r.Y + bounds.Y, r.Width, r.Height);
+    }
+
+    // 띄어쓰기에서 줄을 바꾼다 — 그리기 기본은 한글을 글자마다 끊어 '할아버 / 지.' 가 됐다. 넓이보다 긴 낱말 하나는 그 줄을 넘치게
+    // 두고 그릴 때 '…' 로 줄인다.
+    static List<string> WrapWords(Graphics g, string text, Font f, int width)
+    {
+        List<string> rows = new List<string>();
+        string cur = "";
+        foreach (string word in text.Split(' '))
+        {
+            if (word.Length == 0) continue;
+            string t = cur.Length == 0 ? word : cur + " " + word;
+            if (cur.Length == 0 || g.MeasureString(t, f).Width <= width) cur = t;
+            else
+            {
+                rows.Add(cur);
+                cur = word;
+            }
+        }
+        if (cur.Length > 0 || rows.Count == 0) rows.Add(cur);
+        return rows;
     }
 
     static System.Drawing.Drawing2D.GraphicsPath Rounded(Rectangle r, int rad)
@@ -1447,9 +1551,6 @@ static class App
                 continue;
             }
             dark = Chat.Luma(b.Bg) < 128;
-            // 내가 보낸 말풍선에는 한국어 딱지를 그리지 않는다(읽지도 않는다) — 한국어는 +한 으로 말풍선 안에 같이 간다.
-            // 말풍선 옆 어두운 딱지('↩ 되옮김', '✎ 원문')가 보기 싫다(사용자 2026-11-04).
-            if (b.Mine) { trace.Append("mine"); continue; }
             trace.Append(b.Hash.Substring(0, 4));
             b.Row.Offset(wr.X, wr.Y);
             b.Box.Offset(wr.X, wr.Y);
@@ -1475,6 +1576,8 @@ static class App
                 }
             }
             if (!m.Done || m.Ko == "") { trace.Append(m.Done ? "-" : "?"); continue; }
+            // 흐려 확실히 못 읽은 말풍선은 아무것도 덧그리지 않는다(엉뚱한 뜻보다 낫다 — 복사하면 옮겨 준다).
+            if (m.Mark == "?") { trace.Append("~"); continue; }
             trace.Append("+");
             Label l = new Label();
             l.Mine = b.Mine;
@@ -1482,6 +1585,11 @@ static class App
             l.Ko = m.Ko;
             l.Text = m.Mark == "" ? m.Ko : m.Mark + " " + m.Ko;
             l.Hover = b.Box;
+            // 말풍선을 같은 색으로 다시 그려 원래 말 아래 줄에 한국어(Overlay.DrawBubble). 내가 '+한' 없이 태국어로만 보낸
+            // 예전 말풍선도 같은 모양 — '+한' 으로 보낸 것은 한국어가 들어 있어 여기까지 오지 않는다(옮길 말 없음).
+            l.Box = b.Box;
+            l.Fill = b.Fill;
+            l.MaxBottom = Math.Min(b.Row.Bottom, lr.Bottom);
             int top = b.Box.Top, h = Math.Max(b.Box.Height, 22);
             if (top + h > lr.Bottom) h = lr.Bottom - top;
             l.Avail = b.Mine ? Rectangle.FromLTRB(b.Row.Left + 10, top, b.InkLeft - 8, top + h)
@@ -1559,10 +1667,14 @@ static class App
                 job.Value[1].Dispose();
                 string[] r4 = engine.Call("ocr", "", file, 30000), r3 = engine.Call("ocr", "", file3, 30000);
                 // 두 배율이 같게 읽으면 확실. 다르면 확신도가 높은 쪽인데, 그것도 90 아래면 옮기지 않는다(오역보다 안내).
-                bool same = Chat.Norm(r4[0]) == Chat.Norm(r3[0]);
+                // 둘 다 87 이상이고 한두 글자만 다르면(한쪽이 끝의 모음·성조 하나를 빠뜨림 — 'เธอทําอะไรอยู่' / 'เธอทําอะไรอย',
+                // 2026-11-04 하루에 34번 버려졌다) 확실한 것으로 보고 더 긴(덜 빠뜨린) 쪽을 쓴다.
+                string n4 = Chat.Norm(r4[0]), n3 = Chat.Norm(r3[0]);
+                bool same = n4 == n3;
                 int c4 = ParseInt(r4[1]), c3 = ParseInt(r3[1]);
-                string text = same || c4 >= c3 ? r4[0] : r3[0];
-                bool sure = same || Math.Max(c4, c3) >= 90;
+                bool near = !same && Math.Min(n4.Length, n3.Length) >= 6 && Math.Min(c4, c3) >= 87 && Chat.Lev(n4, n3) <= 2;
+                string text = same ? r4[0] : near ? (n4.Length >= n3.Length ? r4[0] : r3[0]) : c4 >= c3 ? r4[0] : r3[0];
+                bool sure = same || near || Math.Max(c4, c3) >= 90;
                 if (Debugging)
                 {
                     File.Copy(file, Path.Combine(dataDir, "debug-ocr-" + job.Key.Substring(0, 6) + ".png"), true);

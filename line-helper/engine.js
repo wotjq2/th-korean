@@ -88,8 +88,9 @@ function installStubs(version) {
 const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
-  'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang',
+  'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang', 'rcRefresh',
 ];
+const configText = () => (store.remoteConfig && store.remoteConfig.text) || ''; // 스크립트의 RC_STORE 사본
 
 let T = null;
 const ready = (async () => {
@@ -99,6 +100,7 @@ const ready = (async () => {
   const tail = src.lastIndexOf('})();');
   const exp = NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? null : ${n}`).join(', ');
   src = src.slice(0, tail) + `globalThis.__t = { ${exp} };\n` + src.slice(tail);
+  const builtConfig = configText();
   eval(src);
   T = globalThis.__t;
   console.error(`엔진 준비: 스크립트 ${version}`);
@@ -123,6 +125,18 @@ const ready = (async () => {
       /* 다음에 다시 본다 */
     }
   }, 20 * 60 * 1000).unref();
+  // 원격 설정(config.json — 언어 목록·언어별 용어집 파일)도 같은 셈. 스크립트는 띄울 때 읽은 사본을 끝까지 쓰고
+  // 새 사본은 띄우고 3초 뒤 한 번만 받는다 — 페이지는 금방 닫히지만 엔진은 며칠 켜져 있어, 언어 21개에 용어집을
+  // 붙인 뒤에도(2026-11-04) 도우미는 옛 목록으로 구글 번역만 했다. 10분마다 사본을 새로 받아 보고(1시간 넘은 것만
+  // 받는다) 띄울 때와 달라졌으면 하던 번역을 마치고 끝낸다 — 다음 요청 때 새 설정으로 뜬다.
+  realSetInterval(() => {
+    if (T.rcRefresh) T.rcRefresh();
+    const now = configText();
+    if (!now || now === builtConfig || updateReady) return;
+    console.error('원격 설정(config.json)이 바뀌었습니다 — 엔진을 다시 띄웁니다');
+    updateReady = true;
+    if (!pending) finish();
+  }, 10 * 60 * 1000).unref();
 })();
 
 // 한국어 → 고른 언어. 태국어는 메신저 보내기와 같은 길(용어집 → 문장 번역).

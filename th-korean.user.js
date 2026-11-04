@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.7
+// @version      1.28.8
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -810,6 +810,13 @@
     GM_setValue(CACHE_KEY, cache);
     GM_setValue('searchCachePurged191', true);
   }
+  // 1.28.8: 페이지 표시 캐시('ko|…')를 한 번 비운다. 줄바꿈으로 이어 보낸 묶음 번역의 짝이 밀려 엉뚱한 번역
+  // (หูฟังไร้สาย(무선 이어폰) → '안녕하세요.')이 남아 라자다 검색 결과 제목에 계속 나왔다. 이제 묶음은 줄마다 따로 보낸다.
+  if (!GM_getValue('pageCachePurged1288', false)) {
+    for (const k of Object.keys(cache)) if (k.startsWith('ko|')) delete cache[k];
+    GM_setValue(CACHE_KEY, cache);
+    GM_setValue('pageCachePurged1288', true);
+  }
 
   function cacheGet(text, to) {
     return cache[to + '|' + text];
@@ -957,6 +964,23 @@
     return freeRaw(text, from, to);
   }
 
+  // 여러 줄을 한 번에 — dict-chrome-ex 는 q 를 여러 개 받아 같은 차례의 배열로 돌려준다(sl=auto 면 [["번역", "th"], …]).
+  // 줄바꿈으로 이어 보내면 구글이 줄을 합치고 나눠, 줄 수는 맞는데 짝이 밀린 채 캐시에 남았다(2026-11-04
+  // 라자다 검색 결과 제목 หูฟังไร้สาย(무선 이어폰) → 앞줄 인사말의 '안녕하세요.').
+  let dictBlockedUntil = 0;
+  async function freeAltMany(lines, from, to) {
+    const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=${from}&tl=${to}&` + lines.map((l) => `q=${encodeURIComponent(l)}`).join('&');
+    const body = await request({ method: 'GET', url });
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      throw new RateLimited();
+    }
+    if (!Array.isArray(data) || data.length !== lines.length) throw new Error('응답 형식 오류');
+    return data.map((d) => (Array.isArray(d) ? d[0] : d)).map((s) => (typeof s === 'string' ? s : ''));
+  }
+
   function chunkForFree(texts) {
     const chunks = [];
     let current = [];
@@ -982,6 +1006,18 @@
 
     await runPool(chunks, 4, async (idxs) => {
       const lines = idxs.map((i) => flat[i]);
+      if (Date.now() >= dictBlockedUntil) {
+        try {
+          const parts = await freeAltMany(lines, from, to);
+          idxs.forEach((orig, k) => {
+            out[orig] = parts[k].trim();
+          });
+          return;
+        } catch (e) {
+          // 막혔으면 10분 동안은 이 주소를 건너뛰고 아래(이어 보내기 → 줄 수가 어긋나면 하나씩)로 간다.
+          if (isBlocked(e)) dictBlockedUntil = Date.now() + 10 * 60 * 1000;
+        }
+      }
       try {
         const joined = await freeRaw(lines.join('\n'), from, to);
         const parts = joined.split('\n');

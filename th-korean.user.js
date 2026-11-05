@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.29.0
+// @version      1.29.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -229,7 +229,8 @@
           if (n.nodeType === 3) {
             if (HANGUL.test(n.nodeValue || '') && uiOurs(n.parentElement)) uiFixText(n);
           } else if (n.nodeType === 1) {
-            const own = (n.id && n.id.startsWith('lzk-')) || (typeof n.className === 'string' && n.className.includes('lzk-'));
+            // form.id 는 name="id" 인 입력칸을 돌려주기도 한다(쇼피에서 startsWith 오류) — 글자인지 먼저 본다.
+            const own = (typeof n.id === 'string' && n.id.startsWith('lzk-')) || (typeof n.className === 'string' && n.className.includes('lzk-'));
             if (own || (HANGUL.test(n.textContent || '') && uiOurs(n))) uiFixTree(n);
           }
         }
@@ -4607,6 +4608,7 @@
   function init() {
     GM_addStyle(LZK_CSS);
     mountFab();
+    mountLangTools();
     setTimeout(warnIfOldScript, 3000); // 옛것이 우리보다 늦게 뜨는 경우
     hookSearch();
     installSelectionUI();
@@ -5013,6 +5015,7 @@
 
   function genericTarget(el) {
     if (!el || el.readOnly || el.disabled || el.closest('[id^="lzk-"]')) return null;
+    if (!GENERIC && isSearchInput(el)) return null; // 쇼핑몰 검색창은 쇼핑몰 쪽이 태국어로 바꾼다
     if (isTypableText(el)) return el;
     // 구글처럼 검색칸이 textarea 인 사이트(name=q, role=combobox). 글쓰기 칸 textarea 는 건드리지 않는다.
     if (el.tagName === 'TEXTAREA' && (el.getAttribute('role') === 'combobox' || looksLikeSearchBox(el))) return el;
@@ -5282,7 +5285,9 @@
     for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
     const on = TYPE_LANGS.find((l) => l.id === typeLang);
     const toggle = bar.querySelector('.lzk-lang-toggle');
-    toggle.textContent = on ? `번역·${langLabel(on)}` : '번역';
+    // 다른 언어면 '번역' 이 그 나라 말(翻訳·terjemahan)로 바뀌어 같은 단추인 줄 모르기 쉽다 — 🌐 를 붙여 늘 같은 모양으로.
+    const word = MY_KO ? '번역' : '🌐 번역';
+    toggle.textContent = on ? `${word}·${langLabel(on)}` : word;
     toggle.toggleAttribute('data-on', !!on);
   }
 
@@ -5309,9 +5314,19 @@
     // '한' 버튼은 모든 사이트에 단다 — 예전에는 태국어 페이지에만 달아서 네이버·구글 같은 데서는 설정 창
     // (번역 도우미 설치·켜기 등)을 열 길이 없었다(2026-10-24 사용자 요청). Tampermonkey 메뉴에도 둔다.
     mountFab();
-    mountLangBar();
-    installGenericSearch();
+    mountLangTools();
     GM_registerMenuCommand('설정 열기', togglePanel);
+  }
+
+  // '한' 옆 언어 막대('번역')와 입력칸 가로채기 — 모든 사이트(일반·라자다·쇼피·메신저). 사용자(2026-11-05): 어떤 언어로
+  // 바꿔도 '한' 옆 언어 메뉴는 늘 있어야 한다. 쇼핑몰 검색창은 쇼핑몰 쪽(태국어로 검색)이 맡고(genericTarget 에서 뺀다),
+  // 메신저 입력칸(글 상자)은 입력칸이 아니라 여기서 잡지 않는다. 다른 탭에서 바꾼 선택은 이 탭으로 돌아올 때 맞춘다.
+  let langToolsOn = false;
+  function mountLangTools() {
+    mountLangBar();
+    if (langToolsOn) return;
+    langToolsOn = true;
+    installGenericSearch();
     window.addEventListener('focus', () => {
       const v = GM_getValue(TYPE_LANG_KEY, '');
       if (v !== typeLang) {
@@ -9410,6 +9425,7 @@
   function messengerInit() {
     GM_addStyle(LZK_CSS);
     mountFab(); // 메신저 설정(끝말 ครับ/ค่ะ 등)도 '한' 에서 연다
+    mountLangTools();
     ensureGlossary();
     registerMenus();
     new MutationObserver(scheduleChatScan).observe(document.body, { childList: true, subtree: true, characterData: true });

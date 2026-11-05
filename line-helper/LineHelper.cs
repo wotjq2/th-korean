@@ -339,6 +339,7 @@ class Engine
     readonly object lk = new object();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     readonly Dictionary<int, TaskCompletionSource<Dictionary<string, object>>> waiting = new Dictionary<int, TaskCompletionSource<Dictionary<string, object>>>();
+    readonly Dictionary<int, Process> owner = new Dictionary<int, Process>(); // 요청 → 그 요청을 받은 엔진
     Process proc;
     StreamWriter stdin;
     int nextId;
@@ -402,15 +403,24 @@ class Engine
                 {
                     if (!waiting.TryGetValue(id, out t)) continue;
                     waiting.Remove(id);
+                    owner.Remove(id);
                 }
                 t.TrySetResult(d);
             }
             catch (Exception e) { Log.Write("엔진 답 해석 실패: " + e.Message); }
         }
+        // 이 엔진에 보낸 요청만 실패로 — 내 언어를 바꿔 다시 띄운 새 엔진의 요청은 그대로 둔다(같이 지웠더니 새 엔진 답을 못 받았다).
         lock (lk)
         {
-            foreach (TaskCompletionSource<Dictionary<string, object>> t in waiting.Values) t.TrySetException(new Exception("엔진이 꺼졌습니다"));
-            waiting.Clear();
+            List<int> mine = new List<int>();
+            foreach (KeyValuePair<int, Process> o in owner) if (o.Value == p) mine.Add(o.Key);
+            foreach (int id in mine)
+            {
+                TaskCompletionSource<Dictionary<string, object>> t;
+                if (waiting.TryGetValue(id, out t)) t.TrySetException(new Exception("엔진이 꺼졌습니다"));
+                waiting.Remove(id);
+                owner.Remove(id);
+            }
         }
     }
 
@@ -435,6 +445,7 @@ class Engine
             if (proc == null || proc.HasExited) Start();
             int id = ++nextId;
             waiting[id] = t;
+            owner[id] = proc;
             Dictionary<string, object> req = new Dictionary<string, object>();
             req["id"] = id;
             req["op"] = op;
@@ -448,9 +459,21 @@ class Engine
         return new string[] { d["out"].ToString(), d.ContainsKey("via") ? d["via"].ToString() : "" };
     }
 
+    // 끄기: 하던 번역은 마치고 끝난다(engine.js). 지금 엔진을 떼어 내 다음 요청은 바로 새 엔진으로 간다 — 예전에는 닫는
+    // 동안 들어온 자막 요청이 닫힌 입력에 쓰려다 '닫힌 TextWriter' 로 실패했다(2026-11-05, 내 언어를 바꿀 때).
     public void Stop()
     {
-        try { if (proc != null && !proc.HasExited) { stdin.Close(); if (!proc.WaitForExit(1500)) proc.Kill(); } } catch { }
+        Process p;
+        StreamWriter s;
+        lock (lk)
+        {
+            p = proc;
+            s = stdin;
+            proc = null;
+            stdin = null;
+        }
+        try { if (s != null) s.Close(); } catch { }
+        try { if (p != null && !p.HasExited && !p.WaitForExit(1500)) p.Kill(); } catch { }
     }
 }
 

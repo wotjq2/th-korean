@@ -97,7 +97,7 @@ const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
   'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang', 'rcRefresh',
-  'MY', 'freeTranslateMany',
+  'MY', 'freeTranslateMany', 'SCRIPT_OF',
 ];
 // 스크립트가 내 언어를 알면(1.29.0~) 그 값, 아니면 한국어.
 const myLang = () => (T && T.MY) || 'ko';
@@ -291,10 +291,21 @@ function uiFix(s) {
 
 const thaiCount = (s) => (s.match(new RegExp(`[${THAI_CH}]`, 'g')) || []).length;
 
-// 옮기지 않는 줄: 영어·태국어 글자가 거의 없거나, 이미 한국어거나, 주소·경로·메일.
+// 옮기지 않는 줄: 내 언어가 아닌 글자가 거의 없거나(이미 내 말), 주소·경로·메일.
+// 예전에는 영어·태국어 글자만 셌다 — 윈도우 인식 언어(일본어·중국어·아랍어 …)로 읽은 줄도, 한국어가 아닌 내 언어 사용자가
+// 보는 한국어 줄도 옮기도록 모든 글자를 센다(2026-11-05).
+function myScriptCount(s) {
+  if (myKo()) return hangulCount(s);
+  const re = T.SCRIPT_OF && T.SCRIPT_OF[myLang().split('-')[0].toLowerCase()];
+  return re ? (s.match(new RegExp(re.source, 'g')) || []).length : 0;
+}
 function uiSkip(s) {
-  const foreign = latinCount(s) + thaiCount(s);
-  return (latinCount(s) < 2 && thaiCount(s) < 2) || hangulCount(s) >= foreign || /https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s);
+  if (/https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s)) return true;
+  const letters = (s.match(/\p{L}/gu) || []).length;
+  const mine = myScriptCount(s);
+  // 한자·가나는 한 글자도 낱말이다('開'·'閉').
+  const least = /[぀-ヿ㐀-鿿]/.test(s) ? 1 : 2;
+  return letters - mine < least || mine >= letters - mine;
 }
 
 // 윈도우 OCR 이 제대로 읽은 한국어 줄(한글·숫자·흔한 기호뿐). 태국어를 읽으면 '11.]Li하EJ가1다益ff%' 처럼
@@ -318,6 +329,8 @@ async function readThai(it) {
 // mode(트레이 '화면 번역 글자'): auto = 영어로 안 읽히고 한국어도 아니면 태국어로 읽어 본다, th = 한국어가
 // 아니면 태국어로 먼저, latin = 영어·로마자만(예전처럼).
 async function uiLine(it, mode = 'auto') {
+  // 그 언어의 윈도우 인식기가 읽은 줄(w) — 영어 손질(uiFix 는 영어 줄의 한자를 지운다)·다시 읽기 없이 그대로.
+  if (it.w) return String(it.t || '').replace(/\s+/g, ' ').trim();
   const win = uiFix(it.t);
   if (!it.f) return win;
   try {

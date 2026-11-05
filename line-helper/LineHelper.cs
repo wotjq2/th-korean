@@ -1399,7 +1399,7 @@ static class App
                 if (k == "bothdefault") bothSet = true;
                 if (k == "korean") ShowKorean = v != "0";
                 if (k == "livecaption") LiveCaption.On = v != "0";
-                if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin")) ScreenKorean.Lang = v;
+                if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin" || v.StartsWith("win:"))) ScreenKorean.Lang = v;
             }
         }
         catch { }
@@ -1524,16 +1524,25 @@ static class App
             else Show("화면 번역", "바꿀 프로그램 창을 앞에 두고 " + ScreenKorean.HotkeyName + " 를 누르세요", false, 6000);
         };
         menu.Items.Add(screen);
-        // 화면 번역이 읽을 글자 — 기본은 알아서(영어·로마자, 아니면 태국어), 손으로 고를 수도 있다.
+        // 화면 번역이 읽을 글자 — 기본은 알아서(영어·로마자·태국어 + 이 PC 에 깔린 윈도우 인식 언어), 손으로 고를 수도 있다.
+        // 아래쪽은 이 PC 의 윈도우 글자 인식 언어(일본어·중국어 …) — 고르면 그 인식기 하나로만 읽는다(방법 A, 2026-11-05).
         ToolStripMenuItem slang = new ToolStripMenuItem(MyLang.T("화면 번역 글자"));
-        foreach (string[] l in new string[][] { new[] { "auto", "자동 (영어·태국어 알아서)" }, new[] { "th", "태국어" }, new[] { "latin", "영어·로마자만" } })
+        List<string[]> choices = new List<string[]> { new[] { "auto", MyLang.T("자동 (영어·태국어 + 이 PC 에 깔린 언어)") }, new[] { "th", MyLang.T("태국어") }, new[] { "latin", MyLang.T("영어·로마자만") } };
+        foreach (string tag in ScreenKorean.WindowsLangs())
+            choices.Add(new[] { "win:" + tag, ScreenKorean.LangLabel(tag) + " — " + MyLang.T("윈도우 글자 인식") });
+        foreach (string[] l in choices)
         {
             string id = l[0];
-            ToolStripMenuItem it = new ToolStripMenuItem(MyLang.T(l[1]));
+            ToolStripMenuItem it = new ToolStripMenuItem(l[1]);
             it.Checked = ScreenKorean.Lang == id;
             it.Click += delegate { ScreenKorean.SetLang(id); SaveSettings(); RefreshTray(); };
             slang.DropDownItems.Add(it);
         }
+        // 다른 언어(태국어·베트남어 빼고 35개)는 윈도우 설정에서 언어를 더하면 생긴다.
+        ToolStripMenuItem addLang = new ToolStripMenuItem(MyLang.T("다른 언어 더하기 (윈도우 설정)"));
+        addLang.Click += delegate { try { Process.Start("ms-settings:regionlanguage"); } catch { } };
+        slang.DropDownItems.Add(new ToolStripSeparator());
+        slang.DropDownItems.Add(addLang);
         menu.Items.Add(slang);
         ToolStripMenuItem live = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "크롬 실시간 자막을 한국어로 덮기" : "크롬 실시간 자막을 번역으로 덮기"));
         live.Checked = LiveCaption.On;

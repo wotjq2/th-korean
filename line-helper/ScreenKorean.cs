@@ -33,6 +33,7 @@ class TextChunk
     public int Lines = 1;
     public Color Bg, Fg;
     public string Ko;
+    public bool Trusted;  // 그 언어의 윈도우 인식기가 또렷이 읽은 글 — 엔진이 다시 읽지 않는다(일본어·중국어 …)
 
     // 스크롤로 위아래로 옮겨 간 같은 글줄.
     public TextChunk Moved(int dy)
@@ -164,8 +165,17 @@ static class ScreenKorean
     }
 
     // 엔진에 물어볼 줄: 로마자가 둘 넘거나, (자동·태국어) 제대로 읽힌 한국어가 아닌 줄.
-    static bool Worth(string t)
+    // 윈도우 인식기가 또렷이 읽은 줄(Trusted)은 내 언어 글자가 아닌 글자가 더 많으면 — '開'·'設定' 같은 짧은 한자 말도.
+    static readonly Regex Letter = new Regex("\\p{L}");
+    static bool Worth(TextChunk c)
     {
+        string t = c.Text;
+        if (c.Trusted)
+        {
+            Regex my = MyLang.Script;
+            int all = Letter.Matches(t).Count, mine = my != null ? my.Matches(t).Count : 0;
+            return all - mine >= 1 && mine < all - mine;
+        }
         if (TwoLatin.IsMatch(t)) return true;
         if (Lang == "latin") return false;
         string s = t.Trim();
@@ -506,8 +516,58 @@ static class ScreenKorean
         OcrEngine e = OcrEngine.IsLanguageSupported(en) ? OcrEngine.TryCreateFromLanguage(en) : null;
         if (e == null) e = OcrEngine.TryCreateFromUserProfileLanguages();
         if (e == null) throw new Exception("윈도우 OCR 을 쓸 수 없습니다");
-        Log.Write("화면 번역: 윈도우 OCR " + e.RecognizerLanguage.LanguageTag);
+        Log.Write("화면 번역: 윈도우 OCR " + e.RecognizerLanguage.LanguageTag + " (이 PC 의 인식 언어: " + string.Join(", ", WindowsLangs()) + ")");
         return e;
+    }
+
+    // ---- 윈도우 글자 인식 언어 (방법 A, 2026-11-05 사용자: 그 나라 PC 에는 그 언어가 있다) ----
+    // 윈도우는 언어마다 글자 인식(OCR)을 따로 준다 — 35개(일본어·중국어·아랍어·러시아어·폴란드어 …). 태국어·베트남어·힌디어는
+    // 없어서 태국어는 엔진의 Tesseract 로 읽는다. 그 언어로 쓰는 PC 에는 보통 깔려 있고, 다른 PC 도 윈도우 설정에서 언어를
+    // 더하면 생긴다(무료). 자동: 늘 쓰던 인식기(영어, 없으면 윈도우 기본 언어)로 읽고, 깔린 다른 글자(한자·가나·한글·아랍·
+    // 키릴·그리스) 인식기도 같은 그림을 읽어 그 글자로 또렷이 읽힌 자리는 그쪽 글로 바꾼다(MergeOthers).
+    // 직접 고르기(트레이 '화면 번역 글자' → 그 언어): 그 인식기 하나로만 읽는다(폴란드어·독일어처럼 로마자 언어의 ą·ö 도 그대로).
+    static readonly Dictionary<string, OcrEngine> winEngines = new Dictionary<string, OcrEngine>();
+
+    public static List<string> WindowsLangs()
+    {
+        List<string> tags = new List<string>();
+        try { foreach (Windows.Globalization.Language l in OcrEngine.AvailableRecognizerLanguages) tags.Add(l.LanguageTag); }
+        catch { }
+        return tags;
+    }
+
+    static OcrEngine WinEngine(string tag)
+    {
+        lock (winEngines)
+        {
+            OcrEngine e;
+            if (winEngines.TryGetValue(tag, out e)) return e;
+            try { e = OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language(tag)); }
+            catch { e = null; }
+            winEngines[tag] = e;
+            return e;
+        }
+    }
+
+    // 그 언어가 쓰는 글자(로마자 언어는 null).
+    public static Regex ScriptOfTag(string tag)
+    {
+        string t = (tag ?? "").ToLowerInvariant();
+        string p = t.Split('-')[0];
+        if (p == "ja") return new Regex("[぀-ヿ㐀-鿿]");
+        if (p == "zh") return new Regex("[㐀-鿿]");
+        if (p == "ko") return new Regex("[가-힣]");
+        if (p == "ar" || p == "fa" || p == "ur") return new Regex("[؀-ۿ]");
+        if (p == "ru" || p == "bg" || p == "uk" || p == "be" || p == "mk" || t.Contains("cyrl")) return new Regex("[Ѐ-ӿ]");
+        if (p == "el") return new Regex("[Ͱ-Ͽ]");
+        return null;
+    }
+
+    // 트레이 메뉴에 보일 이름(그 언어로 쓴 이름).
+    public static string LangLabel(string tag)
+    {
+        try { return new System.Globalization.CultureInfo(tag).NativeName; }
+        catch { return tag; }
     }
 
     static T Wait<T>(Windows.Foundation.IAsyncOperation<T> op)
@@ -555,11 +615,36 @@ static class ScreenKorean
             }
         }
         SoftwareBitmap sb = SoftwareBitmap.CreateCopyFromBuffer(Windows.Security.Cryptography.CryptographicBuffer.CreateFromByteArray(buf), BitmapPixelFormat.Bgra8, sw, sh);
-        OcrResult res;
-        try { res = Wait(ocr.RecognizeAsync(sb)); }
+        List<Piece> pieces;
+        try
+        {
+            // 직접 고른 윈도우 인식 언어면 그것 하나로(그 언어가 이 PC 에서 빠졌으면 늘 쓰던 인식기로).
+            OcrEngine picked = Lang.StartsWith("win:") ? WinEngine(Lang.Substring(4)) : null;
+            pieces = Pieces(picked ?? ocr, sb, scale, px, w, h, picked != null);
+            if (picked == null && Lang == "auto") MergeOthers(pieces, sb, scale, px, w, h);
+        }
         finally { sb.Dispose(); }
+        JoinRows(pieces, px, w, h);
+        List<TextChunk> chunks = new List<TextChunk>();
+        foreach (Piece p in pieces)
+        {
+            TextChunk c = Chunk(p.Boxes, p.Texts, 0, p.Boxes.Count, p.LineH, p.Trusted);
+            if (c != null) { c.Em = p.Em > 0 ? p.Em : p.LineH; c.Trusted = p.Trusted; chunks.Add(c); }
+        }
+        chunks = Paragraphs(chunks);
+        foreach (TextChunk c in chunks)
+        {
+            Colors(px, w, h, c);
+            c.Right = RoomRight(px, w, h, c);
+        }
+        return chunks;
+    }
 
-        // 한 줄 안에서 글줄 높이보다 넓게 떨어진 낱말은 다른 덩어리(메뉴 칸·버튼이 한 줄로 읽힌 것)로 나눈다.
+    // 한 인식기로 그림을 읽어 낱말 덩어리로. 한 줄 안에서 글줄 높이보다 넓게 떨어진 낱말은 다른 덩어리(메뉴 칸·버튼이 한 줄로
+    // 읽힌 것)로 나눈다. trusted: 그 언어 인식기가 읽은 글이라 엔진이 다시 읽지 않는다.
+    static List<Piece> Pieces(OcrEngine eng, SoftwareBitmap sb, int scale, int[] px, int w, int h, bool trusted)
+    {
+        OcrResult res = Wait(eng.RecognizeAsync(sb));
         List<Piece> pieces = new List<Piece>();
         foreach (OcrLine line in res.Lines)
         {
@@ -584,27 +669,95 @@ static class ScreenKorean
             {
                 if (cur == null || Apart(boxes[i - 1], boxes[i], lh, px, w, h))
                 {
-                    cur = new Piece { LineH = lh, Em = em };
+                    cur = new Piece { LineH = lh, Em = em, Trusted = trusted };
                     pieces.Add(cur);
                 }
                 cur.Boxes.Add(boxes[i]);
                 cur.Texts.Add(texts[i]);
             }
         }
-        JoinRows(pieces, px, w, h);
-        List<TextChunk> chunks = new List<TextChunk>();
-        foreach (Piece p in pieces)
+        return pieces;
+    }
+
+    // 자동일 때: 이 PC 에 깔린 다른 글자의 윈도우 인식기(일본어·중국어·한국어·아랍어·러시아어·그리스어)로도 읽어,
+    // 그 글자로 또렷이 읽힌 덩어리(그 글자가 둘 넘고 글자의 70% 넘게)는 늘 쓰던 인식기가 같은 자리에서 읽은 낱말 대신 쓴다.
+    // 영어 인식기는 일본어를 엉뚱한 로마자로, 한국어 인식기는 한자·한글 부스러기로 읽는다. 여러 인식기가 같은 자리를 읽었으면
+    // 제 글자 비율이 높은 쪽(한국어 글은 한국어 인식기가 거의 100%, 일본어 인식기는 한자 부스러기). 로마자 언어 인식기는
+    // 영어 인식기와 겹치니 돌리지 않는다(직접 고르면 쓴다).
+    static void MergeOthers(List<Piece> pieces, SoftwareBitmap sb, int scale, int[] px, int w, int h)
+    {
+        Regex mainScript = ScriptOfTag(ocr.RecognizerLanguage.LanguageTag);
+        List<KeyValuePair<Regex, List<Piece>>> others = new List<KeyValuePair<Regex, List<Piece>>>();
+        foreach (string tag in WindowsLangs())
         {
-            TextChunk c = Chunk(p.Boxes, p.Texts, 0, p.Boxes.Count, p.LineH);
-            if (c != null) { c.Em = p.Em > 0 ? p.Em : p.LineH; chunks.Add(c); }
+            Regex s = ScriptOfTag(tag);
+            if (s == null || (mainScript != null && s.ToString() == mainScript.ToString())) continue;
+            OcrEngine e = WinEngine(tag);
+            if (e != null) others.Add(new KeyValuePair<Regex, List<Piece>>(s, Pieces(e, sb, scale, px, w, h, true)));
         }
-        chunks = Paragraphs(chunks);
-        foreach (TextChunk c in chunks)
+        if (others.Count > 0) MergeDecide(pieces, mainScript, others);
+    }
+
+    // 고르기만(인식기 없이 시험할 수 있게 따로). pieces 를 고쳐 쓴다.
+    static void MergeDecide(List<Piece> pieces, Regex mainScript, List<KeyValuePair<Regex, List<Piece>>> others)
+    {
+        List<KeyValuePair<Piece, double>> cands = new List<KeyValuePair<Piece, double>>();
+        foreach (KeyValuePair<Regex, List<Piece>> o in others)
+            foreach (Piece p in o.Value)
+            {
+                string t = string.Join("", p.Texts);
+                int all = Letter.Matches(t).Count, own = o.Key.Matches(t).Count;
+                if (own >= 2 && own * 10 >= all * 7) cands.Add(new KeyValuePair<Piece, double>(p, own / (double)all + own / 10000.0));
+            }
+        // 늘 쓰던 인식기가 제 글자(한국어 인식기의 한글)로 또렷이 읽은 덩어리도 겨룬다 — 한국어 글을 일본어 인식기의 한자 부스러기로
+        // 바꾸지 않게. 비율이 같으면 늘 쓰던 쪽(이 PC 의 기본 언어)을 믿는다(+0.05).
+        if (mainScript != null)
+            foreach (Piece p in pieces)
+            {
+                string t = string.Join("", p.Texts);
+                int all = Letter.Matches(t).Count, own = mainScript.Matches(t).Count;
+                if (own >= 2 && own * 10 >= all * 7) cands.Add(new KeyValuePair<Piece, double>(p, own / (double)all + 0.05 + own / 10000.0));
+            }
+        if (cands.Count == 0) return;
+        cands.Sort(delegate (KeyValuePair<Piece, double> a, KeyValuePair<Piece, double> b) { return b.Value.CompareTo(a.Value); });
+        List<Rectangle> taken = new List<Rectangle>();
+        List<Piece> add = new List<Piece>();
+        foreach (KeyValuePair<Piece, double> c in cands)
         {
-            Colors(px, w, h, c);
-            c.Right = RoomRight(px, w, h, c);
+            Rectangle r = c.Key.Bounds;
+            bool clash = false;
+            foreach (Rectangle t in taken) if (Overlap(r, t) > 0.3) { clash = true; break; }
+            if (clash) continue;
+            taken.Add(r);
+            if (!pieces.Contains(c.Key)) add.Add(c.Key); // 늘 쓰던 인식기의 덩어리가 이겼으면 그대로 둔다
         }
-        return chunks;
+        if (add.Count == 0) return;
+        // 이긴 다른 인식기 덩어리 자리에 있던 늘 쓰던 인식기의 낱말을 뺀다(같은 줄의 영어 낱말은 남는다).
+        foreach (Piece a in add)
+        {
+            Rectangle r = a.Bounds;
+            for (int i = pieces.Count - 1; i >= 0; i--)
+            {
+                Piece p = pieces[i];
+                if (p.Trusted) continue;
+                for (int k = p.Boxes.Count - 1; k >= 0; k--)
+                {
+                    Rectangle b = p.Boxes[k], x = Rectangle.Intersect(b, r);
+                    if (!x.IsEmpty && x.Width * x.Height * 10 >= b.Width * b.Height * 4) { p.Boxes.RemoveAt(k); p.Texts.RemoveAt(k); }
+                }
+                if (p.Boxes.Count == 0) pieces.RemoveAt(i);
+            }
+            pieces.Add(a);
+        }
+        if (App.Debugging) Log.Write("화면 번역: 다른 인식 언어로 바꾼 덩어리 " + add.Count + "개");
+    }
+
+    // 겹친 넓이 / 작은 쪽 넓이.
+    static double Overlap(Rectangle a, Rectangle b)
+    {
+        Rectangle x = Rectangle.Intersect(a, b);
+        if (x.IsEmpty) return 0;
+        return x.Width * (double)x.Height / Math.Max(1, Math.Min(a.Width * a.Height, b.Width * b.Height));
     }
 
     // 한 줄 안의 낱말 덩어리(아직 글줄로 다듬기 전).
@@ -614,6 +767,7 @@ static class ScreenKorean
         public List<string> Texts = new List<string>();
         public int LineH;
         public float Em;
+        public bool Trusted;
         public Rectangle Bounds
         {
             get
@@ -646,6 +800,7 @@ static class ScreenKorean
                     pieces[a].Texts.AddRange(pieces[b].Texts);
                     pieces[a].LineH = lh;
                     pieces[a].Em = Math.Max(pieces[a].Em, pieces[b].Em);
+                    pieces[a].Trusted |= pieces[b].Trusted;
                     pieces.RemoveAt(b);
                     joined = true;
                 }
@@ -705,24 +860,30 @@ static class ScreenKorean
 
     // 영어 글줄 양 끝의 영문·숫자 없는 낱말은 글자 옆 아이콘(☑ → ∨)을 읽은 것이다 — 덩어리에서 빼야 아이콘이 덮이지 않는다.
     static readonly Regex Word = new Regex("[A-Za-z0-9]");
-    static TextChunk Chunk(List<Rectangle> boxes, List<string> texts, int from, int to, int lh)
+    // 그 언어 인식기가 읽은 덩어리(trusted)는 글자(한자·가나·아랍 …)가 있는 낱말이면 남긴다 — '設定 Settings' 의 設定 을 빼지 않게.
+    static readonly Regex AnyWord = new Regex("[\\p{L}\\p{N}]");
+    static TextChunk Chunk(List<Rectangle> boxes, List<string> texts, int from, int to, int lh, bool trusted)
     {
         int latin = 0;
         for (int i = from; i < to; i++) latin += Regex.Matches(texts[i], "[A-Za-z]").Count;
         if (latin >= 3)
         {
-            while (from < to && !Word.IsMatch(texts[from])) from++;
-            while (to > from && !Word.IsMatch(texts[to - 1])) to--;
+            Regex keep = trusted ? AnyWord : Word;
+            while (from < to && !keep.IsMatch(texts[from])) from++;
+            while (to > from && !keep.IsMatch(texts[to - 1])) to--;
         }
         if (from >= to) return null;
         TextChunk c = new TextChunk { Box = boxes[from], Text = texts[from], LineH = lh };
         for (int i = from + 1; i < to; i++)
         {
             c.Box = Rectangle.Union(c.Box, boxes[i]);
-            c.Text += " " + texts[i];
+            // 일본어·중국어는 낱말 사이를 띄우지 않는다 — 윈도우 인식기는 글자마다 낱말로 줘서 '設 定 を 開 く' 가 됐다.
+            c.Text += (CjkEnd.IsMatch(c.Text) && CjkStart.IsMatch(texts[i]) ? "" : " ") + texts[i];
         }
         return c;
     }
+    static readonly Regex CjkEnd = new Regex("[　-ヿ㐀-鿿！-｠]$");
+    static readonly Regex CjkStart = new Regex("^[　-ヿ㐀-鿿！-｠]");
 
     // 문단으로 이어지는 줄(바로 아래, 왼쪽이 맞고, 글씨 크기가 같고, 다음 줄이 소문자로 시작하는 등)은 한 덩어리로
     // 옮긴다 — 줄마다 따로 옮기면 문장이 끊긴다.
@@ -747,6 +908,7 @@ static class ScreenKorean
             merged[k].Text += " " + c.Text;
             merged[k].Box = Rectangle.Union(merged[k].Box, c.Box);
             merged[k].Lines++;
+            merged[k].Trusted |= c.Trusted;
             lastLine[k] = c.Box;
         }
         return merged;
@@ -814,7 +976,7 @@ static class ScreenKorean
             {
                 string ko;
                 if (done.TryGetValue(c.Text, out ko)) c.Ko = ko;
-                else if (!Worth(c.Text)) c.Ko = "";
+                else if (!Worth(c)) c.Ko = "";
                 else if (asking.Add(c.Text)) ask.Add(c);
             }
         }
@@ -827,11 +989,13 @@ static class ScreenKorean
             {
                 Dictionary<string, object> it = new Dictionary<string, object>();
                 it["t"] = c.Text;
-                it["f"] = SaveCrop(px, w, h, c);
+                if (c.Trusted) it["w"] = true; // 그대로 옮긴다(영어·태국어 인식기로 다시 읽으면 한자·가나가 깨진다)
+                else it["f"] = SaveCrop(px, w, h, c);
                 it["n"] = c.Lines;
                 items.Add(it);
             }
-            string[] r = engine.Call("screen", Lang, json.Serialize(items), 60000);
+            // 직접 고른 윈도우 인식 언어(win:…)는 엔진이 태국어로 다시 읽어 볼 일이 없다 — 영어·로마자 줄만 다듬게.
+            string[] r = engine.Call("screen", Lang.StartsWith("win:") ? "latin" : Lang, json.Serialize(items), 60000);
             object[] outs = (object[])json.DeserializeObject(r[0]);
             lock (done)
             {

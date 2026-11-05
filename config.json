@@ -60,7 +60,7 @@
   "_shops": "한국어 검색어를 태국어로 바꿔 검색해 주는 쇼핑몰. 라자다(lazada)·쇼피(shopee)는 바뀐 칸만 적으면 고쳐진다. 새 쇼핑몰은 label·host·searchUrl·inputSelectors 를 다 적는다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며 그 사이트 주소여야 한다. 예: \"shops\": { \"shopee\": { \"inputSelectors\": [\"input[name=keyword]\"] }, \"bigc\": { \"label\": \"빅씨\", \"host\": \"bigc.co.th\", \"searchUrl\": \"https://www.bigc.co.th/search?q={q}\", \"inputSelectors\": [\"input[type=search]\"], \"queryParam\": \"q\" } }",
 
   "helper": {
-    "extensionIds": [],
+    "extensionIds": ["ohbehckmepbfkpccihmedbnbmmiofcam"],
     "liveTranslate": { "toggle": ["실시간 번역", "자막 번역", "Live translate", "Live Translate"], "captionToggle": ["실시간 자막", "Live Caption", "Live caption"], "page": ["설정", "Settings"],
       "notes": ["불완전", "아마도", "나머지", "텍스트", "원문", "번역", "문맥", "맥락", "문장", "추측", "불분명", "알아들", "들리지", "incomplete", "unclear", "probably", "the rest", "translat", "text"] }
   },

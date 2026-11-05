@@ -13,6 +13,164 @@ const note = (t) => {
 
 $('#ver').textContent = chrome.runtime.getManifest().version;
 
+// ---- 내 언어 (2026-11-05) ----
+// 고른 언어(구글 번역 코드)를 gm:myLang 에 둔다 — 번역 스크립트(GM_getValue('myLang'))가 페이지를 열 때 읽고,
+// background.js 가 번역 도우미에 넘긴다. 'ko' 면 예전과 똑같다.
+const MY_LANGS = [
+  'ko', 'th', 'en', 'zh-CN', 'zh-TW', 'ja', 'vi', 'id', 'ms', 'tl', 'km', 'lo', 'my', 'hi', 'bn', 'ur', 'ar',
+  'he', 'tr', 'ru', 'de', 'fr', 'es', 'pt', 'it', 'pl', 'ta', 'te', 'mr', 'yue',
+];
+const langNameIn = (code, inLang) => {
+  try {
+    return new Intl.DisplayNames([inLang], { type: 'language' }).of(code) || code;
+  } catch {
+    return code;
+  }
+};
+let MY = 'ko';
+
+const myLangReady = chrome.storage.local.get('gm:myLang').then((v) => {
+  const cur = v['gm:myLang'];
+  MY = typeof cur === 'string' && MY_LANGS.includes(cur) ? cur : 'ko';
+  document.documentElement.lang = MY;
+  const sel = $('#lang');
+  for (const code of MY_LANGS) {
+    const o = document.createElement('option');
+    o.value = code;
+    let own = langNameIn(code, code); // 그 언어로 쓴 이름(한국어, English, ไทย …)
+    // 크롬에 그 언어 이름 자료가 없으면 화면 언어(한국어)로 나온다 — 그럴 때는 영어 이름.
+    if (code !== 'ko' && own === langNameIn(code, 'ko')) own = langNameIn(code, 'en');
+    const here = langNameIn(code, MY); // 지금 내 언어로 쓴 이름
+    o.textContent = own === here ? own : `${own} — ${here}`;
+    sel.appendChild(o);
+  }
+  sel.value = MY;
+  // 옵션 글은 이미 각 언어로 썼다 — 화면 글 옮기기에서 뺀다.
+  sel.dataset.noi18n = '';
+  localize();
+});
+
+$('#lang').addEventListener('change', async (e) => {
+  const v = e.target.value;
+  await chrome.storage.local.set({ 'gm:myLang': v });
+  chrome.runtime.sendMessage({ t: 'helper-lang' }).catch(() => {});
+  // 창을 새로 그려 바로 그 언어로. 안내는 다시 연 뒤에 보인다.
+  await chrome.storage.session.set({ langChanged: v }).catch(() => {});
+  location.reload();
+});
+chrome.storage.session
+  .get('langChanged')
+  .then(({ langChanged }) => {
+    if (!langChanged) return;
+    chrome.storage.session.remove('langChanged');
+    $('#langnote').textContent = '바꿨습니다 — 열려 있는 페이지는 새로 고치면(F5) 그 언어로 바뀝니다. 번역 도우미도 곧 따라 바뀝니다.';
+  })
+  .catch(() => {});
+
+// 이 창의 한국어 글을 내 언어로(스크립트의 uiLocalize 와 같은 방식·같은 저장소 gm:uiTr:<언어>).
+const UI_RUN = /[ㄱ-ㆎ가-힣](?:[^\n"“”'‘’「」→←<>{}[\]|]*[ㄱ-ㆎ가-힣.…!?])?/g;
+const HANGUL = /[ㄱ-ㆎ가-힣]/;
+let uiTr = null;
+const uiQueue = new Set();
+const uiWaiting = new Set();
+let uiTimer = 0;
+
+async function uiTranslate(runs) {
+  const base = 'https://translate.googleapis.com/translate_a/';
+  try {
+    const r = await fetch(
+      `${base}t?client=dict-chrome-ex&sl=ko&tl=${encodeURIComponent(MY)}&` + runs.map((s) => 'q=' + encodeURIComponent(s)).join('&'),
+      { credentials: 'omit' }
+    );
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j.map((x) => (Array.isArray(x) ? x[0] : x)) : [];
+    if (arr.length === runs.length && arr.every((x) => typeof x === 'string')) return arr;
+  } catch {
+    /* 아래 한 줄씩 */
+  }
+  return Promise.all(
+    runs.map(async (s) => {
+      try {
+        const r = await fetch(`${base}single?client=gtx&sl=ko&tl=${encodeURIComponent(MY)}&dt=t&q=${encodeURIComponent(s)}`, {
+          credentials: 'omit',
+        });
+        const j = await r.json();
+        return (j[0] || []).map((x) => x[0]).join('');
+      } catch {
+        return '';
+      }
+    })
+  );
+}
+
+function uiReplace(text) {
+  let missing = false;
+  const out = text.replace(UI_RUN, (run) => {
+    if (uiTr[run] != null) return uiTr[run];
+    uiQueue.add(run);
+    missing = true;
+    return run;
+  });
+  return missing ? null : out;
+}
+
+function uiFix(node) {
+  if (node.nodeType === 3) {
+    const v = node.nodeValue;
+    if (!v || !HANGUL.test(v) || (node.parentElement && node.parentElement.closest('[data-noi18n]'))) return;
+    const out = uiReplace(v);
+    if (out == null) uiWaiting.add(node);
+    else if (out !== v) node.nodeValue = out;
+    return;
+  }
+  for (const a of ['title', 'placeholder']) {
+    const v = node.getAttribute(a);
+    if (!v || !HANGUL.test(v)) continue;
+    const out = uiReplace(v);
+    if (out == null) uiWaiting.add(node);
+    else if (out !== v) node.setAttribute(a, out);
+  }
+}
+
+function uiWalk(root) {
+  if (root.nodeType === 3) uiFix(root);
+  else if (root.nodeType === 1 && !root.closest('[data-noi18n]')) {
+    uiFix(root);
+    for (const el of root.querySelectorAll('[title],[placeholder]')) uiFix(el);
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) uiFix(n);
+  }
+  if (uiQueue.size && !uiTimer) uiTimer = setTimeout(uiFlush, 30);
+}
+
+async function uiFlush() {
+  uiTimer = 0;
+  const runs = [...uiQueue];
+  uiQueue.clear();
+  if (runs.length) {
+    const got = await uiTranslate(runs);
+    runs.forEach((r, i) => (uiTr[r] = got[i] && got[i].trim() ? got[i].trim() : r));
+    chrome.storage.local.set({ ['gm:uiTr:' + MY]: uiTr });
+  }
+  const nodes = [...uiWaiting];
+  uiWaiting.clear();
+  for (const n of nodes) if (n.isConnected) uiFix(n);
+  if (uiQueue.size && !uiTimer) uiTimer = setTimeout(uiFlush, 30);
+}
+
+async function localize() {
+  if (MY === 'ko') return;
+  uiTr = (await chrome.storage.local.get('gm:uiTr:' + MY))['gm:uiTr:' + MY] || {};
+  uiWalk(document.body);
+  new MutationObserver((list) => {
+    for (const m of list) {
+      if (m.type === 'characterData') uiWalk(m.target);
+      else if (m.type === 'attributes') uiWalk(m.target);
+      else for (const n of m.addedNodes) uiWalk(n);
+    }
+  }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['title', 'placeholder'] });
+}
+
 (async () => {
   const box = $('#menu');
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

@@ -158,6 +158,181 @@ static class Log
 }
 
 // node engine.js 와 한 줄씩 JSON 을 주고받는다. 죽으면 다음 요청 때 다시 띄운다.
+// '내 언어'(2026-11-05): 크롬 '통합 번역' 창에서 고른 기준 언어(구글 번역 코드). 확장이 도우미를 부를 때마다 같이
+// 보내고(background.js → ChromeLink.Handle → Save) data\mylang.txt 에 둔다. 'ko' 면 예전과 똑같다. 다른 언어면 엔진이
+// 같은 파일을 읽어 LINE 말풍선·화면 번역·자막을 그 언어로 옮기고(engine.js), 이 프로그램의 메뉴·알림 글도 T() 로 옮긴다.
+static class MyLang
+{
+    public static string Code = "ko";
+    public static bool Ko { get { return Code == "ko"; } }
+    public static event Action Changed; // 언어가 바뀌었거나 옮긴 글이 새로 왔다 — 메뉴·막대를 다시 그린다
+    static string dataDir;
+    static Engine engine;
+    static DateTime fileTime = DateTime.MinValue;
+    static readonly object lk = new object();
+    static Dictionary<string, string> tr = new Dictionary<string, string>();
+    static readonly List<string> queue = new List<string>();
+    static readonly HashSet<string> queued = new HashSet<string>();
+    static bool flushing;
+    static readonly Regex Valid = new Regex("^[a-z]{2,3}(-[A-Za-z]{2,4})?$");
+    static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+
+    static string FileIn(string dir) { return Path.Combine(dir, "mylang.txt"); }
+
+    // 크롬이 부른 짧은 실행(ChromeLink)에서: 받은 언어가 지금 것과 다르면 적는다. 켜져 있는 도우미가 알아챈다(Poll).
+    public static void Save(string dir, string code)
+    {
+        code = (code ?? "").Trim();
+        if (!Valid.IsMatch(code)) return;
+        try
+        {
+            string f = FileIn(dir), now = File.Exists(f) ? File.ReadAllText(f).Trim() : "ko";
+            if (now != code) { Directory.CreateDirectory(dir); File.WriteAllText(f, code); }
+        }
+        catch { }
+    }
+
+    public static void Init(string dir, Engine e)
+    {
+        dataDir = dir;
+        engine = e;
+        Poll();
+    }
+
+    // 파일이 바뀌었으면 다시 읽는다. 바뀌었으면 true(엔진을 다시 띄우고 말풍선을 새로 옮긴다 — 부르는 쪽).
+    public static bool Poll()
+    {
+        string f = FileIn(dataDir);
+        DateTime t = File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue;
+        if (t == fileTime) return false;
+        fileTime = t;
+        string code = "ko";
+        try { if (t != DateTime.MinValue) code = File.ReadAllText(f).Trim(); } catch { }
+        if (!Valid.IsMatch(code)) code = "ko";
+        if (code == Code && tr.Count > 0) return false;
+        bool changed = code != Code;
+        lock (lk)
+        {
+            Code = code;
+            tr = new Dictionary<string, string>();
+            queue.Clear();
+            queued.Clear();
+            try
+            {
+                string cf = CacheFile;
+                if (!Ko && File.Exists(cf)) tr = json.Deserialize<Dictionary<string, string>>(File.ReadAllText(cf, Encoding.UTF8)) ?? new Dictionary<string, string>();
+            }
+            catch { }
+        }
+        if (changed) Log.Write("내 언어: " + Code);
+        return changed;
+    }
+
+    static string CacheFile { get { return Path.Combine(dataDir, "ui-" + Code + ".json"); } }
+
+    // 글자로 언어를 알아보기(스크립트의 SCRIPT_OF 와 같다). 로마자 언어는 null — 글자로는 못 가른다.
+    static readonly Regex HangulRe = new Regex("[ㄱ-ㆎ가-힣]");
+    static readonly Regex LatinRe = new Regex("[A-Za-zÀ-ɏ]");
+    static readonly Regex LetterRe = new Regex("\\p{L}");
+    public static Regex ScriptOf(string code)
+    {
+        switch ((code ?? "").Split('-')[0])
+        {
+            case "ko": return HangulRe;
+            case "th": return new Regex("[฀-๿]");
+            case "ja": return new Regex("[぀-ヿ一-鿿]");
+            case "zh": case "yue": return new Regex("[一-鿿]");
+            case "ar": case "ur": case "fa": return new Regex("[؀-ۿ]");
+            case "he": return new Regex("[֐-׿]");
+            case "hi": case "mr": case "ne": return new Regex("[ऀ-ॿ]");
+            case "bn": return new Regex("[ঀ-৿]");
+            case "te": return new Regex("[ఀ-౿]");
+            case "ta": return new Regex("[஀-௿]");
+            case "ru": case "uk": return new Regex("[Ѐ-ӿ]");
+            case "km": return new Regex("[ក-៿]");
+            case "lo": return new Regex("[຀-໿]");
+            case "my": return new Regex("[က-႟]");
+            default: return null;
+        }
+    }
+    static Regex script;
+    static string scriptFor;
+    public static Regex Script
+    {
+        get
+        {
+            string c = Code;
+            if (scriptFor != c) { script = ScriptOf(c); scriptFor = c; }
+            return script;
+        }
+    }
+    // 글자 수를 셀 때(로마자 언어면 로마자).
+    public static Regex CountScript { get { return Script ?? LatinRe; } }
+    // 입력칸 글이 내 말인가(바꿔 보낼지). 한국어면 예전처럼 한글이 있으면.
+    public static bool IsMine(string text, string target)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        if (Ko) return HangulRe.IsMatch(text);
+        string tg = (target ?? "").Split('-')[0];
+        if (tg == Code.Split('-')[0]) return false;
+        Regex s = Script;
+        if (s != null) return s.IsMatch(text);
+        Regex t = ScriptOf(tg);
+        return LetterRe.IsMatch(text) && !(t != null && t.IsMatch(text));
+    }
+
+    // 이 프로그램의 한국어 글을 내 언어로. 처음 보는 글은 한국어 그대로 돌려주고 뒤에서 옮겨 둔다(다 오면 Changed).
+    public static string T(string ko)
+    {
+        if (Ko || string.IsNullOrEmpty(ko) || !HangulRe.IsMatch(ko)) return ko;
+        lock (lk)
+        {
+            string v;
+            if (tr.TryGetValue(ko, out v)) return v;
+            if (queued.Add(ko)) queue.Add(ko);
+            if (!flushing)
+            {
+                flushing = true;
+                ThreadPool.QueueUserWorkItem(delegate { Flush(); });
+            }
+        }
+        return ko;
+    }
+
+    static void Flush()
+    {
+        Thread.Sleep(200); // 한꺼번에 묻는 글(메뉴 열댓 줄)을 모은다
+        while (true)
+        {
+            List<string> ask;
+            string code;
+            lock (lk)
+            {
+                if (queue.Count == 0) { flushing = false; break; }
+                ask = queue.GetRange(0, Math.Min(60, queue.Count));
+                queue.RemoveRange(0, ask.Count);
+                code = Code;
+            }
+            string[] got = null;
+            try
+            {
+                object[] arr = json.Deserialize<object[]>(engine.Call("ui", code, json.Serialize(ask), 20000)[0]);
+                if (arr != null && arr.Length == ask.Count) got = Array.ConvertAll(arr, o => Convert.ToString(o));
+            }
+            catch (Exception e) { Log.Write("화면 글 옮기기 실패: " + e.Message); }
+            lock (lk)
+            {
+                if (code != Code) continue; // 그 사이 언어가 또 바뀌었다
+                for (int i = 0; i < ask.Count; i++)
+                    tr[ask[i]] = got != null && !string.IsNullOrEmpty(got[i]) ? got[i].Trim() : ask[i];
+                try { File.WriteAllText(CacheFile, json.Serialize(tr), Encoding.UTF8); } catch { }
+            }
+            Action c = Changed;
+            if (c != null) try { c(); } catch { }
+        }
+    }
+}
+
 class Engine
 {
     readonly string dir;
@@ -344,8 +519,20 @@ class LangBar : FloatForm
         BackColor = Color.FromArgb(200, 200, 205);
         Relayout();
         tip.ShowAlways = true;
-        tip.SetToolTip(this, "번역: 누르면 언어 칸이 펼쳐집니다. 언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다.");
+        RefreshText();
     }
+
+    // 내 언어가 바뀌었거나 옮긴 글이 왔을 때(MyLang.Changed).
+    public void RefreshText()
+    {
+        tip.SetToolTip(this, MyLang.T("번역: 누르면 언어 칸이 펼쳐집니다. 언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다."));
+        Invalidate();
+    }
+
+    // 칸 글자: 한국어면 '태·미·중', 다른 언어면 'TH·EN·ZH'(한국어 줄임말은 다른 나라 사람이 못 읽는다).
+    public static string Label(string[] l) { return MyLang.Ko ? l[1] : l[0].ToUpperInvariant(); }
+    // 원문도 같이 보내기 칸: '+한' 또는 '+EN' 처럼 내 언어 코드.
+    public static string BothLabel { get { return MyLang.Ko ? "+한" : "+" + MyLang.Code.Split('-')[0].ToUpperInvariant(); } }
 
     public void SetExpanded(bool on)
     {
@@ -373,7 +560,7 @@ class LangBar : FloatForm
         Graphics g = e.Graphics;
         TextFormatFlags tf = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding;
         string onLabel = "";
-        for (int i = 0; i < Langs.Length; i++) if (Langs[i][0] == App.Lang) onLabel = Langs[i][1];
+        for (int i = 0; i < Langs.Length; i++) if (Langs[i][0] == App.Lang) onLabel = Label(Langs[i]);
         if (Expanded)
         {
             for (int i = 0; i < Langs.Length; i++)
@@ -382,14 +569,14 @@ class LangBar : FloatForm
                 bool on = Langs[i][0] == App.Lang;
                 Color bg = on ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (i == hover ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
                 using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, r);
-                TextRenderer.DrawText(g, Langs[i][1], font, r, on ? Color.White : Color.FromArgb(70, 70, 75), tf);
+                TextRenderer.DrawText(g, Label(Langs[i]), font, r, on ? Color.White : Color.FromArgb(70, 70, 75), tf);
             }
             using (SolidBrush gap = new SolidBrush(Color.FromArgb(120, 120, 128)))
                 g.FillRectangle(gap, 1 + CellW * Cols - 1, 0, Gap + 1, GridH);
             Rectangle br = BothRect;
             Color bbg = App.Both ? Color.FromArgb(33, 118, 255) : (hover == Langs.Length ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
             using (SolidBrush b = new SolidBrush(bbg)) g.FillRectangle(b, br);
-            TextRenderer.DrawText(g, "+한", font, br, App.Both ? Color.White : Color.FromArgb(70, 70, 75), tf);
+            TextRenderer.DrawText(g, BothLabel, font, br, App.Both ? Color.White : Color.FromArgb(70, 70, 75), tf);
         }
         // '번역' 단추: 고른 언어가 있으면 '번역·태'(초록, 바꾸는 중이면 주황), +한 이 켜져 있으면 끝에 '+한'.
         Rectangle pr = PillRect;
@@ -397,7 +584,9 @@ class LangBar : FloatForm
         Color pbg = lang ? (Busy ? Color.FromArgb(255, 152, 0) : Color.FromArgb(6, 199, 85)) : (hover == PillHit || Expanded ? Color.FromArgb(225, 228, 232) : Color.FromArgb(246, 247, 249));
         using (SolidBrush b = new SolidBrush(pbg)) g.FillRectangle(b, pr);
         using (Pen p = new Pen(Color.FromArgb(150, 150, 158))) g.DrawRectangle(p, pr.X, pr.Y, pr.Width - 1, pr.Height - 1);
-        string text = (lang ? "번역·" + onLabel : "번역") + (App.Both ? " +한" : "");
+        // 다른 언어면 '번역' 대신 ⇄ — 옮긴 낱말('Translate')은 76px 단추에 언어·+EN 과 같이 들어가지 않는다.
+        string word = MyLang.Ko ? "번역" : "⇄";
+        string text = (lang ? word + "·" + onLabel : word) + (App.Both ? " " + BothLabel : "");
         TextRenderer.DrawText(g, text, font, pr, lang ? Color.White : Color.FromArgb(50, 50, 55), tf | TextFormatFlags.EndEllipsis);
     }
 
@@ -698,7 +887,7 @@ class Overlay : Form
             float size = BubbleSizes[widen ? t - 3 : t];
             if (fTh != null) { fTh.Dispose(); fKo.Dispose(); }
             fTh = new Font("Tahoma", size);
-            fKo = new Font("Malgun Gothic", size);
+            fKo = new Font(MyLang.Ko ? "Malgun Gothic" : "Segoe UI", size);
             // 넓힐 때는 한 줄로 쓸 만큼 — 원래 말풍선보다 좁아지지 않게, 옆 빈자리보다 넓어지지 않게.
             int one = (int)Math.Ceiling(Math.Max(g.MeasureString(th, fTh).Width, g.MeasureString(ko, fKo).Width)) + padX * 2;
             w = widen ? Math.Max(box.Width, Math.Min(one, outerR - outerL)) : box.Width;
@@ -1086,6 +1275,7 @@ static class App
             Log.Write("시작 — 대상 " + target + ", 언어 " + (Lang == "" ? "끔" : Lang) + ", 언어 막대 "
                 + string.Join("·", Array.ConvertAll(LangBar.Langs, l => l[1])));
             engine = new Engine(dir);
+            MyLang.Init(dataDir, engine);
             ui = new Control();
             ui.CreateControl();
             IntPtr force = ui.Handle;
@@ -1098,6 +1288,8 @@ static class App
             LoadSent();
             new Thread(OcrLoop) { IsBackground = true }.Start();
             SetupTray();
+            // 옮긴 메뉴·막대 글이 오면 다시 그린다(내 언어가 한국어가 아닐 때).
+            MyLang.Changed += delegate { ui.BeginInvoke((MethodInvoker)delegate { RefreshTray(); bar.RefreshText(); }); };
             ScreenKorean.Start(engine, dataDir, ui, screenTest);
             LiveCaption.Start(engine);
             Updater.Start(dir, engine);
@@ -1204,8 +1396,18 @@ static class App
 
     static string LangName(string id)
     {
-        foreach (string[] l in LangBar.Langs) if (l[0] == id) return l[2];
+        foreach (string[] l in LangBar.Langs) if (l[0] == id) return MyLang.T(l[2]);
         return id;
+    }
+
+    // 크롬 '통합 번역' 에서 내 언어를 바꿨다(MyLang.Poll) — 엔진을 다시 띄워(스크립트가 새 값으로 뜬다) 말풍선을 새로 옮기고
+    // 메뉴·막대 글을 바꾼다.
+    static void OnMyLangChanged()
+    {
+        engine.Stop();
+        lock (msgs) msgs.Clear();
+        ui.BeginInvoke((MethodInvoker)delegate { RefreshTray(); bar.RefreshText(); });
+        Show("번역 도우미", "내 언어를 바꿨습니다", false, 4000);
     }
 
     // ---- 트레이 ----
@@ -1237,35 +1439,37 @@ static class App
 
     public static void RefreshTray()
     {
-        tray.Text = "번역 도우미 — LINE " + (Lang == "" ? "보낼 때 그대로" : LangName(Lang) + "로 바꿔 보냄");
+        string tip = MyLang.Ko ? "번역 도우미 — LINE " + (Lang == "" ? "보낼 때 그대로" : LangName(Lang) + "로 바꿔 보냄")
+            : MyLang.T("번역 도우미") + " — LINE → " + (Lang == "" ? "—" : LangName(Lang));
+        tray.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip; // NotifyIcon.Text 는 63자까지
         menu.Items.Clear();
-        ToolStripMenuItem langs = new ToolStripMenuItem("보낼 때 바꿀 언어");
-        ToolStripMenuItem off = new ToolStripMenuItem("끄기 (한국어 그대로)");
+        ToolStripMenuItem langs = new ToolStripMenuItem(MyLang.T("보낼 때 바꿀 언어"));
+        ToolStripMenuItem off = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "끄기 (한국어 그대로)" : "끄기 (쓴 말 그대로)"));
         off.Checked = Lang == "";
         off.Click += delegate { SetLang(""); };
         langs.DropDownItems.Add(off);
         foreach (string[] l in LangBar.Langs)
         {
             string id = l[0];
-            ToolStripMenuItem it = new ToolStripMenuItem(l[2]);
+            ToolStripMenuItem it = new ToolStripMenuItem(MyLang.T(l[2]));
             it.Checked = Lang == id;
             it.Click += delegate { SetLang(id); };
             langs.DropDownItems.Add(it);
         }
         menu.Items.Add(langs);
-        ToolStripMenuItem both = new ToolStripMenuItem("바꾼 말 아래 한국어 원문도 같이 보내기 (+한)");
+        ToolStripMenuItem both = new ToolStripMenuItem(MyLang.Ko ? "바꾼 말 아래 한국어 원문도 같이 보내기 (+한)" : MyLang.T("바꾼 말 아래 원문도 같이 보내기") + " (" + LangBar.BothLabel + ")");
         both.Checked = Both;
         both.Click += delegate { SetBoth(!Both); };
         menu.Items.Add(both);
-        ToolStripMenuItem kor = new ToolStripMenuItem("LINE 말풍선 옆에 한국어 보기");
+        ToolStripMenuItem kor = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "LINE 말풍선 옆에 한국어 보기" : "LINE 말풍선에 번역 보기"));
         kor.Checked = ShowKorean;
         kor.Click += delegate { ShowKorean = !ShowKorean; SaveSettings(); RefreshTray(); };
         menu.Items.Add(kor);
-        ToolStripMenuItem recv = new ToolStripMenuItem("LINE 에서 복사한 태국어를 한국어로 보기");
+        ToolStripMenuItem recv = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "LINE 에서 복사한 태국어를 한국어로 보기" : "LINE 에서 복사한 태국어 번역 보기"));
         recv.Checked = Receive;
         recv.Click += delegate { Receive = !Receive; SaveSettings(); RefreshTray(); };
         menu.Items.Add(recv);
-        ToolStripMenuItem screen = new ToolStripMenuItem("화면 번역: 앞 창 영어를 한국어로 덮기 (" + ScreenKorean.HotkeyName + ")");
+        ToolStripMenuItem screen = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "화면 번역: 앞 창 영어를 한국어로 덮기" : "화면 번역: 앞 창 글을 번역으로 덮기") + " (" + ScreenKorean.HotkeyName + ")");
         screen.Checked = ScreenKorean.On;
         screen.Click += delegate
         {
@@ -1274,32 +1478,32 @@ static class App
         };
         menu.Items.Add(screen);
         // 화면 번역이 읽을 글자 — 기본은 알아서(영어·로마자, 아니면 태국어), 손으로 고를 수도 있다.
-        ToolStripMenuItem slang = new ToolStripMenuItem("화면 번역 글자");
+        ToolStripMenuItem slang = new ToolStripMenuItem(MyLang.T("화면 번역 글자"));
         foreach (string[] l in new string[][] { new[] { "auto", "자동 (영어·태국어 알아서)" }, new[] { "th", "태국어" }, new[] { "latin", "영어·로마자만" } })
         {
             string id = l[0];
-            ToolStripMenuItem it = new ToolStripMenuItem(l[1]);
+            ToolStripMenuItem it = new ToolStripMenuItem(MyLang.T(l[1]));
             it.Checked = ScreenKorean.Lang == id;
             it.Click += delegate { ScreenKorean.SetLang(id); SaveSettings(); RefreshTray(); };
             slang.DropDownItems.Add(it);
         }
         menu.Items.Add(slang);
-        ToolStripMenuItem live = new ToolStripMenuItem("크롬 실시간 자막을 한국어로 덮기");
+        ToolStripMenuItem live = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "크롬 실시간 자막을 한국어로 덮기" : "크롬 실시간 자막을 번역으로 덮기"));
         live.Checked = LiveCaption.On;
         live.Click += delegate { LiveCaption.On = !LiveCaption.On; SaveSettings(); RefreshTray(); Log.Write("실시간 자막 한국어: " + (LiveCaption.On ? "켬" : "끔")); };
         menu.Items.Add(live);
-        ToolStripMenuItem auto = new ToolStripMenuItem("윈도우 켤 때 같이 켜기");
+        ToolStripMenuItem auto = new ToolStripMenuItem(MyLang.T("윈도우 켤 때 같이 켜기"));
         auto.Checked = AutoStart;
         auto.Click += delegate { AutoStart = !AutoStart; RefreshTray(); };
         menu.Items.Add(auto);
-        ToolStripMenuItem upd = new ToolStripMenuItem("업데이트 확인");
+        ToolStripMenuItem upd = new ToolStripMenuItem(MyLang.T("업데이트 확인"));
         upd.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { Updater.Check(true); }); };
         menu.Items.Add(upd);
-        ToolStripMenuItem logItem = new ToolStripMenuItem("기록 보기");
+        ToolStripMenuItem logItem = new ToolStripMenuItem(MyLang.T("기록 보기"));
         logItem.Click += delegate { try { Process.Start("notepad.exe", "\"" + Log.FilePath + "\""); } catch { } };
         menu.Items.Add(logItem);
         menu.Items.Add(new ToolStripSeparator());
-        ToolStripMenuItem quit = new ToolStripMenuItem("끝내기");
+        ToolStripMenuItem quit = new ToolStripMenuItem(MyLang.T("끝내기"));
         quit.Click += delegate { Application.Exit(); };
         menu.Items.Add(quit);
     }
@@ -1398,6 +1602,7 @@ static class App
                 fg = Native.GetAncestor(fg, Native.GA_ROOT);
                 bool lineFg = IsLineWindow(fg) && !Native.IsIconic(fg);
                 if (lineFg) lastLineWin = fg;
+                if (tick % 8 == 0 && MyLang.Poll()) OnMyLangChanged(); // 크롬에서 내 언어를 바꿨다(2초마다 본다)
                 // 켜자마자, 또는 쓰던 LINE 창이 닫혔으면 LINE 의 주 창을 찾아 둔다(LINE 을 눌러 앞에 내지 않아도 읽게).
                 if (!lineFg && tick % 8 == 0 && (lastLineWin == IntPtr.Zero || !Native.IsWindowVisible(lastLineWin)))
                 {
@@ -1505,7 +1710,7 @@ static class App
     // 한국어가 꽤 들어 있으면('+한' 으로 보낸 말) 옮기지 않는다. 태국어 가운데 낱말 하나('“쑥”')는 옮긴다.
     static bool HasKorean(string text)
     {
-        int ko = Hangul.Matches(text).Count;
+        int ko = MyLang.CountScript.Matches(text).Count; // 내 언어 글자(한국어면 한글)
         return ko >= 2 && ko * 5 >= Thai.Matches(text).Count;
     }
     static IntPtr msgListWin = IntPtr.Zero;
@@ -1755,7 +1960,7 @@ static class App
                 int thai = Thai.Matches(text).Count;
                 if (thai >= 2 && !HasKorean(text) && !sure)
                 {
-                    ko = "글자가 흐려 확실히 못 읽었어요 — 복사하면 옮겨 줘요";
+                    ko = MyLang.T("글자가 흐려 확실히 못 읽었어요 — 복사하면 옮겨 줘요");
                     mark = "?";
                     Log.Write("말풍선 확실하지 않음: 4배[" + r4[0] + "] " + c4 + " / 3배[" + r3[0] + "] " + c3);
                 }
@@ -1931,7 +2136,7 @@ static class App
             Thread.Sleep(40);
             string text = ReadText(el);
             tRead = sw.ElapsedMilliseconds;
-            if (!Hangul.IsMatch(text)) { decided = true; PassEnter(); return; }
+            if (!MyLang.IsMine(text, lang)) { decided = true; PassEnter(); return; }
             decided = true;
             SetBusy(true);
             string[] res;
@@ -2137,6 +2342,9 @@ static class App
     // 보내기 알림은 막대 위에 띄운다.
     public static void Show(string top, string main, bool error, int ms)
     {
+        // 내 언어가 한국어가 아니면 알림 글도 옮긴다(사용자가 쓴 말은 한글이 없어 그대로 — MyLang.T 가 한글 있는 글만).
+        top = MyLang.T(top);
+        main = MyLang.T(main);
         ui.BeginInvoke((MethodInvoker)delegate
         {
             Point at = bar.Visible ? new Point(bar.Right - 300, bar.Top) : Cursor.Position;

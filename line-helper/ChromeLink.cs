@@ -70,6 +70,11 @@ static class ChromeLink
         object v;
         string cmd = req.TryGetValue("cmd", out v) ? Convert.ToString(v) : "";
         bool manual = req.TryGetValue("manual", out v) && v is bool && (bool)v;
+        // 확장은 부를 때마다 '내 언어'를 같이 보낸다(background.js) — 바뀌었으면 data\mylang.txt 에 적고, 켜져 있는
+        // 도우미가 2초 안에 알아채 그 언어로 바꾼다(MyLang.Poll). cmd 'lang' 은 이것만 하러 온 것(창에서 언어를 바꿨다).
+        if (req.TryGetValue("lang", out v))
+            MyLang.Save(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data"), Convert.ToString(v));
+        if (cmd == "lang") return Reply(true, IsRunning(mutexName));
         if (cmd == "cc-translate")
         {
             // 크롬 '실시간 번역' 켜기·끄기 — 확장이 크롬 설정(접근성)을 작은 창으로 열어 두면 그 단추를 눌러 준다

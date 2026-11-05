@@ -169,7 +169,8 @@ static class ScreenKorean
         if (TwoLatin.IsMatch(t)) return true;
         if (Lang == "latin") return false;
         string s = t.Trim();
-        return s.Length >= 3 && !(HasHangul.IsMatch(s) && CleanKorean.IsMatch(s));
+        // 이미 한국어인 줄은 묻지 않는다 — 내 언어가 한국어일 때만(다른 언어면 한국어 줄도 옮긴다).
+        return s.Length >= 3 && !(MyLang.Ko && HasHangul.IsMatch(s) && CleanKorean.IsMatch(s));
     }
     static int cropNo;
 

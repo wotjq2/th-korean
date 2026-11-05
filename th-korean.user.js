@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.28.10
+// @version      1.29.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -52,6 +52,200 @@
   const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
   const THAI = /[฀-๿]/;
   const LATIN_WORD = /[A-Za-z]{2,}/;
+
+  // ---- 내 언어 (2026-11-05, 1.29.0) ----
+  // '통합 번역' 창(도구 막대)에서 고른 기준 언어. 'ko' 면 지금까지와 똑같다(한국어 용어집·말투 다듬기·한글 알아보기).
+  // 다른 언어면: 외국어 페이지·메신저·영상·사진 글을 그 언어로 보여 주고, 입력칸에 그 언어로 쓴 말을 고른 외국어로
+  // 바꾸며(구글 번역 — 용어집은 한국어 것뿐이라 쓰지 않는다), '한' 창 같은 화면 글도 그 언어로 옮겨 보인다(uiLocalize).
+  // 값은 구글 번역 언어 코드(zh-CN 처럼). 페이지를 새로 열 때 읽는다.
+  const MY = (() => {
+    try {
+      const v = String(GM_getValue('myLang', 'ko') || 'ko');
+      return /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(v) ? v : 'ko';
+    } catch {
+      return 'ko';
+    }
+  })();
+  const MY_KO = MY === 'ko';
+  const MY2 = MY.split('-')[0].toLowerCase(); // 영상 자막 언어처럼 두 글자로 견줄 때(zh-CN → zh)
+  // 글자로 언어를 알아보는 곳(입력칸에 '내 말'을 썼나, 이미 내 말인가). 로마자 언어끼리는 글자로 못 가른다 → null.
+  const SCRIPT_OF = {
+    ko: HANGUL, th: THAI, ja: /[぀-ヿ一-鿿]/, zh: /[一-鿿]/, yue: /[一-鿿]/,
+    ar: /[؀-ۿ]/, ur: /[؀-ۿ]/, fa: /[؀-ۿ]/, he: /[֐-׿]/, hi: /[ऀ-ॿ]/, mr: /[ऀ-ॿ]/, ne: /[ऀ-ॿ]/,
+    bn: /[ঀ-৿]/, te: /[ఀ-౿]/, ta: /[஀-௿]/, ru: /[Ѐ-ӿ]/, uk: /[Ѐ-ӿ]/, km: /[ក-៿]/, lo: /[຀-໿]/,
+    my: /[က-႟]/, ka: /[Ⴀ-ჿ]/, el: /[Ͱ-Ͽ]/,
+  };
+  const MY_SCRIPT = SCRIPT_OF[MY2] || null;
+  const LETTER = /\p{L}/u;
+  // 입력칸 글이 '내 말' 인가 — 바꿔 보낼지 정한다. 한국어면 예전처럼 한글이 있으면. 다른 언어면 그 언어 글자가 있으면,
+  // 로마자 언어(영어·스페인어 …)면 글자가 있고 바꿀 언어의 글자(태국어 등)가 아니면.
+  function isMine(v, target) {
+    if (!v) return false;
+    if (MY_KO) return HANGUL.test(v);
+    const tg = String(target || '').split('-')[0];
+    if (tg === MY2) return false; // 내 말로 바꿀 일은 없다(태국 사람이 태국 쇼핑몰)
+    if (MY_SCRIPT) return MY_SCRIPT.test(v);
+    const t = SCRIPT_OF[tg];
+    return LETTER.test(v) && !(t && t.test(v));
+  }
+  // 이미 내 말이라 옮길 필요 없는 글(페이지 글·드래그한 글). 로마자 언어는 글자로 모르니 구글에 맡긴다(같으면 그대로 온다).
+  function isMyText(v) {
+    return MY_KO ? HANGUL.test(v) : !!(MY_SCRIPT && MY_SCRIPT.test(v));
+  }
+  // 번역이 안 된 결과인가(바꿔 보낼 말). 한국어면 결과에 한글이 남았는지, 다른 언어면 원문 그대로 왔는지.
+  function untranslated(out, src) {
+    return MY_KO ? HANGUL.test(out) : String(out).trim() === String(src).trim();
+  }
+  // 언어 이름을 내 언어로(Intl). 한국어면 config.json 의 한국어 이름을 그대로.
+  function langName(lang) {
+    if (MY_KO) return lang.name;
+    try {
+      return new Intl.DisplayNames([MY], { type: 'language' }).of(lang.mt || lang.id) || lang.name;
+    } catch {
+      return lang.id;
+    }
+  }
+  // 언어 단추 글자. 한국어면 '태·미·중', 다른 언어면 'TH·EN·ZH'(한국어 줄임말은 다른 나라 사람이 못 읽는다).
+  function langLabel(lang) {
+    return MY_KO ? lang.label : String(lang.id).toUpperCase();
+  }
+
+  // ---- 화면 글 옮기기 (내 언어가 한국어가 아닐 때만) ----
+  // 단추·설정 창·안내(lzk- 로 시작하는 우리 요소)의 한국어 조각만 골라 구글로 옮기고 저장해 둔다(uiTr:<언어>).
+  // 따옴표·화살표·줄바꿈에서 끊어 사용자가 쓴 말·번역 결과("무선 이어폰" → "หูฟัง…")는 건드리지 않는다.
+  // 처음 보는 조각은 잠깐 한국어로 보였다가 바뀌고, 다음부터는 바로 바뀐다.
+  const UI_RUN = /[ㄱ-ㆎ가-힣](?:[^\n"“”'‘’「」→←<>{}[\]|]*[ㄱ-ㆎ가-힣.…!?])?/g;
+  const UI_ATTRS = ['title', 'placeholder', 'aria-label'];
+  let uiTr = null;
+  const uiQueue = new Set();
+  const uiWaiting = new Set(); // 옮김을 기다리는 노드(글 노드 또는 속성을 가진 요소)
+  const uiWrote = new WeakMap(); // 노드 → 우리가 써 넣은 글(같은 글이면 다시 보지 않는다)
+  let uiTimer = 0;
+  let uiSaveTimer = 0;
+
+  function uiLoad() {
+    if (uiTr) return uiTr;
+    try {
+      uiTr = GM_getValue('uiTr:' + MY, null) || {};
+    } catch {
+      uiTr = {};
+    }
+    return uiTr;
+  }
+  // 조각을 옮긴 글로. 모르는 조각은 줄에 세우고 null.
+  function uiReplace(text) {
+    const tr = uiLoad();
+    let missing = false;
+    const out = text.replace(UI_RUN, (run) => {
+      const v = tr[run];
+      if (v != null) return v;
+      uiQueue.add(run);
+      missing = true;
+      return run;
+    });
+    return missing ? null : out;
+  }
+  function uiFixText(node) {
+    const v = node.nodeValue;
+    if (!v || !HANGUL.test(v) || uiWrote.get(node) === v) return;
+    const out = uiReplace(v);
+    if (out == null) {
+      uiWaiting.add(node);
+      uiSchedule();
+    } else if (out !== v) {
+      uiWrote.set(node, out);
+      node.nodeValue = out;
+    } else uiWrote.set(node, v);
+  }
+  function uiFixAttrs(el) {
+    let wait = false;
+    for (const a of UI_ATTRS) {
+      const v = el.getAttribute && el.getAttribute(a);
+      if (!v || !HANGUL.test(v)) continue;
+      const out = uiReplace(v);
+      if (out == null) wait = true;
+      else if (out !== v) el.setAttribute(a, out);
+    }
+    if (wait) {
+      uiWaiting.add(el);
+      uiSchedule();
+    }
+  }
+  function uiFixTree(root) {
+    if (!root || root.nodeType !== 1 || root.closest('[data-lzk-noi18n]')) return;
+    uiFixAttrs(root);
+    for (const el of root.querySelectorAll('[title],[placeholder],[aria-label]')) uiFixAttrs(el);
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const p = n.parentElement;
+      if (p && !/^(SCRIPT|STYLE|TEXTAREA)$/.test(p.tagName) && !p.closest('[data-lzk-noi18n]')) uiFixText(n);
+    }
+  }
+  function uiSchedule() {
+    if (!uiTimer) uiTimer = setTimeout(uiFlush, 120);
+  }
+  async function uiFlush() {
+    uiTimer = 0;
+    const runs = [...uiQueue].slice(0, 80);
+    runs.forEach((r) => uiQueue.delete(r));
+    if (runs.length) {
+      let got = [];
+      try {
+        got = await freeTranslateMany(runs, 'ko', MY);
+      } catch (e) {
+        console.warn(`[${APP_NAME}] 화면 글 옮기기 실패:`, e.message);
+      }
+      const tr = uiLoad();
+      runs.forEach((r, i) => (tr[r] = got[i] && String(got[i]).trim() ? String(got[i]).trim() : r));
+      if (Object.keys(tr).length > 4000) uiTr = {};
+      clearTimeout(uiSaveTimer);
+      uiSaveTimer = setTimeout(() => GM_setValue('uiTr:' + MY, uiTr), 1500);
+    }
+    const nodes = [...uiWaiting];
+    uiWaiting.clear();
+    for (const n of nodes) {
+      if (!n.isConnected) continue;
+      if (n.nodeType === 3) uiFixText(n);
+      else uiFixAttrs(n);
+    }
+    if (uiQueue.size) uiSchedule();
+  }
+  // 우리 요소인가(lzk- 로 시작하는 id·class 안).
+  function uiOurs(el) {
+    return !!(el && el.closest && el.closest('[id^="lzk-"],[class*="lzk-"]'));
+  }
+  function uiStart() {
+    const ob = new MutationObserver((list) => {
+      for (const m of list) {
+        if (m.type === 'attributes') {
+          if (uiOurs(m.target)) uiFixAttrs(m.target);
+          continue;
+        }
+        if (m.type === 'characterData') {
+          if (HANGUL.test(m.target.nodeValue || '') && uiOurs(m.target.parentElement)) uiFixText(m.target);
+          continue;
+        }
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 3) {
+            if (HANGUL.test(n.nodeValue || '') && uiOurs(n.parentElement)) uiFixText(n);
+          } else if (n.nodeType === 1) {
+            const own = (n.id && n.id.startsWith('lzk-')) || (typeof n.className === 'string' && n.className.includes('lzk-'));
+            if (own || (HANGUL.test(n.textContent || '') && uiOurs(n))) uiFixTree(n);
+          }
+        }
+      }
+    });
+    ob.observe(document.documentElement, {
+      childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: UI_ATTRS,
+    });
+  }
+  if (!MY_KO && typeof document !== 'undefined' && document.documentElement && typeof document.createTreeWalker === 'function') {
+    try {
+      uiStart();
+    } catch (e) {
+      console.warn(`[${APP_NAME}] 화면 글 옮기기를 켜지 못했습니다:`, e.message);
+    }
+  }
 
   const FREE_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
   // gtx 가 막혔을 때 쓰는 같은 서버의 크롬 사전 확장용 주소(freeRaw).
@@ -1161,6 +1355,7 @@
 
   // 선택 번역용. 페이지 전체는 크롬에 맡기고 헷갈리는 문구만 정확히 본다.
   async function translateSelection(text) {
+    if (!MY_KO) return { ko: await freeTranslateOne(text, 'auto', MY), via: '무료 API' };
     if (aiKey()) {
       try {
         const out = await aiChat(
@@ -1199,17 +1394,18 @@
   // 통합 번역 (캐시 → 엔진 → 폴백)
   // ---------------------------------------------------------------------------
 
+  // 이름은 예전 그대로지만 '내 언어'(MY)로 옮긴다. 한국어가 아니면 고정 용어(태국어→한국어)·AI(한국어 지시문)는 건너뛴다.
   async function translateToKorean(texts) {
     const result = new Array(texts.length);
     const pending = [];
-    const pinned = { ...SEED_PAGE_GLOSSARY, ...cfg.pageGlossary };
+    const pinned = MY_KO ? { ...SEED_PAGE_GLOSSARY, ...cfg.pageGlossary } : {};
 
     texts.forEach((t, i) => {
       if (pinned[t] !== undefined) {         // 고정 용어가 최우선 (브랜드명 등)
         result[i] = pinned[t];
         return;
       }
-      const hit = cacheGet(t, 'ko');
+      const hit = cacheGet(t, MY);
       if (hit !== undefined) result[i] = hit;
       else pending.push(i);
     });
@@ -1218,7 +1414,7 @@
     const pendingTexts = pending.map((i) => texts[i]);
     let translated = null;
 
-    if (usesAI(cfg.pageEngine) && aiKey()) {
+    if (MY_KO && usesAI(cfg.pageEngine) && aiKey()) {
       try {
         translated = [];
         for (let i = 0; i < pendingTexts.length; i += 20) {
@@ -1232,13 +1428,13 @@
     }
 
     if (!translated) {
-      translated = await freeTranslateMany(pendingTexts, 'auto', 'ko');
+      translated = await freeTranslateMany(pendingTexts, 'auto', MY);
     }
 
     pending.forEach((originalIndex, k) => {
       const value = translated[k];
       if (value && value !== texts[originalIndex]) {
-        cacheSet(texts[originalIndex], 'ko', value);
+        cacheSet(texts[originalIndex], MY, value);
         result[originalIndex] = value;
       } else {
         result[originalIndex] = value || null;
@@ -1257,6 +1453,14 @@
   // 그래서 용어집을 먼저 보고, 무료 API 에는 용어집이 못 덮은 조각만 맡긴다.
   async function translateSearchKeyword(korean) {
     const trimmed = normKey(korean);
+    // 내 언어가 한국어가 아니면 용어집(한국어=태국어)은 맞지 않는다 — 구글로 내 말 → 태국어.
+    if (!MY_KO) {
+      const hit = cacheGet(MY + '>' + trimmed, 'th');
+      if (hit) return { thai: hit, via: '저장' };
+      const th = (await freeRaw(trimmed, 'auto', 'th', SEARCH_FREE_TIMEOUT)).trim();
+      if (th && th !== trimmed) cacheSet(MY + '>' + trimmed, 'th', th);
+      return { thai: th, via: '번역' };
+    }
 
     await ensureGlossary();
     const glossary = buildGlossary();
@@ -1378,8 +1582,9 @@
     if (!raw) return false;
     const t = raw.trim();
     if (t.length < 2 || t.length > 300) return false;
-    if (HANGUL.test(t)) return false;                 // 이미 한국어
+    if (isMyText(t)) return false;                    // 이미 한국어(내 언어)
     if (!THAI.test(t) && !LATIN_WORD.test(t)) return false; // 숫자·기호·통화만
+    if (MY2 === 'en' && !THAI.test(t)) return false;  // 내 언어가 영어면 영어 글은 그대로
     if (/^[\d\s.,%\-+/฿$()[\]:]+$/.test(t)) return false;   // 가격·수치
 
     let el = node.parentElement;
@@ -2182,7 +2387,7 @@
 
   async function handleKoreanSearch(input, submitFn) {
     const value = input.value.trim();
-    if (!value || !HANGUL.test(value)) return false; // 한국어가 아니면 그대로 통과
+    if (!value || !isMine(value, 'th')) return false; // 한국어(내 말)가 아니면 그대로 통과
 
     searchBusy = true;
     setBadge('검색어 번역 중…');
@@ -2286,7 +2491,7 @@
     const confirming = (input) => {
       if (!awaitingConfirm) return false;
       awaitingConfirm = false;
-      return !HANGUL.test(input.value);
+      return !isMine(input.value, 'th');
     };
 
     window.addEventListener(
@@ -2307,7 +2512,7 @@
           submitSearch(input);
           return;
         }
-        if (!HANGUL.test(input.value)) return;
+        if (!isMine(input.value, 'th')) return;
         intercept(e, input);
       },
       true
@@ -2328,7 +2533,7 @@
           submitSearch(input);
           return;
         }
-        if (!HANGUL.test(input.value)) return;
+        if (!isMine(input.value, 'th')) return;
         intercept(e, input);
       },
       true
@@ -2354,7 +2559,7 @@
           submitSearch(input);
           return;
         }
-        if (!HANGUL.test(input.value)) return;
+        if (!isMine(input.value, 'th')) return;
         intercept(e, input);
       },
       true
@@ -2657,7 +2862,7 @@
     const sel = window.getSelection();
     const text = sel ? sel.toString().trim() : '';
     if (!text || text.length < 2 || text.length > 400) return removeSelTip();
-    if (HANGUL.test(text)) return removeSelTip();            // 이미 한국어
+    if (isMyText(text)) return removeSelTip();               // 이미 한국어(내 언어)
     if (!THAI.test(text) && !LATIN_WORD.test(text)) return removeSelTip();
     // 바트 기호 ฿ 는 태국어 영역(U+0E3F)이라 가격만 끌어도 태국어로 잡힌다.
     // 기호·숫자를 걷어내고도 글자가 남을 때만 버튼을 띄운다.
@@ -3484,7 +3689,7 @@
       const lines = [];
       segs.forEach((s, i) => {
         const k = out[i];
-        if (k && HANGUL.test(k) && k !== s.text) lines.push([s.box.x0 / W, s.box.y0 / H, s.box.x1 / W, s.box.y1 / H, k.trim(), s.lines || 1]);
+        if (k && (MY_KO ? HANGUL.test(k) : true) && k !== s.text) lines.push([s.box.x0 / W, s.box.y0 / H, s.box.x1 / W, s.box.y1 / H, k.trim(), s.lines || 1]);
       });
       ocrCachePut(src, lines);
       cached = { lines };
@@ -4309,7 +4514,8 @@
     fab.dataset.lzkVersion = SCRIPT_VERSION;
     markNoTranslate(fab);
     fab.type = 'button';
-    fab.textContent = '한';
+    // 한국어가 아니면 '한' 대신 내 언어 코드(EN·TH …) — '한' 을 옮기면 엉뚱한 글자가 된다.
+    fab.textContent = MY_KO ? '한' : MY2.toUpperCase();
     fab.title = `${APP_NAME} 설정 (${SITE.label})`;
     if (MESSENGER) fab.toggleAttribute('data-high', true); // 메신저는 오른쪽 아래에 보내기 단추가 있다
     fab.addEventListener('click', togglePanel);
@@ -4362,6 +4568,7 @@
     const q = params.get(SITE.queryParam);
     if (!q) return;
 
+    if (!MY_KO) return; // 주소의 검색어 고치기는 한국어 용어집으로만 한다
     if (!HANGUL.test(q)) {
       if (!THAI.test(q)) return;
       const fix = await findStaleTranslation(q);
@@ -4912,6 +5119,9 @@
   // 고른 언어로. 태국어는 용어집(+문장 번역), 다른 언어는 그 언어의 용어집(있으면) → 영어·중국어 샘플 용어집 →
   // 무료 번역.
   async function koreanToLang(value, lang) {
+    // 내 언어가 한국어가 아니면 용어집(한국어=…)은 맞지 않는다 — 구글 번역(원문 언어는 구글이 알아본다: 영어 사용자가
+    // 한국어를 섞어 써도 맞게. 내 언어로 못 박았더니 일본어 사용자의 '내일 봐요' 가 엉뚱한 태국어가 됐다 — 2026-11-05 시험).
+    if (!MY_KO) return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: '번역' };
     if (lang.id === 'th') {
       await ensureGlossary();
       return koreanToThai(value);
@@ -4926,12 +5136,12 @@
   async function convertInputToThai(input) {
     const value = input.value.trim();
     const lang = genericLang();
-    if (genericBusy || !lang || !value || !HANGUL.test(value)) return;
+    if (genericBusy || !lang || !value || !isMine(value, lang.id)) return;
     genericBusy = true;
-    setBadge(`한국어를 ${lang.name}로 바꾸는 중…`);
+    setBadge(`${MY_KO ? '한국어를 ' : ''}${langName(lang)}로 바꾸는 중…`);
     try {
       const { thai, via, note } = await koreanToLang(value, lang);
-      if (!thai || HANGUL.test(thai)) throw new Error('번역 결과가 비어 있습니다');
+      if (!thai || untranslated(thai, value)) throw new Error('번역 결과가 비어 있습니다');
       setInputValue(input, thai);
       input.focus();
       try {
@@ -4949,7 +5159,7 @@
         submitGeneric(input);
       }
     } catch (e) {
-      toast(`한국어를 ${lang.name}로 바꾸지 못했습니다: ${e.message || e}`, 4000);
+      toast(`${MY_KO ? '한국어를 ' : ''}${langName(lang)}로 바꾸지 못했습니다: ${e.message || e}`, 4000);
     } finally {
       genericBusy = false;
       setBadge(null);
@@ -4962,7 +5172,7 @@
   function updateGenericChip() {
     const input = genericTarget(document.activeElement);
     const lang = genericLang();
-    if (!lang || !input || !HANGUL.test(input.value)) {
+    if (!lang || !input || !isMine(input.value, lang.id)) {
       if (genericChip) genericChip.style.display = 'none';
       return;
     }
@@ -5004,7 +5214,7 @@
       (e) => {
         if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || !genericLang()) return;
         const input = genericTarget(e.target);
-        if (!input || !HANGUL.test(input.value)) return;
+        if (!input || !isMine(input.value, genericLang().id)) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         convertInputToThai(input);
@@ -5015,7 +5225,7 @@
       'submit',
       (e) => {
         if (!genericLang()) return;
-        const input = [...(e.target?.elements || [])].find((el) => genericTarget(el) && HANGUL.test(el.value));
+        const input = [...(e.target?.elements || [])].find((el) => genericTarget(el) && isMine(el.value, genericLang().id));
         if (!input) return;
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -5038,9 +5248,9 @@
     for (const l of TYPE_LANGS) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = l.label;
+      b.textContent = langLabel(l);
       b.dataset.lang = l.id;
-      b.title = `한국어로 쓰고 Enter → ${l.name}로 바꿉니다 (한 번 누르면 계속 켜짐, 다시 누르면 꺼짐)`;
+      b.title = `${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter → ${langName(l)}로 바꿉니다 (한 번 누르면 계속 켜짐, 다시 누르면 꺼짐)`;
       b.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
       b.addEventListener('click', () => {
         bar.removeAttribute('data-open');
@@ -5051,7 +5261,7 @@
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'lzk-lang-toggle';
-    toggle.title = '입력 언어 고르기 — 고르면 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 그 언어로 바꿉니다';
+    toggle.title = `입력 언어 고르기 — 고르면 어느 사이트든 입력칸에 ${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter 를 누르면 그 언어로 바꿉니다`;
     toggle.addEventListener('mousedown', (e) => e.preventDefault());
     toggle.addEventListener('click', () => bar.toggleAttribute('data-open'));
     bar.append(langs, toggle);
@@ -5072,7 +5282,7 @@
     for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
     const on = TYPE_LANGS.find((l) => l.id === typeLang);
     const toggle = bar.querySelector('.lzk-lang-toggle');
-    toggle.textContent = on ? `번역·${on.label}` : '번역';
+    toggle.textContent = on ? `번역·${langLabel(on)}` : '번역';
     toggle.toggleAttribute('data-on', !!on);
   }
 
@@ -5083,10 +5293,10 @@
     const l = genericLang();
     toast(
       id
-        ? `${l.name} 입력 켬: 어느 사이트든 입력칸에 한국어로 쓰고 Enter 를 누르면 ${l.name}로 바꿉니다.\n끄려면 '번역·${l.label}' 을 눌러 같은 글자를 다시 누르세요.`
+        ? `${langName(l)} 입력 켬: 어느 사이트든 입력칸에 ${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter 를 누르면 ${langName(l)}로 바꿉니다.\n끄려면 '번역·${langLabel(l)}' 을 눌러 같은 글자를 다시 누르세요.`
         : genericThaiPage
           ? '입력 언어 선택을 껐습니다. 이 태국어 페이지에서는 전처럼 태국어로 바꿉니다.'
-          : '입력 언어 선택을 껐습니다. 한국어가 그대로 입력됩니다.',
+          : MY_KO ? '입력 언어 선택을 껐습니다. 한국어가 그대로 입력됩니다.' : '입력 언어 선택을 껐습니다. 쓴 말이 그대로 입력됩니다.',
       4000
     );
     updateGenericChip();
@@ -5305,11 +5515,11 @@
     const ask = [];
     for (const s of batch) {
       s.tried = true;
-      if (d.lang === 'ko') {
+      if (d.lang === (MY_KO ? 'ko' : MY2)) {
         s.ko = s.src;
         continue;
       }
-      if (d.lang === 'th') {
+      if (MY_KO && d.lang === 'th') {
         // 영상은 나에게 하는 말이 아니라서 호칭(พี่→오빠)은 바꾸지 않는다(mine = true).
         s.prep = chatPrepThai(s.src, true, '');
         const hit = chatThaiWhole(s.prep) || dubFromGlossary(s.prep);
@@ -5329,7 +5539,7 @@
     }
     ask.forEach((s, i) => {
       let ko = got[i];
-      if (ko && d.lang === 'th') ko = THAI.test(ko) ? null : chatFixKorean(ko, s.prep);
+      if (ko && d.lang === 'th' && MY2 !== 'th') ko = THAI.test(ko) ? null : MY_KO ? chatFixKorean(ko, s.prep) : ko;
       s.ko = ko || null;
     });
   }
@@ -5378,7 +5588,8 @@
   function dubSetCues(d, cues) {
     if (!d.lang) {
       const all = cues.map((c) => c.text).join(' ');
-      d.lang = THAI.test(all) ? 'th' : HANGUL.test(all) && !/[A-Za-z]{3}/.test(all) ? 'ko' : '';
+      d.lang = THAI.test(all) ? 'th' : HANGUL.test(all) && !/[A-Za-z]{3}/.test(all) ? 'ko'
+        : !MY_KO && MY_SCRIPT && MY_SCRIPT.test(all) ? MY2 : '';
     }
     const old = new Map(d.sentences.map((s) => [`${s.start}|${s.src}`, s]));
     d.sentences = dubSentences(cues, d.lang).map((s) => {
@@ -5753,6 +5964,10 @@
   // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '실시간 번역' 을 켜 두면 도우미가 한국어
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
+  // 내 언어(한국어가 아니면 그 언어)로 — 내 말 영상에는 자막을 덧붙이지 않고, 모자란 줄은 유튜브가 그 언어로 옮긴 자막(tlang)으로.
+  const YT_MY = MY_KO ? 'ko' : MY2;
+  const YT_MY_RE = new RegExp('^' + YT_MY, 'i');
+  const YT_TLANG = MY === 'zh-CN' ? 'zh-Hans' : MY === 'zh-TW' ? 'zh-Hant' : YT_MY;
   const ytSpokenBusy = new Map(); // 영상 id → 묻는 중인 약속(같이 기다린다)
   // 자동 자막이 없는 영상(라이브 등 — 사용자 2026-11-03: 한국어 라이브 뉴스 위에 우리 자막이 겹쳤다)은 제목·채널 이름·
   // 태그의 글자로 가늠한다. 태그와 채널 이름은 유튜브가 번역해 보이지 않는다. 한글 한 글자는 라틴 글자 2.5개로 친다
@@ -5760,17 +5975,19 @@
   const ytMostlyHangul = (meta) => {
     if (!meta) return false;
     const s = [meta.title, meta.author, ...(meta.keywords || [])].join(' ');
-    const ko = (s.match(/[가-힣]/g) || []).length;
-    const other = (s.match(/[A-Za-z฀-๿぀-ヿ一-鿿Ѐ-ӿ؀-ۿऀ-ॿ]/g) || []).length;
+    const mineRe = MY_KO ? /[가-힣]/g : MY_SCRIPT ? new RegExp(MY_SCRIPT.source, 'g') : null;
+    if (!mineRe) return false; // 로마자 언어는 제목 글자로 못 가른다
+    const ko = (s.match(mineRe) || []).length;
+    const other = (s.match(/[A-Za-z가-힣฀-๿぀-ヿ一-鿿Ѐ-ӿ؀-ۿऀ-ॿ]/g) || []).length - ko;
     return ko > 0 && ko * 2.5 >= other;
   };
   const ytSpokenFrom = (tracks, meta) => {
     const asr = (tracks || []).find((t) => t.endsWith(':asr'));
     if (asr) return asr.split(':')[0].toLowerCase();
-    if (tracks && tracks.length && tracks.every((t) => /^ko/i.test(t))) return 'ko';
-    return ytMostlyHangul(meta) ? 'ko' : '';
+    if (tracks && tracks.length && tracks.every((t) => YT_MY_RE.test(t))) return YT_MY;
+    return ytMostlyHangul(meta) ? YT_MY : '';
   };
-  const ytKoreanVideo = () => YOUTUBE && /^ko/.test(ytSpoken.get(ytVideoId()) || '');
+  const ytKoreanVideo = () => YOUTUBE && YT_MY_RE.test(ytSpoken.get(ytVideoId()) || '');
 
   // 확장의 페이지 쪽 조각에 지금 영상의 자막 목록을 묻는다(넘긴 직후면 플레이어가 바뀔 때까지 0.3초씩 3초까지).
   // 묻는 중이면 그 약속을 돌려준다 — 자막 파일을 받기 전(ytLoadCues)에도 기다릴 수 있게.
@@ -5871,7 +6088,7 @@
     dubStatus();
     // 한국어 영상이면(자막 목록 — ytSpokenFrom) CC 를 껐다 켜 보지도 않는다.
     const koVideo = () => /^ko/.test(ytSpoken.get(id) || '');
-    const KO_VIDEO = '한국어 영상이라 한국어 자막을 덧붙이지 않습니다';
+    const KO_VIDEO = MY_KO ? '한국어 영상이라 한국어 자막을 덧붙이지 않습니다' : '내 언어 영상이라 자막을 덧붙이지 않습니다';
     await ytLearnSpoken();
     if (d !== dub) return null;
     if (koVideo()) {
@@ -5920,14 +6137,14 @@
         // 띄우지 않는다(사용자 2026-11-03). 플레이어가 부른 자막이 한국어라도 사람이 만든 것(kind 없음)이면 말은 외국어일
         // 수 있다 — 한국어 화면의 계정은 TED 같은 외국어 영상에서도 한국어 자막을 먼저 부른다. 그래서 자막 목록으로 안
         // 말 언어(ytSpoken)를 먼저 보고, 모를 때만 한국어 자동 자막(asr)을 한국어 말로 친다.
-        if (koVideo() || (!ytSpoken.get(id) && asr && /^ko/i.test(spoken))) {
-          ytSpoken.set(id, 'ko');
+        if (koVideo() || (!ytSpoken.get(id) && asr && YT_MY_RE.test(spoken))) {
+          ytSpoken.set(id, YT_MY);
           d.status = KO_VIDEO;
           return null;
         }
-        if (d.auto && /^ko/i.test(spoken)) return null; // 사람이 만든 한국어 자막이 있는 외국어 영상 — 유튜브 CC 로 보면 된다
+        if (d.auto && YT_MY_RE.test(spoken)) return null; // 사람이 만든 한국어 자막이 있는 외국어 영상 — 유튜브 CC 로 보면 된다
         const tries = [];
-        if (!/^ko/i.test(spoken) && has('ko', '')) tries.push(['ko', '']);
+        if (!YT_MY_RE.test(spoken) && has(YT_MY, '')) tries.push([YT_MY, '']);
         if (asr && has(spoken, '')) tries.push([spoken, '']);
         tries.push([spoken, asr ? 'asr' : '']);
         // 한꺼번에 묻고 앞 순서부터 고른다 — 차례로 물었더니 없는 자막 하나에 5.7초가 걸려 쇼츠 자막이 그만큼
@@ -5939,9 +6156,9 @@
           if (d !== dub) return null;
           if (cues && cues.length) {
             // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
-            if (d.auto && lang === 'ko') return null;
+            if (d.auto && lang === YT_MY) return null;
             d.lang = lang.slice(0, 2).toLowerCase();
-            if (d.lang !== 'ko') d.koFallback = async () => (await get(mk(base, lang, kind, 'ko'))) || [];
+            if (d.lang !== YT_MY) d.koFallback = async () => (await get(mk(base, lang, kind, YT_TLANG))) || [];
             return cues;
           }
         }
@@ -6710,6 +6927,7 @@
       if (r.left - lr.left <= lr.right - r.right) theirs.push(lang);
     }
     if (theirs.includes('th')) return true;
+    if (!MY_KO) return false; // 이름 글자로 가르는 것은 한국 사람용(로마자 이름 = 태국 사람)
     const name = chatPartnerName();
     if (HANGUL.test(name)) return false;
     if (THAI.test(name) || /[A-Za-z]/.test(name)) return true;
@@ -8172,6 +8390,8 @@
   }
 
   async function chatKoreanToThai(text) {
+    // 내 언어가 한국어가 아니면 용어집·한국어 말투 다듬기는 맞지 않는다 — 내 말 → 태국어 구글 번역.
+    if (!MY_KO) return { thai: (await freeTranslateOne(text, 'auto', 'th')).trim(), via: '번역' };
     await ensureGlossary();
     const idx = buildIndex();
     const out = [];
@@ -8235,12 +8455,12 @@
 
   async function chatConvertAndSend(ed) {
     const value = composerText(ed);
-    if (chatBusy || !value || !HANGUL.test(value)) return;
+    if (chatBusy || !value || !isMine(value, 'th')) return;
     chatBusy = true;
     setBadge('태국어로 바꾸는 중…');
     try {
       const { thai, via } = await chatKoreanToThai(value);
-      if (!thai || HANGUL.test(thai)) throw new Error('번역 결과가 비어 있습니다');
+      if (!thai || untranslated(thai, value)) throw new Error('번역 결과가 비어 있습니다');
       if (composerText(ed) !== value) throw new Error('그 사이 입력칸 글자가 바뀌었습니다');
       await setComposerText(ed, thai);
       if (composerText(ed) !== flatText(thai)) await setComposerText(ed, thai, 150); // 한 번 더, 천천히
@@ -8262,7 +8482,7 @@
   // 'Enter → 한국어 그대로'. 누르면 이 대화방만 바꾼다.
   function updateChatChip() {
     const ed = chatComposer(document.activeElement);
-    if (!ed || !HANGUL.test(ed.textContent)) {
+    if (!ed || !isMine(ed.textContent, 'th')) {
       if (chatChip) chatChip.style.display = 'none';
       return;
     }
@@ -9153,9 +9373,10 @@
       const lr = log ? log.getBoundingClientRect() : null;
       const partner = log ? chatPartnerGender(log, lr) : '';
       const mine = todo.map(([d]) => (lr ? chatBubbleMine(d, lr) : false));
-      const prepped = todo.map(([d, src], i) => chatPrepThai(src, mine[i], partner));
-      const whole = prepped.map(chatThaiWhole);
-      const ask = prepped.filter((s, i) => !whole[i] && !TH_SHORT_REPLY.test(s));
+      // 손질(พี่→오빠 같은 한국어 호칭)·표·말투 다듬기는 한국어용 — 내 언어가 다르면 원문 그대로 구글로.
+      const prepped = todo.map(([d, src], i) => (MY_KO ? chatPrepThai(src, mine[i], partner) : src));
+      const whole = prepped.map((s) => (MY_KO ? chatThaiWhole(s) : ''));
+      const ask = prepped.filter((s, i) => !whole[i] && !(MY_KO && TH_SHORT_REPLY.test(s)));
       // 여러 줄 말풍선은 줄마다 옮겨 줄을 살린다(묶어 옮기면 한 덩어리로 뭉친다).
       const split = (s) => s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
       const lines = [...new Set(ask.flatMap(split))];
@@ -9169,7 +9390,7 @@
       );
       todo.forEach(([d, src], i) => {
         const s = prepped[i];
-        const ko = whole[i] || (TH_SHORT_REPLY.test(s) ? '네' : kos.get(s) && chatFixKorean(kos.get(s), s));
+        const ko = whole[i] || (MY_KO && TH_SHORT_REPLY.test(s) ? '네' : kos.get(s) && (MY_KO ? chatFixKorean(kos.get(s), s) : kos.get(s)));
         const orig = mine[i] ? chatSentLog.find((e) => sentKey(e.th) === sentKey(src))?.ko || '' : '';
         if (ko && !THAI.test(ko)) attachKorean(d, src, ko, orig);
         else chatFailed.set(d, { src, at: Date.now() });
@@ -9212,7 +9433,7 @@
           e.stopImmediatePropagation();
           return;
         }
-        if (!HANGUL.test(ed.textContent) || !chatThaiOn()) return;
+        if (!isMine(ed.textContent, 'th') || !chatThaiOn()) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         chatConvertAndSend(ed);

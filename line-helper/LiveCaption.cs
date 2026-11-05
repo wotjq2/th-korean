@@ -31,7 +31,10 @@ static class LiveCaption
     static string tail = "";
     static DateTime tailSince = DateTime.MinValue;
     static bool seen;
-    static readonly Regex Hangul = new Regex("[가-힣]");
+    static readonly Regex HangulKo = new Regex("[가-힣]");
+    static readonly Regex NoMatch = new Regex("(?!)");
+    // 내 언어 글자(한국어면 한글 — 예전 그대로). 로마자 언어(영어 등)는 글자로 못 가르니 늘 '아니다'(모두 옮긴다).
+    static Regex Hangul { get { return MyLang.Ko ? HangulKo : (MyLang.Script ?? NoMatch); } }
     static readonly Regex Foreign = new Regex("[฀-๿A-Za-z぀-ヿ一-鿿]");
     static readonly Regex ThaiGap = new Regex("([฀-๿])\\s+(?=[฀-๿])");
     static readonly Regex ThaiRun = new Regex("[฀-๿][฀-๿\\s]*");

@@ -11,6 +11,10 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     gmXhr(m).then(reply);
     return true; // 답을 나중에 보낸다
   }
+  if (m && m.t === 'helper-lang') {
+    helperCall('lang', false).then(reply);
+    return true;
+  }
   if (m && m.t === 'helper') {
     // 사람이 창에서 끈 동안(크롬을 다시 켤 때까지)은 영상이 돌아도 저절로 다시 켜지 않는다(helper-auto).
     if (m.manual && (m.cmd === 'stop' || m.cmd === 'start')) chrome.storage.session.set({ helperUserStopped: m.cmd === 'stop' });
@@ -58,9 +62,16 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
 const HELPER_HOST = 'com.th_korean.helper';
 let helperAutoAt = 0;
 
+// 모든 부름에 '내 언어'(통합 번역 창에서 고른 기준 언어)를 같이 보낸다 — 도우미가 바뀌었으면 받아 두고
+// LINE·화면 번역·자막을 그 언어로 옮기고 자기 화면 글도 그 언어로 바꾼다(ChromeLink.cs SaveMyLang). 옛 도우미는 무시한다.
+async function myLang() {
+  const v = (await chrome.storage.local.get('gm:myLang'))['gm:myLang'];
+  return typeof v === 'string' && v ? v : 'ko';
+}
+
 async function helperCall(cmd, manual) {
   try {
-    return await chrome.runtime.sendNativeMessage(HELPER_HOST, { cmd, manual: !!manual });
+    return await chrome.runtime.sendNativeMessage(HELPER_HOST, { cmd, manual: !!manual, lang: await myLang() });
   } catch (e) {
     // 'Specified native messaging host not found.' = 도우미가 없거나 아직 한 번도 켜지지 않았다
     return { ok: false, error: String((e && e.message) || e) };

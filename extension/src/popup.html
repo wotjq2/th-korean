@@ -39,10 +39,22 @@
   #hsetup button.sub { background: none; border-color: transparent; color: var(--sub); padding: 3px; text-decoration: underline; }
   #hnote { margin-top: 6px; color: var(--sub); font-size: 12px; }
   #hnote:empty { display: none; }
+  #mylang { padding: 10px 14px 10px; border-bottom: 1px solid var(--line); }
+  #mylang label { display: block; margin-bottom: 4px; font-weight: 600; }
+  #mylang select { box-sizing: border-box; width: 100%; font: inherit; color: inherit; background: var(--btn); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; }
+  #mylang .hint { margin-top: 4px; color: var(--sub); font-size: 12px; }
+  #langnote:empty { display: none; }
+  #langnote { margin-top: 4px; color: #16a34a; font-size: 12px; }
 </style>
 </head>
 <body>
 <header><h1>통합 번역</h1><span id="ver"></span></header>
+<section id="mylang">
+  <label for="lang">내 언어</label>
+  <select id="lang"></select>
+  <div class="hint">고른 언어로 페이지·메신저·영상·LINE 을 보여 주고, 그 언어로 쓴 말을 고른 외국어로 바꿉니다. 이 창과 설정 창, 번역 도우미의 글도 그 언어로 바뀝니다.</div>
+  <div id="langnote"></div>
+</section>
 <div id="menu"></div>
 <section id="search">
   <label><input type="checkbox" id="confirm"> 검색할 때 바뀐 태국어 확인 (Enter 두 번)</label>

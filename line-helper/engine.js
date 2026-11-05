@@ -24,6 +24,14 @@ try {
 } catch {
   /* 처음 실행 */
 }
+// 내 언어(크롬 '통합 번역' 창에서 고른 기준 언어) — 도우미가 data\mylang.txt 에 받아 둔다(ChromeLink → MyLang.Save).
+// 스크립트는 띄울 때 GM_getValue('myLang') 로 한 번 읽으므로 바뀌면 도우미가 엔진을 다시 띄운다(MyLang.Poll).
+try {
+  const my = fs.readFileSync(path.join(DATA, 'mylang.txt'), 'utf8').trim();
+  store.myLang = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(my) ? my : 'ko';
+} catch {
+  store.myLang = 'ko';
+}
 let saveTimer = null;
 function saveStore() {
   clearTimeout(saveTimer);
@@ -89,7 +97,11 @@ const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
   'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang', 'rcRefresh',
+  'MY', 'freeTranslateMany',
 ];
+// 스크립트가 내 언어를 알면(1.29.0~) 그 값, 아니면 한국어.
+const myLang = () => (T && T.MY) || 'ko';
+const myKo = () => myLang() === 'ko';
 const configText = () => (store.remoteConfig && store.remoteConfig.text) || ''; // 스크립트의 RC_STORE 사본
 
 let T = null;
@@ -159,6 +171,7 @@ async function toLang(text, lang) {
 
 // 받은 태국어 → 한국어. 메신저 받기(scanChat)와 같은 손질·표·번역. 누가 보낸 말인지 모르니 상대 말로 본다.
 async function toKorean(src) {
+  if (!myKo()) return toMine(src);
   const partner = T.thaiSpeakerGender(src);
   const s = T.chatPrepThai(src, false, partner);
   const whole = T.chatThaiWhole(s);
@@ -173,12 +186,21 @@ async function toKorean(src) {
 // 크롬 실시간 자막 한 줄(LiveCaption.cs). 영상은 나에게 하는 말이 아니라서 호칭(พี่→오빠)은 바꾸지 않는다(mine).
 // 태국어가 아니어도(영어·일본어 자막) 그대로 번역으로 간다.
 async function captionKorean(src) {
+  if (!myKo()) return toMine(src);
   const s = T.chatPrepThai(src, true, '');
   const whole = T.chatThaiWhole(s);
   if (whole) return { out: whole, via: '표' };
   const [ko] = await T.translateToKorean([s]);
   if (!ko) throw new Error('번역 결과가 비어 있습니다');
   return { out: T.chatFixKorean(ko, s), via: '번역' };
+}
+
+// 내 언어가 한국어가 아니면: 손질(พี่→오빠)·표·말투 다듬기는 한국어용이라 빼고 줄마다 구글로 내 언어에.
+async function toMine(src) {
+  const lines = src.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const got = await T.translateToKorean(lines);
+  if (!got.every(Boolean)) throw new Error('번역 결과가 비어 있습니다');
+  return { out: got.join('\n'), via: '번역' };
 }
 
 // LINE 말풍선 글자 읽기. LINE 은 메시지 글자를 다른 프로그램에 주지 않아 화면에서 읽는다.
@@ -323,7 +345,10 @@ async function uiTranslate(lines) {
   const thai = [];
   const latin = [];
   lines.forEach((s, i) => (thaiCount(s) >= 2 ? thai : latin).push(i));
-  if (thai.length) {
+  if (thai.length && !myKo()) {
+    const got = await T.translateToKorean(thai.map((i) => lines[i]));
+    thai.forEach((i, k) => (out[i] = String(got[k] || '')));
+  } else if (thai.length) {
     const prep = thai.map((i) => T.chatPrepThai(lines[i], true, ''));
     const ask = [];
     prep.forEach((p, k) => {
@@ -339,7 +364,8 @@ async function uiTranslate(lines) {
   if (latin.length) {
     const got = await T.translateToKorean(latin.map((i) => lines[i]));
     latin.forEach((i, k) => (out[i] = String(got[k] || '')));
-    const again = latin.filter((i) => !T.HANGUL.test(out[i]) && /\S+\s+\S+/.test(lines[i])).slice(0, 8);
+    const same = (i) => (myKo() ? !T.HANGUL.test(out[i]) : out[i].trim().toLowerCase() === lines[i].trim().toLowerCase());
+    const again = latin.filter((i) => same(i) && /\S+\s+\S+/.test(lines[i])).slice(0, 8);
     for (const i of again) {
       const [one] = await T.translateToKorean([lines[i]]);
       if (one) out[i] = one;
@@ -358,7 +384,7 @@ async function screenLines(items, mode) {
   todo.forEach((i, k) => {
     const ko = String(got[k] || '').trim();
     // 바뀌지 않은 것(상표·이름)은 덮지 않는다.
-    if (T.HANGUL.test(ko) && ko.toLowerCase() !== src[i].toLowerCase()) out[i].k = ko;
+    if ((myKo() ? T.HANGUL.test(ko) : !!ko) && ko.toLowerCase() !== src[i].toLowerCase()) out[i].k = ko;
   });
   return out;
 }
@@ -375,6 +401,13 @@ async function handle(req) {
     await T.ensureGlossary();
     return { out: '', via: '' };
   }
+  // 번역 도우미의 메뉴·알림 글(한국어) → 내 언어(MyLang.T). text = JSON 배열, 답도 같은 차례의 JSON 배열.
+  if (req.op === 'ui') {
+    const list = JSON.parse(req.text || '[]');
+    const to = req.lang || myLang();
+    const got = to === 'ko' || !T.freeTranslateMany ? list : await T.freeTranslateMany(list, 'ko', to);
+    return { out: JSON.stringify(list.map((s, i) => String((got && got[i]) || s))), via: '번역' };
+  }
   if (req.op === 'screen') {
     const out = await screenLines(JSON.parse(req.text), req.lang || 'auto');
     return { out: JSON.stringify(out), via: String(out.filter((o) => o.k).length) };
@@ -382,7 +415,7 @@ async function handle(req) {
   const text = String(req.text || '').replace(/\r\n?/g, '\n').trim();
   if (req.op === 'to') {
     const r = await toLang(text, req.lang);
-    if (!r.out || T.HANGUL.test(r.out)) throw new Error('번역 결과가 비어 있습니다');
+    if (!r.out || (myKo() ? T.HANGUL.test(r.out) : r.out.trim() === text)) throw new Error('번역 결과가 비어 있습니다');
     return r;
   }
   if (req.op === 'ko') {

@@ -32,6 +32,18 @@ const OCR_FILES = [
   ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-lstm.wasm.js', '8f04aa0cc81e7bde33f80e92fa01a7a665f0b4884d098acf5de9c7104a11dfaa'],
   ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-simd-lstm.wasm.js', 'ce20eda9533cbed1e6c2b4276fbae1e0adc61b6754b5513084be601787b457cf'],
 ];
+// 사진 글자 엔진은 고장이 아닌 안내 줄도 console.warn 으로 낸다. 크롬은 이것을 확장 카드의 '오류' 목록에 줄줄이
+// 모아 보여 줬다(2026-11-05, 1.29.2 에서 인식기 하나를 켜고 한 장 읽으면 5줄):
+//   'Warning: Parameter not found: chop_enable' 등 4줄 — 태국어 자료(tha.traineddata)에 든 옛 인식 방식용 설정을
+//       확장에 넣은 LSTM 전용 엔진이 모른다는 것. 인식기를 켤 때마다.
+//   'Estimating resolution as 399' — 사진에 dpi 가 없어 짐작했다는 것. 사진을 읽을 때마다.
+//   빈 사진·아주 작은 조각을 읽을 때의 'Empty page!!' 같은 줄도 같은 종류다.
+// 인식기(worker.min.js) 맨 앞에서 이런 줄만 걸러낸다. 엔진(core)은 나중에 불려 와 console.warn 을 그때 묶으므로
+// 걸러내는 쪽을 쓴다. 다른 경고(엔진이 멈춘 Aborted 등)는 그대로 둔다.
+const OCR_QUIET =
+  '/* 통합 번역: 사진 글자 엔진이 늘 내는 안내 줄(설정 없음·해상도 짐작·빈 사진)만 숨긴다 — extension/build.js */\n' +
+  "(()=>{const w=console.warn,q=/^(Warning: Parameter not found:|Estimating resolution as |Detected \\d+ diacritics|Empty page!!|Too few characters|Warning\\. Invalid resolution|Image too small to scale|Line cannot be recognized)/;" +
+  "console.warn=function(m,...r){if(typeof m==='string'&&q.test(m))return;return w.call(this,m,...r)}})();\n";
 // node extension/build.js --store : 웹스토어에 올릴 판. 개발용 고정 id 열쇠(key)를 빼고(스토어가 거부한다)
 // extension/store/통합번역-<판>.zip 을 만든다. 스토어가 준 id 는 config.json 의 helper.extensionIds 에 적으면
 // 번역 도우미가 받아 준다(도우미 코드는 고치지 않는다).
@@ -99,7 +111,9 @@ async function main() {
   fs.mkdirSync(path.join(OUT, 'tesseract'), { recursive: true });
   for (const [url, sha] of OCR_FILES) {
     const file = await vendorFile(`${url}#sha256=${sha}`);
-    fs.copyFileSync(file, path.join(OUT, 'tesseract', path.basename(file)));
+    const to = path.join(OUT, 'tesseract', path.basename(file));
+    if (path.basename(file) === 'worker.min.js') fs.writeFileSync(to, OCR_QUIET + fs.readFileSync(file, 'utf8'));
+    else fs.copyFileSync(file, to);
   }
 
   for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.30.0
+// @version      1.30.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6122,13 +6122,29 @@
     if (d !== dub) return [];
     d.status = '자막 주소 받는 중…';
     dubStatus();
-    // 쇼츠 플레이어의 CC 상태와 자막 목록(확장의 페이지 쪽 조각). CC 가 꺼져 있으면 플레이어가 자막을 부르지 않으니
-    // 아래에서 기다리지 않고 바로 켠다.
-    // 넘긴 직후에는 플레이어가 아직 앞 쇼츠를 들고 있다 — 이 영상으로 바뀔 때까지 0.2초씩 2초까지 다시 본다.
-    let cc = ytIsShorts() ? await ytCaptions('peek') : null;
+    // 플레이어의 CC 상태와 자막 목록(확장의 페이지 쪽 조각). 쇼츠는 CC 가 꺼져 있으면 플레이어가 자막을 부르지
+    // 않으니 아래에서 기다리지 않고 바로 켠다.
+    // 넘긴 직후에는 플레이어가 아직 앞 영상을 들고 있다 — 이 영상으로 바뀔 때까지 0.2초씩 2초까지 다시 본다.
+    const sel = ytIsShorts() ? null : RC.youtube.player;
+    let cc = await ytCaptions('peek', sel);
     for (let i = 0; i < 10 && cc && cc.id !== id && d === dub; i++) {
       await sleep(200);
-      cc = await ytCaptions('peek');
+      cc = await ytCaptions('peek', sel);
+    }
+    const tracks = cc && cc.id === id ? cc.tracks : null;
+    if (tracks) {
+      d.tracks = tracks;
+      ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta));
+    }
+    // 자막이 하나도 없는 영상, 또는 저절로 켰는데 한국어 자막뿐인 영상(한국어 영상) — CC 를 켜지 않고 기다리지도
+    // 않는다. 자막이 없는 영상은 바로 크롬 실시간 자막으로 넘어간다. 보통 영상도 그렇다: 전에는 '자막 사용 불가'
+    // CC 단추를 눌러 보며 15초씩 두 번 기다려, 그 35초 동안 실시간 자막까지 막혀 있었다(사용자 2026-11-06:
+    // 자막이 아예 없는 유튜브 영상은 번역이 안 된다 — 페이스북·틱톡은 되는데). 한국어 쇼츠에 CC 를 켜 두면
+    // 유튜브 한국어 자막이 떴다.
+    if (tracks && (!tracks.length || (d.auto && tracks.every((t) => YT_MY_RE.test(t))))) {
+      d.noCaptions = true;
+      d.why = tracks.length ? `${MY_KO ? '한국어' : '내 언어'} ${ytIsShorts() ? '쇼츠' : '영상'}` : `자막이 없는 ${ytIsShorts() ? '쇼츠' : '영상'} — 크롬 실시간 자막으로`;
+      return got();
     }
     const ccOff = !!(cc && cc.id === id && cc.was === 'off');
     // 광고가 끝나며 플레이어가 이미 자막을 불렀으면 그것으로 — 다시 켜도 새로 부르지 않아 기다리기만 했다.
@@ -6138,23 +6154,10 @@
     if (!btn || btn.style.display === 'none' || btn.getAttribute('aria-disabled') === 'true') {
       // 쇼츠 플레이어에는 CC 단추가 없다. 대신 영상을 틀 때 스스로 자막을 부르므로 조금 더 기다린다. 유튜브 CC 를
       // 꺼 둔 계정이면 부르지 않으니(사용자 2026-11-02: 외국어가 나오면 CC 가 켜지고 한국어 자막도 저절로) 잠깐
-      // 켜서 부르게 하고 받으면 원래대로 끈다 — 우리 한국어 자막만 보이게.
-      const tracks = cc && cc.id === id ? cc.tracks : null;
-      if (tracks) {
-        d.tracks = tracks;
-        ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta));
-      }
-      // 자막이 하나도 없는 쇼츠, 또는 저절로 켰는데 한국어 자막뿐인 쇼츠(한국어 영상) — CC 를 켜지 않고 기다리지도
-      // 않는다. 자막이 없는 쇼츠는 바로 크롬 실시간 자막으로 넘어간다(전에는 10초 넘게 다시 받아 보느라 그동안
-      // 자막이 없었다). 한국어 쇼츠에 CC 를 켜 두면 유튜브 한국어 자막이 떴다.
-      if (tracks && (!tracks.length || (d.auto && tracks.every((t) => /^ko/i.test(t))))) {
-        d.noCaptions = true;
-        d.why = tracks.length ? '한국어 쇼츠' : '자막이 없는 쇼츠 — 크롬 실시간 자막으로';
-        return got();
-      }
-      if (ccOff) await ytCaptions('on');
+      // 켜서 부르게 하고 받으면 원래대로 끈다 — 우리 한국어 자막만 보이게. (자막이 없는 영상은 위에서 이미 돌아갔다.)
+      if (ccOff) await ytCaptions('on', sel);
       for (let i = 0; i < 16 && !got().length && ytIsShorts(); i++) await sleep(250);
-      if (ccOff) await ytCaptions('off');
+      if (ccOff) await ytCaptions('off', sel);
       if (!got().length) {
         d.why = ytIsShorts()
           ? '쇼츠 자막을 못 찾음 — 자막이 없는 쇼츠이거나, 쇼츠 ⋮ 메뉴에서 자막을 한 번 켜 주세요'
@@ -6210,7 +6213,7 @@
         clearTimeout(timer);
       }
     };
-    // 쇼츠는 이 영상에 있는 자막 목록을 안다(d.tracks) — 없는 자막은 묻지 않는다.
+    // 플레이어가 알려 준 이 영상의 자막 목록(d.tracks, 쇼츠·보통 영상) — 없는 자막은 묻지 않는다.
     const has = (lang, kind) => !d.tracks || d.tracks.includes(lang + (kind ? `:${kind}` : ''));
     const mk = (base, lang, kind, tlang) => {
       const u = new URL(base);
@@ -6375,9 +6378,11 @@
       cc.hidden = !(on && (!mine || dub.failed) && ['ccoff', 'quiet', 'dead'].includes(liveState));
       cc.textContent = liveState === 'dead' ? '크롬 실시간 자막 고치기' : '크롬 실시간 자막 설정 열기';
     }
-    if (!on)
+    // 유튜브에서 자막 파일이 없어 크롬 실시간 자막이 이 영상 위에 나오는 중 — 창에 '꺼짐' 이라고 쓰면 고장처럼 보인다.
+    const liveHere = YOUTUBE && !mine && liveFor && liveFor === dubPanel.lzkVideo && ['ok', 'pause'].includes(liveState);
+    if (!on && !liveHere)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
-    else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : '켜짐 · '}${liveNote()}`;
+    else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : liveHere ? '자막 파일이 없는 영상 · ' : '켜짐 · '}${liveNote()}`;
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
       const n = dub.sentences.length;

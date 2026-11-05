@@ -518,7 +518,28 @@ class LangBar : FloatForm
 {
     // 원격 설정(config.json 의 languages)에서 — 언어를 더하거나 바꿀 때 이 코드는 고치지 않는다(바뀐 목록은 다음에
     // 켤 때부터). 번역은 엔진(스크립트)이 같은 목록·언어별 용어집으로 한다.
-    public static readonly string[][] Langs = RemoteConfig.Languages();
+    static readonly string[][] BaseLangs = RemoteConfig.Languages();
+    static string[][] myLangs;
+    static string myLangsFor;
+    // 막대에 보일 목록. 내 언어가 한국어가 아니면 맨 앞에 한국어(KO)를 넣고 내 언어 자신은 뺀다(웹의 myTypeLangs 와 같다 —
+    // 사용자 2026-11-05: 다른 언어로 바꾸면 언어 목록에 한국이 없다).
+    public static string[][] Langs
+    {
+        get
+        {
+            string c = MyLang.Code;
+            if (c == "ko") return BaseLangs;
+            if (myLangsFor != c)
+            {
+                string c2 = c.Split('-')[0];
+                List<string[]> l = new List<string[]> { new[] { "ko", "한", "한국어" } };
+                foreach (string[] x in BaseLangs) if (x[0] != c2 && x[0] != c) l.Add(x);
+                myLangs = l.ToArray();
+                myLangsFor = c;
+            }
+            return myLangs;
+        }
+    }
     const int CellW = 26, CellH = 22, Gap = 5, BothW = 34;
     // 한 줄에 이만큼까지, 넘치면 줄을 더한다. 2026-11-03 사용자가 쓰는 사람이 많은 언어 20개를 넣어 22개가 됐다 —
     // 한 줄이면 600px 가 넘었다.
@@ -548,6 +569,7 @@ class LangBar : FloatForm
     // 내 언어가 바뀌었거나 옮긴 글이 왔을 때(MyLang.Changed).
     public void RefreshText()
     {
+        Relayout(); // 언어 수가 바뀌었을 수 있다(한국어를 넣고 내 언어를 뺀다)
         tip.SetToolTip(this, MyLang.T("번역: 누르면 언어 칸이 펼쳐집니다. 언어를 고르면 LINE 에서 한국어를 쓰고 Enter 한 번에 그 언어로 바꿔 보냅니다.\n고른 칸을 다시 누르면 끕니다(한국어 그대로 보냄).\n+한: 바꾼 말 아래에 한국어 원문도 같이 보냅니다."));
         Invalidate();
     }
@@ -1427,6 +1449,8 @@ static class App
     // 메뉴·막대 글을 바꾼다.
     static void OnMyLangChanged()
     {
+        // 고른 보낼 언어가 이제 내 언어라 목록에서 빠졌으면 끈다(한국어 → 한국어로 바꿔 보내지 않게).
+        if (Lang != "" && !Array.Exists(LangBar.Langs, l => l[0] == Lang)) { Lang = ""; SaveSettings(); }
         engine.Stop();
         lock (msgs) msgs.Clear();
         ui.BeginInvoke((MethodInvoker)delegate { RefreshTray(); bar.RefreshText(); });

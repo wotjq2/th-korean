@@ -63,7 +63,7 @@ chrome.storage.session
   .then(({ langChanged }) => {
     if (!langChanged) return;
     chrome.storage.session.remove('langChanged');
-    $('#langnote').textContent = '바꿨습니다 — 열려 있는 페이지는 새로 고치면(F5) 그 언어로 바뀝니다. 번역 도우미도 곧 따라 바뀝니다.';
+    $('#langnote').textContent = '바꿨습니다 — 열려 있는 페이지도 바로 그 언어로 바뀝니다. 번역 도우미도 몇 초 안에 따라 바뀝니다.';
   })
   .catch(() => {});
 

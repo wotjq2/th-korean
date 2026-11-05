@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.29.1
+// @version      1.29.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -57,17 +57,19 @@
   // '통합 번역' 창(도구 막대)에서 고른 기준 언어. 'ko' 면 지금까지와 똑같다(한국어 용어집·말투 다듬기·한글 알아보기).
   // 다른 언어면: 외국어 페이지·메신저·영상·사진 글을 그 언어로 보여 주고, 입력칸에 그 언어로 쓴 말을 고른 외국어로
   // 바꾸며(구글 번역 — 용어집은 한국어 것뿐이라 쓰지 않는다), '한' 창 같은 화면 글도 그 언어로 옮겨 보인다(uiLocalize).
-  // 값은 구글 번역 언어 코드(zh-CN 처럼). 페이지를 새로 열 때 읽는다.
-  const MY = (() => {
+  // 값은 구글 번역 언어 코드(zh-CN 처럼). 열려 있는 페이지도 1초 안에 따라 바뀐다(watchMyLang → applyMyLang) —
+  // 사용자(2026-11-05): 언어를 바꾸면 새로 고침을 해야 적용됐다.
+  const readMyLang = () => {
     try {
       const v = String(GM_getValue('myLang', 'ko') || 'ko');
       return /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(v) ? v : 'ko';
     } catch {
       return 'ko';
     }
-  })();
-  const MY_KO = MY === 'ko';
-  const MY2 = MY.split('-')[0].toLowerCase(); // 영상 자막 언어처럼 두 글자로 견줄 때(zh-CN → zh)
+  };
+  let MY = readMyLang();
+  let MY_KO = MY === 'ko';
+  let MY2 = MY.split('-')[0].toLowerCase(); // 영상 자막 언어처럼 두 글자로 견줄 때(zh-CN → zh)
   // 글자로 언어를 알아보는 곳(입력칸에 '내 말'을 썼나, 이미 내 말인가). 로마자 언어끼리는 글자로 못 가른다 → null.
   const SCRIPT_OF = {
     ko: HANGUL, th: THAI, ja: /[぀-ヿ一-鿿]/, zh: /[一-鿿]/, yue: /[一-鿿]/,
@@ -75,7 +77,7 @@
     bn: /[ঀ-৿]/, te: /[ఀ-౿]/, ta: /[஀-௿]/, ru: /[Ѐ-ӿ]/, uk: /[Ѐ-ӿ]/, km: /[ក-៿]/, lo: /[຀-໿]/,
     my: /[က-႟]/, ka: /[Ⴀ-ჿ]/, el: /[Ͱ-Ͽ]/,
   };
-  const MY_SCRIPT = SCRIPT_OF[MY2] || null;
+  let MY_SCRIPT = SCRIPT_OF[MY2] || null;
   const LETTER = /\p{L}/u;
   // 입력칸 글이 '내 말' 인가 — 바꿔 보낼지 정한다. 한국어면 예전처럼 한글이 있으면. 다른 언어면 그 언어 글자가 있으면,
   // 로마자 언어(영어·스페인어 …)면 글자가 있고 바꿀 언어의 글자(태국어 등)가 아니면.
@@ -216,6 +218,7 @@
   }
   function uiStart() {
     const ob = new MutationObserver((list) => {
+      if (MY_KO) return; // 한국어로 되돌렸다
       for (const m of list) {
         if (m.type === 'attributes') {
           if (uiOurs(m.target)) uiFixAttrs(m.target);
@@ -240,11 +243,75 @@
       childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: UI_ATTRS,
     });
   }
-  if (!MY_KO && typeof document !== 'undefined' && document.documentElement && typeof document.createTreeWalker === 'function') {
+  let uiStarted = false;
+  function uiEnsure() {
+    if (uiStarted || MY_KO || typeof document === 'undefined' || !document.documentElement || typeof document.createTreeWalker !== 'function') return;
+    uiStarted = true;
     try {
       uiStart();
     } catch (e) {
       console.warn(`[${APP_NAME}] 화면 글 옮기기를 켜지 못했습니다:`, e.message);
+    }
+  }
+  uiEnsure();
+
+  // 다른 탭·통합 번역 창에서 내 언어를 바꾸면 이 페이지도 따른다(1초마다·창으로 돌아올 때 본다 — 저장소 값 읽기라 가볍다).
+  function watchMyLang() {
+    const check = () => {
+      const v = readMyLang();
+      if (v !== MY) applyMyLang(v);
+    };
+    setInterval(check, 1000);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+  }
+  function applyMyLang(v) {
+    MY = v;
+    MY_KO = v === 'ko';
+    MY2 = v.split('-')[0].toLowerCase();
+    MY_SCRIPT = SCRIPT_OF[MY2] || null;
+    uiTr = null;
+    uiQueue.clear();
+    uiWaiting.clear();
+    try {
+      ytMyRecalc();
+      ytSpoken.clear();
+    } catch {
+      /* 아직 영상 부분이 안 읽혔다 */
+    }
+    uiEnsure();
+    // 우리 화면을 새로 그린다 — 이미 옮겨 둔 글은 옛 언어라서(한국어 원문에서 다시 옮긴다).
+    document.getElementById('lzk-panel')?.remove();
+    const fab = document.getElementById('lzk-fab');
+    if (fab) {
+      fab.textContent = MY_KO ? '한' : MY2.toUpperCase();
+      fab.title = `${APP_NAME} 설정 (${SITE.label})`;
+    }
+    if (document.getElementById('lzk-langbar')) {
+      document.getElementById('lzk-langbar').remove();
+      if (typeLang && !myTypeLangs().some((l) => l.id === typeLang)) {
+        typeLang = ''; // 고른 언어가 이제 내 언어라 목록에서 빠졌다
+        GM_setValue(TYPE_LANG_KEY, '');
+      }
+      mountLangBar();
+      updateGenericChip();
+    }
+    // 이미 옮겨 둔 페이지 글·메신저 말풍선·영상 자막도 새 언어로.
+    if (!GENERIC && originalText.size) {
+      restoreOriginal();
+      seen = new WeakSet();
+      if (cfg.autoTranslatePage && cfg.pageEngine !== 'off') translatePage();
+    }
+    if (MESSENGER) {
+      for (const b of document.querySelectorAll('.lzk-msgko')) b.remove();
+      scheduleChatScan();
+    }
+    if (dub) {
+      for (const s of dub.sentences) {
+        s.ko = null;
+        s.tried = false;
+      }
+      dubTranslate(dub);
     }
   }
 
@@ -1574,7 +1641,7 @@
   // ---------------------------------------------------------------------------
 
   const originalText = new Map(); // Node -> 원문
-  const seen = new WeakSet();
+  let seen = new WeakSet(); // 내 언어를 바꾸면 새로 만든다(다시 옮기게 — applyMyLang)
   let showingOriginal = false;
 
   function isTranslatable(node) {
@@ -4784,6 +4851,13 @@
   // 언어 목록은 원격 설정(config.json 의 languages — 받기 전에는 RC_DEFAULT, 같은 22개와 언어별 용어집). 언어를 더하거나
   // 이름·번역 코드·용어집 파일을 바꿀 때 이 코드는 고치지 않는다(config.json 과 RC_DEFAULT 를 같이 고친다).
   const TYPE_LANGS = RC.languages;
+  // 언어 막대에 보일 목록. 내 언어가 한국어가 아니면 맨 앞에 한국어(KO)를 넣고 내 언어 자신은 뺀다 —
+  // 사용자(2026-11-05): 다른 언어로 바꾸면 아래 언어 목록에 한국(KO)이 없다.
+  const KO_LANG = { id: 'ko', label: '한', name: '한국어', mt: 'ko', chip: '→ 한국어' };
+  function myTypeLangs() {
+    if (MY_KO) return TYPE_LANGS;
+    return [KO_LANG, ...TYPE_LANGS.filter((l) => l.id !== MY2 && (l.mt || l.id) !== MY)];
+  }
   // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
   // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.
   const KO_EN_ZH_TSV = `
@@ -4994,7 +5068,7 @@
 
   let typeLang = GM_getValue(TYPE_LANG_KEY, '');
   let genericThaiPage = false;
-  const genericLang = () => TYPE_LANGS.find((l) => l.id === (typeLang || (genericThaiPage ? 'th' : ''))) || null;
+  const genericLang = () => myTypeLangs().find((l) => l.id === (typeLang || (genericThaiPage ? 'th' : ''))) || null;
 
   // 태국어 페이지인가. 글자 수만 세고 30자에 닿으면 멈춘다(큰 페이지에서도 가볍게).
   function looksThaiPage() {
@@ -5248,7 +5322,7 @@
     markNoTranslate(bar);
     const langs = document.createElement('div');
     langs.className = 'lzk-langs';
-    for (const l of TYPE_LANGS) {
+    for (const l of myTypeLangs()) {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = langLabel(l);
@@ -5283,7 +5357,7 @@
     bar.toggleAttribute('data-solo', !fab);
     bar.toggleAttribute('data-high', !!fab && fab.hasAttribute('data-high'));
     for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
-    const on = TYPE_LANGS.find((l) => l.id === typeLang);
+    const on = myTypeLangs().find((l) => l.id === typeLang);
     const toggle = bar.querySelector('.lzk-lang-toggle');
     // 다른 언어면 '번역' 이 그 나라 말(翻訳·terjemahan)로 바뀌어 같은 단추인 줄 모르기 쉽다 — 🌐 를 붙여 늘 같은 모양으로.
     const word = MY_KO ? '번역' : '🌐 번역';
@@ -5980,9 +6054,13 @@
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
   // 내 언어(한국어가 아니면 그 언어)로 — 내 말 영상에는 자막을 덧붙이지 않고, 모자란 줄은 유튜브가 그 언어로 옮긴 자막(tlang)으로.
-  const YT_MY = MY_KO ? 'ko' : MY2;
-  const YT_MY_RE = new RegExp('^' + YT_MY, 'i');
-  const YT_TLANG = MY === 'zh-CN' ? 'zh-Hans' : MY === 'zh-TW' ? 'zh-Hant' : YT_MY;
+  let YT_MY, YT_MY_RE, YT_TLANG;
+  function ytMyRecalc() {
+    YT_MY = MY_KO ? 'ko' : MY2;
+    YT_MY_RE = new RegExp('^' + YT_MY, 'i');
+    YT_TLANG = MY === 'zh-CN' ? 'zh-Hans' : MY === 'zh-TW' ? 'zh-Hant' : YT_MY;
+  }
+  ytMyRecalc();
   const ytSpokenBusy = new Map(); // 영상 id → 묻는 중인 약속(같이 기다린다)
   // 자동 자막이 없는 영상(라이브 등 — 사용자 2026-11-03: 한국어 라이브 뉴스 위에 우리 자막이 겹쳤다)은 제목·채널 이름·
   // 태그의 글자로 가늠한다. 태그와 채널 이름은 유튜브가 번역해 보이지 않는다. 한글 한 글자는 라틴 글자 2.5개로 친다
@@ -9470,6 +9548,7 @@
     if (typeof HTMLElement !== 'undefined' && (!document.body || !(document.createElement('div') instanceof HTMLElement))) return;
     siteStart();
     if (typeof HTMLVideoElement !== 'undefined') videoDubInit();
+    watchMyLang();
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });

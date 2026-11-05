@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.29.3
+// @version      1.30.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -304,6 +304,8 @@
     }
     if (MESSENGER) {
       for (const b of document.querySelectorAll('.lzk-msgko')) b.remove();
+      chatSame = new WeakMap(); // '이미 내 말' 이 언어와 함께 바뀐다
+      chatLangMemo = null;
       scheduleChatScan();
     }
     if (dub) {
@@ -5331,6 +5333,8 @@
       b.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
       b.addEventListener('click', () => {
         bar.removeAttribute('data-open');
+        // 메신저 대화방에서는 그 대화방의 보낼 언어만 바꾼다(다른 사이트 입력칸 선택은 그대로).
+        if (MESSENGER && chatThreadId()) return chatPickLang(l.id);
         setTypeLang(typeLang === l.id ? '' : l.id);
       });
       langs.appendChild(b);
@@ -5356,8 +5360,9 @@
     const fab = document.getElementById('lzk-fab');
     bar.toggleAttribute('data-solo', !fab);
     bar.toggleAttribute('data-high', !!fab && fab.hasAttribute('data-high'));
-    for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', b.dataset.lang === typeLang);
-    const on = myTypeLangs().find((l) => l.id === typeLang);
+    // 메신저 대화방에서는 그 대화방이 보낼 언어(상대 언어 또는 직접 고른 것)를 켜진 것으로 보인다.
+    const on = MESSENGER && chatThreadId() ? chatTarget() : myTypeLangs().find((l) => l.id === typeLang);
+    for (const b of bar.querySelectorAll('[data-lang]')) b.toggleAttribute('data-on', !!on && b.dataset.lang === on.id);
     const toggle = bar.querySelector('.lzk-lang-toggle');
     // 다른 언어면 '번역' 이 그 나라 말(翻訳·terjemahan)로 바뀌어 같은 단추인 줄 모르기 쉽다 — 🌐 를 붙여 늘 같은 모양으로.
     const word = MY_KO ? '번역' : '🌐 번역';
@@ -6923,13 +6928,14 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 페이스북 메신저 (messenger.com) — 태국 사람과의 대화를 양쪽으로 옮긴다
+  // 페이스북 메신저 (messenger.com) — 외국 사람과의 대화를 양쪽으로 옮긴다(1.30.0 부터 태국어만이 아니라 모든 언어)
   //
-  //  - 태국어 말풍선 밑에 한국어 뜻을 작게 붙인다(내가 보낸 태국어도 — 되옮긴 뜻으로 확인).
-  //  - 입력칸에 한국어를 치고 Enter 한 번 → 태국어로 바꿔 바로 보낸다. 태국어를 못 읽으니
-  //    확인용 Enter 는 쓸모가 없다(사용자 요청). 뜻은 보낸 말풍선 밑의 한국어로 확인한다.
-  // 한국 사람과의 대화도 같은 메신저에서 한다. 그래서 대화방마다 상대가 태국어를 쓰는지 보고
-  // 켠다. 입력칸 위 칩을 누르면 그 대화방만 직접 켜고 끌 수 있다(기억해 둔다).
+  //  - 내 말이 아닌 말풍선 밑에 내 언어(한국어) 뜻을 작게 붙인다(내가 보낸 외국어도 — 되옮긴 뜻으로 확인).
+  //  - 입력칸에 한국어를 치고 Enter 한 번 → 상대가 쓰는 언어(태국어·영어·일본어·베트남어 …)로 바꿔 바로 보낸다.
+  //    외국어를 못 읽으니 확인용 Enter 는 쓸모가 없다(사용자 요청). 뜻은 보낸 말풍선 밑의 한국어로 확인한다.
+  // 한국 사람과의 대화도 같은 메신저에서 한다. 그래서 대화방마다 상대가 어떤 언어를 쓰는지 보고
+  // 켠다. 입력칸 위 칩을 누르면 그 대화방만 직접 켜고 끌 수 있고, '한' 옆 '번역' 막대에서 언어를 고를 수 있다(기억해 둔다).
+  // 태국어 말투 다듬기(호칭·끝말·표)는 태국어에만 쓴다.
   // 화면 구조(2026-10 확인): 메시지 = [data-message-id], 글자 = 그 안 맨 안쪽 div[dir=auto].
   // 입력칸 = role=main 안의 Lexical 편집기 [contenteditable][role=textbox], Enter 로 보낸다.
   // ---------------------------------------------------------------------------
@@ -7001,36 +7007,180 @@
     return name;
   }
 
-  // 한국어를 태국어로 바꿔 보낼 대화방인가.
-  //  1) 상대가 태국어로 말했으면 태국 사람.
-  //  2) 아니면 상대 이름: 한글이면 한국 사람, 태국 글자나 영문이면 태국 사람으로 본다.
-  //     (태국 사람이 번역기로 한국어를 보내오는 방도 있다 — Paphawee 방. 말로만 보면 놓친다.)
-  //  3) 이름도 모르면 상대 말이 한국어인지 본다.
-  // 말풍선이 오른쪽에 붙어 있으면 내 것이다(화면 언어와 상관없이 맞는다).
-  function chatLooksThai() {
-    const log = document.querySelector('[role="main"] [role="log"]');
-    if (!log) return false;
-    const lr = log.getBoundingClientRect();
-    const theirs = [];
-    for (const d of chatBubbles(log).slice(-40)) {
-      const t = bubbleText(d);
-      const lang = THAI.test(t) ? 'th' : HANGUL.test(t) ? 'ko' : '';
-      if (!lang) continue;
-      const r = d.getBoundingClientRect();
-      if (r.left - lr.left <= lr.right - r.right) theirs.push(lang);
+  // ---- 상대의 언어 (2026-11-05 사용자: 메신저는 태국어만이 아니라 모든 언어로) ----
+  // 받기: 내 말이 아닌 말풍선은 어느 언어든 내 언어로 옮긴다. 보내기: 상대가 쓰는 언어로 바꿔 보낸다.
+  // 글자만 보고 아는 언어는 바로 정하고, 한자·키릴·아랍·데바나가리·로마자(영어·베트남어·인도네시아어…)는 여러 언어가
+  // 같이 쓰는 글자라 구글이 알아본 언어를 쓴다(sl=auto 답에 붙어 오는 언어 — 말풍선마다 한 번만 묻는다).
+  const CHAT_SCRIPT_LANGS = [
+    ['th', THAI], ['ja', /[぀-ヿ]/], ['ko', HANGUL], ['he', /[֐-׿]/], ['bn', /[ঀ-৿]/], ['te', /[ఀ-౿]/],
+    ['ta', /[஀-௿]/], ['km', /[ក-៿]/], ['lo', /[຀-໿]/], ['my', /[က-႟]/], ['ka', /[Ⴀ-ჿ]/], ['el', /[Ͱ-Ͽ]/],
+  ];
+  const CHAT_NOT_WORDS = /https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+/g; // 주소·메일은 말이 아니다
+  const chatLangCache = new Map(); // 말풍선 글 → 구글이 알아본 언어('' = 모름)
+  let chatLangMemo = null; // { id, at, v } — 칩은 글자 칠 때마다 다시 그려서 잠깐 기억해 둔다
+  let chatDetecting = false;
+  let chatDetectRetryAt = 0;
+  let chatSame = new WeakMap(); // 말풍선 → 옮겨 보니 그대로 온 글(이미 내 말) — 다시 묻지 않는다
+
+  // 한자만 쓴 글(가나 없음)은 중국어 — 구글은 번체를 알아보지 못하고 'ko'·'en' 을 돌려줬다(2026-11-05 시험, 간체는 맞음).
+  // 그래서 글자로 가른다: 광둥어 글자가 있으면 광둥어, 번체에만 있는 글자가 간체에만 있는 글자보다 많으면 번체(대만·홍콩).
+  const ZH_TRAD = '們嗎這來個說時會對還過為麼學國長門問間開關點東車電話語讀錢買賣飯麵廳樂歡親愛謝請讓應該發現經機給聽見覺實號寫邊遠運進選業媽爺鐘頭難聯網場館雲飛魚鳥馬龍風熱氣體從決單無貓萬與專務師歲當廣圖書總';
+  const ZH_SIMP = '们吗这来个说时会对还过为么学国长门问间开关点东车电话语读钱买卖饭厅乐欢亲爱谢请让应该发现经机给听见觉实号写边远运进选业妈爷钟头难联网场馆飞鱼鸟马龙风热气体从决单无猫万与专务师岁当广图书总';
+  const YUE_MARK = /[嘅咗冇佢喺嚟啲嘢嗰]|唔(?:係|好|該|使|知|得)/;
+  function chatHanLang(t) {
+    if (YUE_MARK.test(t)) return 'yue';
+    let trad = 0;
+    let simp = 0;
+    for (const ch of t) {
+      if (ZH_TRAD.includes(ch)) trad++;
+      else if (ZH_SIMP.includes(ch)) simp++;
     }
-    if (theirs.includes('th')) return true;
-    if (!MY_KO) return false; // 이름 글자로 가르는 것은 한국 사람용(로마자 이름 = 태국 사람)
-    const name = chatPartnerName();
-    if (HANGUL.test(name)) return false;
-    if (THAI.test(name) || /[A-Za-z]/.test(name)) return true;
-    return theirs.length > 0 && !theirs.includes('ko');
+    return trad > simp ? 'zh-TW' : 'zh-CN';
   }
 
-  function chatThaiOn() {
+  function chatScriptLang(t) {
+    for (const [code, re] of CHAT_SCRIPT_LANGS) if (re.test(t)) return code;
+    const han = (t.match(/[一-鿿]/g) || []).length; // 한자가 다른 글자보다 많으면('我们去KFC吧')
+    if (han && han >= (t.match(/[A-Za-zЀ-ӿ؀-ۿऀ-ॿ]/g) || []).length) return chatHanLang(t);
+    return null;
+  }
+
+  // 옮길 말풍선인가: 글자가 두 개 넘고 내 언어 글자가 거의 없으면. 태국어가 있으면 예전처럼 늘 옮긴다
+  // ('พี่คิดถึง 푸이' 처럼 한글 이름이 섞여도). 내 언어가 로마자 언어(영어 등)면 글자로는 못 가르니 옮겨 보고,
+  // 그대로 오면 내 말로 본다(chatSame).
+  function chatForeign(t) {
+    if (THAI.test(t) && MY2 !== 'th') return true;
+    const s = t.replace(CHAT_NOT_WORDS, '');
+    const all = (s.match(/\p{L}/gu) || []).length;
+    const mine = MY_SCRIPT ? (s.match(new RegExp(MY_SCRIPT.source, 'g')) || []).length : 0;
+    return all - mine >= 2 && mine * 5 < all - mine;
+  }
+
+  const chatNorm = (s) => String(s).replace(/\s+/g, ' ').replace(/[\s.!?~,。！？]+$/, '').trim().toLowerCase();
+
+  // 구글이 알아본 언어(여러 줄을 한 번에). dict-chrome-ex 는 [["번역", "en"], …], 막혔으면 gtx 로 하나씩(답의 세 번째 칸).
+  async function detectLangs(texts) {
+    if (Date.now() >= dictBlockedUntil) {
+      try {
+        const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=auto&tl=${MY}&` + texts.map((t) => `q=${encodeURIComponent(t)}`).join('&');
+        const data = JSON.parse(await request({ method: 'GET', url, timeout: 6000 }));
+        if (Array.isArray(data) && data.length === texts.length) {
+          return data.map((d) => (Array.isArray(d) && typeof d[1] === 'string' ? d[1] : ''));
+        }
+      } catch (e) {
+        if (isBlocked(e)) dictBlockedUntil = Date.now() + 10 * 60 * 1000;
+      }
+    }
+    const got = await runPool(texts, 3, async (t) => {
+      const url = `${FREE_ENDPOINT}?client=gtx&sl=auto&tl=${MY}&dt=t&q=${encodeURIComponent(t)}`;
+      const data = JSON.parse(await request({ method: 'GET', url, timeout: 6000 }));
+      return Array.isArray(data) && typeof data[2] === 'string' ? data[2] : '';
+    });
+    return texts.map((t, i) => got[i] || '');
+  }
+
+  // 상대가 쓰는 언어(내 언어가 아닌 것) — 최근 말풍선 40개 가운데 가장 많은 것. collect 를 주면 아직 구글에 묻지 않은
+  // 글을 거기 담는다. 'ok'·'555' 같은 짧은 로마자 말은 세지 않는다(태국 친구도 쓴다).
+  function chatPartnerLang(collect) {
     const id = chatThreadId();
-    if (id && id in chatThreads) return chatThreads[id];
-    return chatLooksThai();
+    if (!collect && chatLangMemo && chatLangMemo.id === id && Date.now() - chatLangMemo.at < 800) return chatLangMemo.v;
+    const log = document.querySelector('[role="main"] [role="log"]');
+    let best = '';
+    if (log) {
+      const lr = log.getBoundingClientRect();
+      const counts = new Map();
+      for (const d of chatBubbles(log).slice(-40)) {
+        if (chatBubbleMine(d, lr)) continue;
+        const t = bubbleText(d);
+        if (!chatForeign(t)) continue;
+        const code = chatScriptLang(t) || chatLangCache.get(t);
+        if (code === undefined) {
+          if (collect && (t.replace(CHAT_NOT_WORDS, '').match(/\p{L}/gu) || []).length >= 4) collect.push(t);
+          continue;
+        }
+        if (code && code.split('-')[0].toLowerCase() !== MY2) counts.set(code, (counts.get(code) || 0) + 1);
+      }
+      let n = 0;
+      for (const [code, k] of counts) {
+        if (k > n) {
+          best = code;
+          n = k;
+        }
+      }
+    }
+    chatLangMemo = { id, at: Date.now(), v: best };
+    return best;
+  }
+
+  // 아직 모르는 상대 말풍선의 언어를 구글에 묻는다(새 말풍선이 있을 때만, 한 번에 8개까지).
+  async function chatDetectLangs() {
+    if (chatDetecting || Date.now() < chatDetectRetryAt) return;
+    const ask = [];
+    chatPartnerLang(ask);
+    const todo = [...new Set(ask)].filter((t) => !chatLangCache.has(t)).slice(-8);
+    if (!todo.length) return;
+    chatDetecting = true;
+    try {
+      const codes = await detectLangs(todo);
+      if (codes.every((c) => !c)) chatDetectRetryAt = Date.now() + 60000; // 구글이 답을 못 줬다 — 잠시 뒤에
+      else todo.forEach((t, i) => chatLangCache.set(t, codes[i]));
+      if (chatLangCache.size > 3000) chatLangCache.clear();
+    } catch {
+      chatDetectRetryAt = Date.now() + 60000;
+    } finally {
+      chatDetecting = false;
+      chatLangMemo = null;
+    }
+    updateChatChip();
+  }
+
+  // 언어 코드 → 언어 막대의 언어(용어집·단추 글자). 목록에 없는 언어(zh-TW·ms …)는 그 코드로 구글 번역만.
+  function chatLangObj(code) {
+    if (!code) return null;
+    const list = myTypeLangs();
+    const hit = list.find((l) => l.mt === code || l.id === code) || (!code.includes('-') && list.find((l) => l.id === code.split('-')[0]));
+    if (hit) return hit;
+    const dn = (loc) => {
+      try {
+        return new Intl.DisplayNames([loc], { type: 'language' }).of(code) || code;
+      } catch {
+        return code;
+      }
+    };
+    return { id: code, mt: code, name: dn('ko'), label: code.toUpperCase(), chip: `→ ${dn(code)}` };
+  }
+
+  // 이 대화방에서 Enter 로 바꿔 보낼 언어(없으면 null = 쓴 그대로).
+  //  1) 칩·언어 막대로 직접 고른 것(대화방마다 기억). false = 그대로. 1.29 까지의 true = 태국어.
+  //  2) 상대가 쓰는 언어(위). 상대가 내 말(한국어)로 쓰면 세지 않는다 — 태국 사람이 번역기로 한국어를 보내오는
+  //     방도 있다(Paphawee 방).
+  //  3) 상대 말이 없으면 이름: 한글이면 한국 사람(그대로), 태국 글자나 영문이면 태국 사람으로 본다(한국어 사용자만).
+  // 말풍선이 오른쪽에 붙어 있으면 내 것이다(화면 언어와 상관없이 맞는다).
+  function chatTarget() {
+    const id = chatThreadId();
+    const set = id && Object.prototype.hasOwnProperty.call(chatThreads, id) ? chatThreads[id] : undefined;
+    if (set === false) return null;
+    if (set === true) return chatLangObj('th');
+    if (typeof set === 'string' && set) return chatLangObj(set);
+    const seen = chatPartnerLang();
+    if (seen) return chatLangObj(seen);
+    if (!MY_KO) return null;
+    const name = chatPartnerName();
+    if (!name || HANGUL.test(name)) return null;
+    return THAI.test(name) || /[A-Za-z]/.test(name) ? chatLangObj('th') : null;
+  }
+
+  // 언어 막대에서 고른 언어 — 메신저에서는 지금 대화방에만(대화방마다 상대 언어가 다르다). 켜져 있는 언어를 다시 누르면 그대로 보냄.
+  function chatPickLang(code) {
+    const id = chatThreadId();
+    if (!id) return;
+    const cur = chatTarget();
+    chatThreads[id] = cur && cur.id === code ? false : code;
+    GM_setValue(CHAT_THREADS, chatThreads);
+    const l = chatThreads[id] ? chatLangObj(code) : null;
+    toast(l ? `이 대화방: ${MY_KO ? '한국어를 ' : ''}${langName(l)}로 바꿔 보냅니다.` : `이 대화방: ${MY_KO ? '한국어 ' : ''}그대로 보냅니다.`, 3000);
+    refreshLangBar();
+    updateChatChip();
   }
 
   // ---- 보내기: 한국어 → 태국어 ----
@@ -8503,6 +8653,26 @@
     return { thai: out.join('\n'), via: [...vias].join(' + ') };
   }
 
+  // 태국어가 아닌 언어로 보내기: 그 언어의 용어집(한국어 사용자) → 구글 번역(language bar 와 같은 koreanToLang).
+  // 줄마다 옮겨 줄을 살린다. 말투 다듬기(끝말 ครับ/ค่ะ 등)는 태국어에만 있다.
+  async function chatKoreanToLang(text, lang) {
+    if (lang.id === 'th') return chatKoreanToThai(text);
+    const out = [];
+    const vias = new Set();
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line || !isMine(line, lang.id)) {
+        out.push(line);
+        continue;
+      }
+      const { thai, via } = await koreanToLang(line, lang);
+      if (!thai) return { thai: '', via };
+      out.push(String(thai).trim());
+      vias.add(via);
+    }
+    return { thai: out.join('\n'), via: [...vias].join(' + ') };
+  }
+
   // 입력칸 글자를 통째로 바꾼다. innerHTML 을 직접 바꾸면 화면만 바뀌고 보내는 건 옛 글자다
   // (Lexical 은 자기 상태를 따로 들고 있다). execCommand('insertText') 는 띄어쓰기가 든 글자를
   // Lexical 이 버린다(시험함). 붙여넣기 이벤트는 띄어쓰기·줄바꿈까지 그대로 받는다. 다만 Lexical 은
@@ -8548,22 +8718,31 @@
 
   async function chatConvertAndSend(ed) {
     const value = composerText(ed);
-    if (chatBusy || !value || !isMine(value, 'th')) return;
+    if (chatBusy || !value) return;
     chatBusy = true;
-    setBadge('태국어로 바꾸는 중…');
+    let lang = null;
     try {
-      const { thai, via } = await chatKoreanToThai(value);
+      // 상대 말풍선의 언어를 아직 구글에 묻는 중이면 기다린다(첫 Enter 가 엉뚱한 언어로 가지 않게).
+      await chatDetectLangs().catch(() => {});
+      lang = chatTarget();
+      if (!lang || !isMine(value, lang.id)) {
+        await chatSend(ed); // 알아보니 바꿀 방이 아니다 — 쓴 그대로 보낸다
+        return;
+      }
+      setBadge(`${langName(lang)}로 바꾸는 중…`);
+      const { thai, via } = await chatKoreanToLang(value, lang);
       if (!thai || untranslated(thai, value)) throw new Error('번역 결과가 비어 있습니다');
       if (composerText(ed) !== value) throw new Error('그 사이 입력칸 글자가 바뀌었습니다');
       await setComposerText(ed, thai);
       if (composerText(ed) !== flatText(thai)) await setComposerText(ed, thai, 150); // 한 번 더, 천천히
-      if (composerText(ed) !== flatText(thai)) throw new Error('입력칸에 태국어를 넣지 못했습니다');
-      await chatSend(ed);
+      if (composerText(ed) !== flatText(thai)) throw new Error('입력칸에 바꾼 말을 넣지 못했습니다');
+      // 보내기 전에 적어 둔다 — 보낸 뒤에 적으면 새 말풍선을 먼저 옮겨 '✎ 내가 쓴 말' 이 빠지곤 했다(2026-11-05 시험).
       chatSentLog = [...chatSentLog.filter((e) => sentKey(e.th) !== sentKey(thai)), { ko: value, th: thai }].slice(-300);
       GM_setValue(CHAT_SENT, chatSentLog);
+      await chatSend(ed);
       toast(`"${value}" → "${thai}"  (${via})`, 3500);
     } catch (e) {
-      toast(`태국어로 바꾸지 못했습니다: ${e.message || e}\n입력칸 글자는 보내지 않았습니다.`, 5000);
+      toast(`${lang ? langName(lang) : '외국어'}로 바꾸지 못했습니다: ${e.message || e}\n입력칸 글자는 보내지 않았습니다.`, 5000);
     } finally {
       chatBusy = false;
       setBadge(null);
@@ -8571,11 +8750,13 @@
     }
   }
 
-  // 한국어를 치는 동안 입력칸 위에 'Enter → ไทย'(이 대화방은 태국어로 보냄) 또는
-  // 'Enter → 한국어 그대로'. 누르면 이 대화방만 바꾼다.
+  // 내 말을 치는 동안 입력칸 위에 'Enter → ไทย'(이 대화방은 상대 언어로 바꿔 보냄 — 日本語·EN …) 또는
+  // 'Enter → 한국어 그대로'. 누르면 이 대화방만 켜고 끈다. 다른 언어는 '한' 옆 '번역' 막대에서 고른다.
   function updateChatChip() {
+    const lang = chatTarget();
+    refreshLangBar(); // 메신저에서는 막대도 이 대화방의 언어를 보여 준다
     const ed = chatComposer(document.activeElement);
-    if (!ed || !isMine(ed.textContent, 'th')) {
+    if (!ed || !isMine(ed.textContent, lang ? lang.id : '')) {
       if (chatChip) chatChip.style.display = 'none';
       return;
     }
@@ -8590,18 +8771,29 @@
         e.stopPropagation();
         const id = chatThreadId();
         if (!id) return;
-        chatThreads[id] = !chatThaiOn();
+        // 끄기 = 그대로. 켜기 = 다시 저절로(상대 언어) — 상대 말이 없어 모르면 언어 막대에서 고른 언어, 그것도 없으면 태국어.
+        if (chatTarget()) chatThreads[id] = false;
+        else {
+          delete chatThreads[id];
+          chatLangMemo = null;
+          if (!chatTarget()) chatThreads[id] = typeLang || 'th';
+        }
         GM_setValue(CHAT_THREADS, chatThreads);
-        toast(chatThreads[id] ? '이 대화방: 한국어를 태국어로 바꿔 보냅니다.' : '이 대화방: 한국어 그대로 보냅니다.', 2500);
+        chatLangMemo = null;
+        const now = chatTarget();
+        toast(
+          now ? `이 대화방: ${MY_KO ? '한국어를 ' : ''}${langName(now)}로 바꿔 보냅니다.` : `이 대화방: ${MY_KO ? '한국어 ' : ''}그대로 보냅니다.`,
+          2500
+        );
         updateChatChip();
       });
       document.body.appendChild(chatChip);
     }
-    const on = chatThaiOn();
-    chatChip.textContent = on ? 'Enter → ไทย' : 'Enter → 한국어 그대로';
+    const on = lang;
+    chatChip.textContent = on ? `Enter ${on.chip || `→ ${langLabel(on)}`}` : `Enter → ${MY_KO ? '한국어 그대로' : '쓴 그대로 보내기'}`; // '그대로' 만 두면 영어로 'like that' 이 됐다
     chatChip.title = on
-      ? '이 대화방은 한국어를 태국어로 바꿔 보냅니다. 누르면 이 대화방은 한국어 그대로 보냅니다.'
-      : '누르면 이 대화방에서 한국어를 태국어로 바꿔 보냅니다.';
+      ? `이 대화방은 ${MY_KO ? '한국어를' : '쓴 말을'} ${langName(on)}로 바꿔 보냅니다. 누르면 이 대화방은 그대로 보냅니다. 다른 언어는 '한' 옆 '번역' 에서 고릅니다.`
+      : `누르면 이 대화방에서 ${MY_KO ? '한국어를' : '쓴 말을'} 바꿔 보냅니다.`;
     chatChip.toggleAttribute('data-off', !on);
     chatChip.style.display = '';
     const r = ed.getBoundingClientRect();
@@ -9444,14 +9636,17 @@
 
   async function scanChat() {
     chatScanTimer = null;
+    chatLangMemo = null;
     updateChatChip(); // Lexical 은 input 이벤트 없이 글자를 그리기도 해서 화면 변화 때마다 다시 본다
+    chatDetectLangs(); // 상대 언어 알아보기 — 새 말풍선이 있을 때만 구글에 묻는다(기다리지 않는다)
     if (!cfg.chatTranslate) return;
     const todo = [];
     for (const d of chatBubbles()) {
       const src = bubbleText(d);
       const box = d.querySelector(':scope > .lzk-msgko');
       if (box && box.dataset.src === src) continue;
-      if (!THAI.test(src) || src.length > 3000) {
+      // 태국어만이 아니라 내 말이 아닌 말풍선은 모두(영어·일본어·베트남어 …).
+      if (!chatForeign(src) || src.length > 3000 || chatSame.get(d) === src) {
         box?.remove();
         continue;
       }
@@ -9466,10 +9661,12 @@
       const lr = log ? log.getBoundingClientRect() : null;
       const partner = log ? chatPartnerGender(log, lr) : '';
       const mine = todo.map(([d]) => (lr ? chatBubbleMine(d, lr) : false));
-      // 손질(พี่→오빠 같은 한국어 호칭)·표·말투 다듬기는 한국어용 — 내 언어가 다르면 원문 그대로 구글로.
-      const prepped = todo.map(([d, src], i) => (MY_KO ? chatPrepThai(src, mine[i], partner) : src));
-      const whole = prepped.map((s) => (MY_KO ? chatThaiWhole(s) : ''));
-      const ask = prepped.filter((s, i) => !whole[i] && !(MY_KO && TH_SHORT_REPLY.test(s)));
+      // 손질(พี่→오빠 같은 한국어 호칭)·표·말투 다듬기는 태국어를 한국어로 옮길 때만 — 다른 언어이거나 내 언어가
+      // 한국어가 아니면 원문 그대로 구글로(원문 언어는 구글이 알아본다).
+      const thai = todo.map(([, src]) => MY_KO && THAI.test(src));
+      const prepped = todo.map(([d, src], i) => (thai[i] ? chatPrepThai(src, mine[i], partner) : src));
+      const whole = prepped.map((s, i) => (thai[i] ? chatThaiWhole(s) : ''));
+      const ask = prepped.filter((s, i) => !whole[i] && !(thai[i] && TH_SHORT_REPLY.test(s)));
       // 여러 줄 말풍선은 줄마다 옮겨 줄을 살린다(묶어 옮기면 한 덩어리로 뭉친다).
       const split = (s) => s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
       const lines = [...new Set(ask.flatMap(split))];
@@ -9483,9 +9680,18 @@
       );
       todo.forEach(([d, src], i) => {
         const s = prepped[i];
-        const ko = whole[i] || (MY_KO && TH_SHORT_REPLY.test(s) ? '네' : kos.get(s) && (MY_KO ? chatFixKorean(kos.get(s), s) : kos.get(s)));
+        const got = kos.get(s);
+        const ko = whole[i] || (thai[i] && TH_SHORT_REPLY.test(s) ? '네' : got && (thai[i] ? chatFixKorean(got, s) : got));
+        // 그대로 왔다 = 이미 내 말(로마자 언어 사용자의 영어, 이름·상품명) — 다시 묻지 않는다.
+        if (ko && chatNorm(ko) === chatNorm(src)) {
+          chatSame.set(d, src);
+          d.querySelector(':scope > .lzk-msgko')?.remove();
+          return;
+        }
         const orig = mine[i] ? chatSentLog.find((e) => sentKey(e.th) === sentKey(src))?.ko || '' : '';
-        if (ko && !THAI.test(ko)) attachKorean(d, src, ko, orig);
+        // 옮긴 말에 태국어가 남았거나(태국어 말풍선), 한국어 사용자인데 한글이 하나도 없으면 못 옮긴 것 — 잠시 뒤 다시.
+        const bad = !ko || (THAI.test(src) && THAI.test(ko)) || (MY_KO && !HANGUL.test(ko));
+        if (!bad) attachKorean(d, src, ko, orig);
         else chatFailed.set(d, { src, at: Date.now() });
       });
     } catch (e) {
@@ -9527,7 +9733,8 @@
           e.stopImmediatePropagation();
           return;
         }
-        if (!isMine(ed.textContent, 'th') || !chatThaiOn()) return;
+        const lang = chatTarget();
+        if (!lang || !isMine(ed.textContent, lang.id)) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         chatConvertAndSend(ed);

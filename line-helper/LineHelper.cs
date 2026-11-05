@@ -1760,6 +1760,28 @@ static class App
         int ko = MyLang.CountScript.Matches(text).Count; // 내 언어 글자(한국어면 한글)
         return ko >= 2 && ko * 5 >= Thai.Matches(text).Count;
     }
+
+    // 옮길 말인가 — 태국어만이 아니라 내 말이 아닌 모든 언어(2026-11-05 사용자: 모든 언어로).
+    // 글자가 두 개 넘고 내 언어 글자가 거의 없으면. 주소·메일은 말이 아니라 세지 않는다. 내 언어가 로마자 언어(영어 등)면
+    // 글자로는 못 가르니 옮겨 보고, 그대로 오면 내 말로 본다(SameText).
+    static readonly Regex Letter = new Regex("\\p{L}");
+    static readonly Regex NotWords = new Regex("https?://\\S+|www\\.\\S+|\\S+@\\S+\\.\\S+");
+    static bool Foreign(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        string s = NotWords.Replace(text, "");
+        int all = Letter.Matches(s).Count;
+        Regex my = MyLang.Script;
+        int mine = my != null ? my.Matches(s).Count : 0;
+        if (Thai.Matches(s).Count >= 2 && MyLang.Code != "th") return !HasKorean(s); // 태국어는 예전 그대로
+        return all - mine >= 2 && mine * 5 < all - mine;
+    }
+
+    static string NormText(string s)
+    {
+        return Regex.Replace(Regex.Replace(s ?? "", "\\s+", " "), "[\\s.!?~,。！？]+$", "").Trim().ToLowerInvariant();
+    }
+    static bool SameText(string a, string b) { return NormText(a) == NormText(b); }
     static IntPtr msgListWin = IntPtr.Zero;
     static DateTime msgListAt = DateTime.MinValue;
     static string hoverKey;
@@ -2005,13 +2027,15 @@ static class App
                 }
                 string ko = "", mark = "";
                 int thai = Thai.Matches(text).Count;
-                if (thai >= 2 && !HasKorean(text) && !sure)
+                // 그림에서 읽은 글(26.5 까지)은 태국어 글자 인식기라 태국어만 믿는다. LINE 이 알려 준 글(26.6~)은 어느 언어든.
+                bool foreign = given != null ? Foreign(text) : thai >= 2 && !HasKorean(text);
+                if (foreign && !sure)
                 {
                     ko = MyLang.T("글자가 흐려 확실히 못 읽었어요 — 복사하면 옮겨 줘요");
                     mark = "?";
                     Log.Write("말풍선 확실하지 않음: 4배[" + r4[0] + "] " + c4 + " / 3배[" + r3[0] + "] " + c3);
                 }
-                else if (thai >= 2 && !HasKorean(text))
+                else if (foreign)
                 {
                     if (mine)
                     {
@@ -2020,6 +2044,8 @@ static class App
                         else { ko = engine.Call("ko", "", text, 12000)[0]; mark = "↩"; }
                     }
                     else ko = engine.Call("ko", "", text, 12000)[0];
+                    // 그대로 왔다 = 이미 내 말(영어 사용자의 영어, 이름) — 아무것도 덧그리지 않는다.
+                    if (mark != "✎" && SameText(ko, text)) { ko = ""; mark = ""; }
                     Log.Write("말풍선 " + (mine ? "(나) " : "") + (given != null ? "" : "(그림) ") + "[" + text + "] → [" + ko + "]");
                 }
                 m.Thai = text;
@@ -2219,9 +2245,10 @@ static class App
                 + string.Format(" — 읽기 {0}ms, 번역 {1}ms, 붙여넣기 {2}ms", tRead, tMt - tRead, tPaste - tMt));
             string head = text + "  (" + res[1] + ")";
             Show(head, outText, false, 4000);
-            if (lang == "th")
+            if (!string.IsNullOrEmpty(outText))
             {
-                // 보낸 태국어를 다시 한국어로 — 뜻이 맞게 갔는지 본다(메신저의 되옮김과 같다). 다음 Enter 는 기다리지 않는다.
+                // 보낸 말을 다시 내 언어로 — 뜻이 맞게 갔는지 본다(메신저의 되옮김과 같다). 태국어만이 아니라 모든 언어.
+                // 다음 Enter 는 기다리지 않는다.
                 ThreadPool.QueueUserWorkItem(delegate
                 {
                     try
@@ -2354,7 +2381,7 @@ static class App
             try { text = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
             catch (ExternalException) { Thread.Sleep(30); }
         }
-        if (string.IsNullOrEmpty(text) || !Thai.IsMatch(text) || text.Length > 2000) return;
+        if (string.IsNullOrEmpty(text) || !Foreign(text) || text.Length > 2000) return; // 태국어만이 아니라 내 말이 아닌 모든 언어
         // 한 번 복사에 알림이 두 번 오기도 한다(글자를 넣고 다시 확정할 때).
         if (text == lastClip && (DateTime.Now - lastClipAt).TotalSeconds < 2) return;
         lastClip = text;
@@ -2366,6 +2393,7 @@ static class App
             {
                 string[] r = engine.Call("ko", "", text, 12000);
                 Log.Write("받음 [" + text + "] → [" + r[0] + "] (" + r[1] + ")");
+                if (SameText(r[0], text)) return; // 이미 내 말이었다
                 ui.BeginInvoke((MethodInvoker)delegate { note.Pop(text.Trim(), r[0], at, false, false, 15000); });
             }
             catch (Exception e)

@@ -169,9 +169,10 @@ async function toLang(text, lang) {
   return { out: await T.freeTranslateOne(text, 'ko', info.mt), via: '번역' };
 }
 
-// 받은 태국어 → 한국어. 메신저 받기(scanChat)와 같은 손질·표·번역. 누가 보낸 말인지 모르니 상대 말로 본다.
+// 받은 말 → 한국어. 태국어는 메신저 받기(scanChat)와 같은 손질·표·번역. 누가 보낸 말인지 모르니 상대 말로 본다.
+// 태국어가 아닌 말(영어·일본어 …)은 손질 없이 구글로(원문 언어는 구글이 알아본다).
 async function toKorean(src) {
-  if (!myKo()) return toMine(src);
+  if (!myKo() || !T.THAI.test(src)) return toMine(src);
   const partner = T.thaiSpeakerGender(src);
   const s = T.chatPrepThai(src, false, partner);
   const whole = T.chatThaiWhole(s);

@@ -299,8 +299,13 @@ function myScriptCount(s) {
   const re = T.SCRIPT_OF && T.SCRIPT_OF[myLang().split('-')[0].toLowerCase()];
   return re ? (s.match(new RegExp(re.source, 'g')) || []).length : 0;
 }
+// 메뉴의 단축키 칸(Enter, Del, F2, Ctrl+N, Alt+Enter, Shift+F10): 'Enter' 가 '입력하다' 로 덮였다(SoftEther 메뉴, 2026-11-06).
+const KEY_NAME = /^((ctrl|alt|shift|win|cmd)\s*\+\s*)*(enter|del|delete|ins|insert|esc|tab|space|home|end|pgup|pgdn|pageup|pagedown|backspace|f\d{1,2}|[a-z0-9]|up|down|left|right)$/i;
 function uiSkip(s) {
   if (/https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s)) return true;
+  // 'Delete' 처럼 메뉴 이름이기도 한 낱말은 혼자 있으면 옮긴다 — 조합(Ctrl+…)이거나 단축키로만 쓰는 이름일 때만 건너뛴다.
+  const key = s.trim();
+  if (KEY_NAME.test(key) && (/\+/.test(key) || !/^(delete|insert|home|end|space|tab|up|down|left|right)$/i.test(key))) return true;
   // 상표·모델 번호(Apeos C3071…, zip24#, Windows 11): 로마자 낱말 둘 아래에 숫자 낱말 — 구글이 Apeos 를 '소품' 으로 옮겼다.
   const toks = s.split(/[\s,]+/).filter(Boolean);
   if (/^[\x20-\x7E]+$/.test(s) && toks.length <= 3 && toks.some((t) => /\d/.test(t)) && toks.filter((t) => /[A-Za-z]{2}/.test(t) && !/\d/.test(t)).length <= 1) return true;

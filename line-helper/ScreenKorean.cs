@@ -112,6 +112,12 @@ class ScreenOverlay : Form
         Native.ReleaseDC(IntPtr.Zero, screen);
     }
 
+    // 메뉴 위 겹침 창: 메뉴(항상 위)가 다시 올라와도 그 위에 있게.
+    public void KeepOnTop()
+    {
+        Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+    }
+
     // 새로 띄운 창은 모든 창 맨 위로 온다. 대상 창 바로 위 칸으로 내린다 — 대상 창을 덮은 다른 창보다는 아래.
     void PlaceAbove(IntPtr win)
     {
@@ -158,6 +164,7 @@ static class ScreenKorean
     static volatile int gen;   // 켜고 끌 때마다 늘린다 — 늦게 끝난 읽기가 이전 창 것이면 버린다
     static OcrEngine ocr;
     static readonly Dictionary<string, string> done = new Dictionary<string, string>(); // 읽은 글자 → 한국어("" = 덮지 않음)
+    static readonly Dictionary<string, KeyValuePair<DateTime, int>> emptyAt = new Dictionary<string, KeyValuePair<DateTime, int>>(); // 빈 답을 받은 때·횟수(done 과 같이 잠근다)
     static readonly JavaScriptSerializer json = new JavaScriptSerializer();
     static readonly Regex TwoLatin = new Regex("[A-Za-z].*[A-Za-z]");
 
@@ -173,7 +180,7 @@ static class ScreenKorean
     public static void SetLang(string lang)
     {
         Lang = lang;
-        lock (done) done.Clear(); // 다른 글자로 다시 읽게
+        lock (done) { done.Clear(); emptyAt.Clear(); } // 다른 글자로 다시 읽게
         Log.Write("화면 번역 글자: " + lang);
     }
 
@@ -268,9 +275,12 @@ static class ScreenKorean
     // 윈도우 메뉴는 프로그램이 부르면 시스템이 그 프로그램 안에 따로 띄우는 '항상 위' 창이다. PrintWindow 로 깨끗이 찍힌다
     // (시험 창으로 확인). 메뉴마다 겹침 창 하나(UI 스레드에서만 만든다), 그림이 바뀌면(마우스가 고른 줄) 다시 읽는다 —
     // 번역은 줄마다 기억해 두어 두 번째부터는 바로.
-    class MenuState { public int[] Sig; public Rectangle Rect; public List<TextChunk> Chunks; }
+    // Sig = 마지막으로 읽은 그림, Last = 바로 앞 틱에 찍은 그림(서서히 나타나는 중인지 보려고).
+    class MenuState { public int[] Sig, Last; public Rectangle Rect; public List<TextChunk> Chunks; }
     static readonly Dictionary<IntPtr, MenuState> menus = new Dictionary<IntPtr, MenuState>();
-    static readonly List<ScreenOverlay> menuOverlays = new List<ScreenOverlay>();
+    // 메뉴 창 → 그 위 겹침 창(UI 스레드만), 닫힌 메뉴의 겹침 창은 숨겨 두었다 다시 쓴다.
+    static readonly Dictionary<IntPtr, ScreenOverlay> menuOverlays = new Dictionary<IntPtr, ScreenOverlay>();
+    static readonly List<ScreenOverlay> spareOverlays = new List<ScreenOverlay>();
     static int menusGen = -1;
 
     static string ClassOf(IntPtr h)
@@ -292,12 +302,15 @@ static class ScreenKorean
         return list;
     }
 
+    // 하위 메뉴에서 한국어가 깜박이고 몇 줄은 영어로 남았다(SoftEther 'Connect' 메뉴, 2026-11-06):
+    // - 메뉴는 서서히 나타난다 — 흐린 그림을 읽지 않게 두 번 잇달아 같은 그림일 때만 읽는다(Last).
+    // - 겹침 창을 차례(k)로 짝지어서, 하위 메뉴가 열리고 차례가 바뀌면 다른 메뉴의 한국어를 덮어썼다 — 메뉴 창마다 하나.
+    // - 메뉴 창이 다시 맨 위로 오면 한국어가 밑에 깔렸다 — 열려 있는 동안 0.25초마다 맨 위로 다시 올린다.
     static void Menus(List<IntPtr> open, int g)
     {
         foreach (IntPtr h in new List<IntPtr>(menus.Keys)) if (!open.Contains(h)) menus.Remove(h);
-        for (int k = 0; k < open.Count; k++)
+        foreach (IntPtr h in open)
         {
-            IntPtr h = open[k];
             Rectangle r = Native.WindowRect(h);
             if (r.Width < 20 || r.Height < 10) continue;
             using (Bitmap bmp = Capture(h, r))
@@ -305,16 +318,30 @@ static class ScreenKorean
                 int[] px = Pixels(bmp);
                 int[] sig = Signature(px, r.Width, r.Height);
                 MenuState st;
-                bool had = menus.TryGetValue(h, out st);
-                if (had && st.Rect == r && Changed(sig, st.Sig) == 0) continue;
+                if (!menus.TryGetValue(h, out st)) { menus[h] = new MenuState { Last = sig, Rect = r }; continue; }
+                bool settled = st.Rect == r && Changed(sig, st.Last) == 0;
+                st.Last = sig;
+                if (!settled) { st.Rect = r; continue; }
+                if (st.Sig != null && Changed(sig, st.Sig) == 0) continue;
+                bool first = st.Chunks == null;
                 Stopwatch sw = Stopwatch.StartNew();
-                List<TextChunk> chunks = Read(bmp, px);
+                List<TextChunk> chunks = Read(bmp, px, true);
+                // PrintWindow 가 긴 메뉴를 가끔 글자 없는 빈 그림으로 찍는다 — 그 그림을 읽으면 0줄이 되어 한국어가 다 빠졌다가
+                // 다음 그림에서 돌아왔다(하위 메뉴 깜박임). 지난번보다 줄이 크게 준 그림은 믿지 않는다(다음 그림을 기다린다).
+                if (!first && chunks.Count * 10 < st.Chunks.Count * 7)
+                {
+                    if (App.Debugging) Log.Write("화면 번역: 메뉴 그림이 비어 보여 건너뜀 " + chunks.Count + "/" + st.Chunks.Count);
+                    continue;
+                }
+                List<TextChunk> carried = first ? new List<TextChunk>() : Carry(st.Chunks, chunks, px, r.Width, r.Height);
                 int asked = Translate(chunks, px, r.Width, r.Height, null);
                 if (gen != g) return;
-                if (had && st.Rect == r) chunks = Stick(st.Chunks, chunks, false); // 고른 줄만 바뀌었으면 나머지는 그대로
-                menus[h] = new MenuState { Sig = sig, Rect = r, Chunks = chunks };
-                ShowMenu(k, r, chunks, g);
-                if (!had || asked > 0)
+                if (!first) chunks = Stick(st.Chunks, chunks, false); // 고른 줄만 바뀌었으면 나머지는 그대로
+                chunks.AddRange(carried);
+                st.Sig = sig;
+                st.Chunks = chunks;
+                ShowMenu(h, r, chunks, g);
+                if (first || asked > 0)
                 {
                     int covered = 0;
                     foreach (TextChunk c in chunks) if (!string.IsNullOrEmpty(c.Ko)) covered++;
@@ -322,15 +349,24 @@ static class ScreenKorean
                 }
             }
         }
-        int used = open.Count;
+        List<IntPtr> live = new List<IntPtr>(open);
         ui.BeginInvoke((MethodInvoker)delegate
         {
-            for (int i = used; i < menuOverlays.Count; i++)
-                if (!menuOverlays[i].IsDisposed && menuOverlays[i].Visible) menuOverlays[i].Hide();
+            foreach (IntPtr h in new List<IntPtr>(menuOverlays.Keys))
+            {
+                ScreenOverlay o = menuOverlays[h];
+                if (live.Contains(h))
+                {
+                    if (!o.IsDisposed && o.Visible) o.KeepOnTop();
+                    continue;
+                }
+                if (!o.IsDisposed) { o.Hide(); spareOverlays.Add(o); }
+                menuOverlays.Remove(h);
+            }
         });
     }
 
-    static void ShowMenu(int k, Rectangle r, List<TextChunk> chunks, int g)
+    static void ShowMenu(IntPtr h, Rectangle r, List<TextChunk> chunks, int g)
     {
         Bitmap bmp = Draw(r.Size, chunks);
         if (App.Debugging)
@@ -349,9 +385,20 @@ static class ScreenKorean
             try
             {
                 if (g != gen) return;
-                while (menuOverlays.Count <= k) menuOverlays.Add(new ScreenOverlay());
-                if (menuOverlays[k].IsDisposed) menuOverlays[k] = new ScreenOverlay();
-                menuOverlays[k].Put(IntPtr.Zero, r, bmp, false);
+                ScreenOverlay o;
+                if (!menuOverlays.TryGetValue(h, out o) || o.IsDisposed)
+                {
+                    o = null;
+                    while (spareOverlays.Count > 0 && o == null)
+                    {
+                        o = spareOverlays[spareOverlays.Count - 1];
+                        spareOverlays.RemoveAt(spareOverlays.Count - 1);
+                        if (o.IsDisposed) o = null;
+                    }
+                    if (o == null) o = new ScreenOverlay();
+                    menuOverlays[h] = o;
+                }
+                o.Put(IntPtr.Zero, r, bmp, false);
             }
             catch (Exception e) { Log.Write("화면 번역 메뉴 겹침 창 오류: " + e.Message); }
             finally { bmp.Dispose(); }
@@ -363,7 +410,9 @@ static class ScreenKorean
     {
         ui.BeginInvoke((MethodInvoker)delegate
         {
-            foreach (ScreenOverlay o in menuOverlays) if (!o.IsDisposed && o.Visible) o.Hide();
+            foreach (ScreenOverlay o in menuOverlays.Values)
+                if (!o.IsDisposed) { o.Hide(); spareOverlays.Add(o); }
+            menuOverlays.Clear();
         });
     }
 
@@ -898,7 +947,9 @@ static class ScreenKorean
         return buf;
     }
 
-    static List<TextChunk> Read(Bitmap bmp, int[] px)
+    // menu: 펼친 메뉴 — 세 배로 읽고(두 배에서는 흐린 'Disconnect' 줄을 못 찾았다, 세 배는 15줄 모두 — 2026-11-06),
+    // 줄을 문단으로 잇지 않는다(메뉴 줄은 늘 한 줄; 'Import' 를 'lmport' 로 읽어 윗줄과 이어 붙었다).
+    static List<TextChunk> Read(Bitmap bmp, int[] px, bool menu = false)
     {
         if (ocr == null) ocr = MakeOcr();
         int w = bmp.Width, h = bmp.Height;
@@ -906,6 +957,7 @@ static class ScreenKorean
         // 1936×1048 바이두 넷디스크의 12px 중국어 메뉴(全部·最近·传输·团队空间 …)를 글줄로 찾지도 못했다 — 두 배로 읽어도
         // 0.37초로 같고 찾는 줄은 51 → 60(2026-11-06). 2560×1600 넘는 창(4K 꽉 채운 창)만 그대로.
         int scale = (long)w * h <= 2560L * 1600 && Math.Max(w, h) * 2 <= OcrEngine.MaxImageDimension ? 2 : 1;
+        if (menu && Math.Max(w, h) * 3 <= OcrEngine.MaxImageDimension) scale = 3;
         if (Math.Max(w, h) > OcrEngine.MaxImageDimension) throw new Exception("창이 너무 큽니다");
         int sw = w * scale, sh = h * scale;
         byte[] buf;
@@ -944,7 +996,7 @@ static class ScreenKorean
             TextChunk c = Chunk(p.Boxes, p.Texts, 0, p.Boxes.Count, p.LineH, p.Trusted);
             if (c != null) { c.Em = p.Em > 0 ? p.Em : p.LineH; c.Trusted = p.Trusted; chunks.Add(c); }
         }
-        chunks = Paragraphs(chunks);
+        if (!menu) chunks = Paragraphs(chunks);
         foreach (TextChunk c in chunks)
         {
             Colors(px, w, h, c);
@@ -1289,10 +1341,16 @@ static class ScreenKorean
         HashSet<string> asking = new HashSet<string>();
         lock (done)
         {
+            DateTime now = DateTime.Now;
             foreach (TextChunk c in chunks)
             {
                 string ko;
-                if (done.TryGetValue(c.Text, out ko)) c.Ko = ko;
+                KeyValuePair<DateTime, int> e;
+                // 빈 답(옮기지 않음·번역 실패)은 15초 뒤 두 번까지 다시 묻는다 — 한꺼번에 묻다 번역이 비어 온 메뉴 줄이 영어로
+                // 굳었다(SoftEther 메뉴, 2026-11-06). 상표·숫자처럼 늘 빈 줄은 세 번 묻고 만다.
+                bool retry = done.TryGetValue(c.Text, out ko) && ko == "" && emptyAt.TryGetValue(c.Text, out e)
+                    && e.Value < 3 && (now - e.Key).TotalSeconds >= 15;
+                if (ko != null && !retry && done.ContainsKey(c.Text)) c.Ko = ko;
                 else if (!Worth(c)) c.Ko = "";
                 else if (asking.Add(c.Text)) ask.Add(c);
             }
@@ -1316,11 +1374,18 @@ static class ScreenKorean
             object[] outs = (object[])json.DeserializeObject(r[0]);
             lock (done)
             {
-                if (done.Count > 5000) done.Clear();
+                if (done.Count > 5000) { done.Clear(); emptyAt.Clear(); }
                 for (int k = 0; k < part.Count && k < outs.Length; k++)
                 {
                     Dictionary<string, object> d = (Dictionary<string, object>)outs[k];
-                    done[part[k].Text] = d.ContainsKey("k") && d["k"] != null ? d["k"].ToString() : "";
+                    string got = d.ContainsKey("k") && d["k"] != null ? d["k"].ToString() : "";
+                    string text = part[k].Text;
+                    KeyValuePair<DateTime, int> e;
+                    if (got == "") emptyAt[text] = new KeyValuePair<DateTime, int>(DateTime.Now, emptyAt.TryGetValue(text, out e) ? e.Value + 1 : 1);
+                    else emptyAt.Remove(text);
+                    // 다시 물었는데 또 비었으면 지난 답(있었다면)을 지우지 않는다.
+                    string had;
+                    if (got != "" || !done.TryGetValue(text, out had)) done[text] = got;
                     if (App.Debugging) Log.Write("화면 글줄 [" + part[k].Text + "] → [" + d["s"] + "] → [" + done[part[k].Text] + "]");
                 }
             }

@@ -566,6 +566,17 @@ async function uiTranslate(lines) {
     const got = await T.translateToKorean(latin.map((i) => lines[i]));
     latin.forEach((i, k) => (out[i] = String(got[k] || '')));
     const same = (i) => (myKo() ? !T.HANGUL.test(out[i]) : out[i].trim().toLowerCase() === lines[i].trim().toLowerCase());
+    // 구글이 묶음의 언어를 잘못 알아보면 묶음째 그대로(또는 비어) 돌아온다 — 한 줄씩 다시 묻는 것은 8줄까지라 줄이 많은 창일수록
+    // 영어로 남는 줄이 늘었다(2026-11-06 "영어 갯수가 많으면 번역이 안되는거 같아요"). 그대로 온 로마자 줄은 먼저 '영어에서' 로
+    // 못 박아 한 번에 다시 묻는다(로마자 화면 글은 대부분 영어). 그래도 남은 줄만 한 줄씩(자동 알아보기).
+    const stuck = latin.filter(same);
+    if (stuck.length && T.freeTranslateMany) {
+      const en = await T.freeTranslateMany(stuck.map((i) => lines[i]), 'en', myLang()).catch(() => null);
+      stuck.forEach((i, k) => {
+        const v = en && String(en[k] || '').trim();
+        if (v && v.toLowerCase() !== lines[i].trim().toLowerCase() && (!myKo() || T.HANGUL.test(v))) out[i] = v;
+      });
+    }
     const again = latin.filter((i) => same(i) && /\S+\s+\S+/.test(lines[i])).slice(0, 8);
     for (const i of again) {
       const [one] = await T.translateToKorean([lines[i]]);

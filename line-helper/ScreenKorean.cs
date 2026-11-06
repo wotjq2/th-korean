@@ -313,7 +313,7 @@ static class ScreenKorean
         {
             Rectangle r = Native.WindowRect(h);
             if (r.Width < 20 || r.Height < 10) continue;
-            using (Bitmap bmp = Capture(h, r))
+            using (Bitmap bmp = Capture(h, r, 0))
             {
                 int[] px = Pixels(bmp);
                 int[] sig = Signature(px, r.Width, r.Height);
@@ -815,13 +815,15 @@ static class ScreenKorean
         return true;
     }
 
-    static Bitmap Capture(IntPtr win, Rectangle r)
+    // flag: 창은 PW_RENDERFULLCONTENT(크롬·WPF 처럼 DWM 이 그리는 창도 찍힌다). 펼친 메뉴는 0 — 메뉴를 그 방식으로 찍으면
+    // 25번 중 절반 넘게 비거나 위쪽만 찍혔고(글줄 띠 0·4·14 / 18), 0 은 25번 모두 온전했다(2026-11-06, 긴 메뉴 시험).
+    static Bitmap Capture(IntPtr win, Rectangle r, uint flag = Native.PW_RENDERFULLCONTENT)
     {
         Bitmap bmp = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
         using (Graphics g = Graphics.FromImage(bmp))
         {
             IntPtr dc = g.GetHdc();
-            try { Native.PrintWindow(win, dc, Native.PW_RENDERFULLCONTENT); }
+            try { Native.PrintWindow(win, dc, flag); }
             finally { g.ReleaseHdc(dc); }
         }
         return bmp;
@@ -1283,9 +1285,12 @@ static class ScreenKorean
         return merged;
     }
 
+    // 다음 줄이 소문자로 시작하면 이어지는 문장 — 다만 l 뒤에 모음이 아닌 글자(lmport·lnformation·lJse·lcons)는 윈도우 OCR 이
+    // 첫 글자 I·U 를 l 로 읽은 것이라 새 줄이다(목록의 'Export Settings' 와 'Import Settings' 가 한 문단으로 붙었다, 2026-11-06).
     static bool Continues(string a, string b)
     {
-        return Regex.IsMatch(b, "^[a-z]") || Regex.IsMatch(a, "[,\\-]$")
+        bool lower = Regex.IsMatch(b, "^[a-z]") && !Regex.IsMatch(b, "^l[^aeiouy\\s]");
+        return lower || Regex.IsMatch(a, "[,\\-]$")
             || Regex.IsMatch(a, "\\b(the|a|an|to|of|and|or|in|for|with|on|your|is|are|be|by|from|that|this)$", RegexOptions.IgnoreCase);
     }
 

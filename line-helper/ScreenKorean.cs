@@ -36,6 +36,7 @@ class TextChunk
     public bool Trusted;  // 그 언어의 윈도우 인식기가 또렷이 읽은 글 — 엔진이 다시 읽지 않는다(일본어·중국어 …)
     public int[] Ref;     // 이 줄을 읽은 그림에서 뜬 표본 밝기(Track 이 찾는 기준) — 잠깐 지워졌다 다시 그려져도 찾게
     public DateTime Lost = DateTime.MinValue; // 이 줄 자리가 비어 보이기 시작한 때(아직 한국어를 떼지 않았다)
+    public DateTime Changed = DateTime.MinValue; // 제자리에서 그림이 바뀐 때(다음에 새로 읽을 때까지 한국어를 둔다)
 
     // 스크롤로 위아래로 옮겨 간 같은 글줄.
     public TextChunk Moved(int dy)
@@ -310,6 +311,7 @@ static class ScreenKorean
                 List<TextChunk> chunks = Read(bmp, px);
                 int asked = Translate(chunks, px, r.Width, r.Height, null);
                 if (gen != g) return;
+                if (had && st.Rect == r) chunks = Stick(st.Chunks, chunks, false); // 고른 줄만 바뀌었으면 나머지는 그대로
                 menus[h] = new MenuState { Sig = sig, Rect = r, Chunks = chunks };
                 ShowMenu(k, r, chunks, g);
                 if (!had || asked > 0)
@@ -451,17 +453,21 @@ static class ScreenKorean
                     Stopwatch sw = Stopwatch.StartNew();
                     List<TextChunk> chunks = Read(bmp, px);
                     long ocrMs = sw.ElapsedMilliseconds;
-                    List<TextChunk> carried = Carry(shown, chunks, px, r.Width, r.Height);
+                    // 새로 읽기는 뒤에서: 지금 보이는 한국어는 새 번역이 준비될 때까지 그대로 두고(Stick), 이번에 놓친 줄도
+                    // 그림이 그대로면 둔다(Carry).
+                    List<TextChunk> prev = shown;
+                    List<TextChunk> carried = Carry(prev, chunks, px, r.Width, r.Height);
                     int asked = Translate(chunks, px, r.Width, r.Height, delegate
                     {
                         if (gen == g && target == win)
                         {
-                            List<TextChunk> all = new List<TextChunk>(chunks);
+                            List<TextChunk> all = Stick(prev, chunks, true);
                             all.AddRange(carried);
                             ShowOverlay(win, r, all, g);
                         }
                     });
                     if (gen != g || target != win) continue;
+                    chunks = Stick(prev, chunks, false);
                     chunks.AddRange(carried);
                     readAt = DateTime.Now;
                     stale = false;
@@ -568,25 +574,103 @@ static class ScreenKorean
         return now - c.Lost < KeepBlank;
     }
 
+    // 제자리에서 그림이 바뀐 줄(목록을 다시 그림·고른 줄 색·글자가 바뀜): 창이 스크롤되지 않으면 한국어를 그대로 두고
+    // 다음에 새로 읽을 때 정한다(Stick) — 사용자: "원하는 언어로 변경되면 고정으로 … 움직이지 않아도 한글 영어 한글 영어"
+    // (2026-11-06). 새로 읽기는 KeepChanged 안에 온다(ReadEvery 1.2초). 스크롤 중이면 예전처럼 바로 뗀다 — 화면 밖으로 나간
+    // 줄 자리에 다른 글이 들어온다.
+    static readonly TimeSpan KeepChanged = TimeSpan.FromMilliseconds(3000);
+
     static List<TextChunk> Track(List<TextChunk> chunks, int[] oldPx, int[] px, int w, int h)
     {
         List<TextChunk> kept = new List<TextChunk>();
         if (chunks == null || oldPx == null) return kept;
         DateTime now = DateTime.Now;
-        foreach (TextChunk c in chunks)
+        int[] dys = new int[chunks.Count];
+        bool scrolling = false;
+        for (int i = 0; i < chunks.Count; i++)
         {
+            TextChunk c = chunks[i];
             if (c.Ref == null) c.Ref = Sample(c.Box, oldPx, w, h);
-            int dy = c.Ref == null ? int.MinValue : Shift(c.Box, c.Ref, px, w, h);
+            dys[i] = c.Ref == null ? int.MinValue : Shift(c.Box, c.Ref, px, w, h);
+            if (dys[i] != int.MinValue && dys[i] != 0) scrolling = true;
+        }
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            TextChunk c = chunks[i];
+            int dy = dys[i];
             if (dy != int.MinValue)
             {
                 TextChunk m = dy == 0 ? c : c.Moved(dy);
-                m.Lost = DateTime.MinValue;
+                m.Lost = m.Changed = DateTime.MinValue;
                 kept.Add(m);
             }
             else if (KeepWhileBlank(c, px, w, h, now)) kept.Add(c);
-            else if (App.Debugging) Log.Write("화면 번역: 뗌 [" + c.Text + "] 잉크 " + InkShare(c, px, w, h) + "% 빈 지 " + (c.Lost == DateTime.MinValue ? "-" : ((int)(now - c.Lost).TotalMilliseconds).ToString()) + "ms");
+            else if (!scrolling && !string.IsNullOrEmpty(c.Ko) && (c.Changed == DateTime.MinValue || now - c.Changed < KeepChanged))
+            {
+                if (c.Changed == DateTime.MinValue) c.Changed = now;
+                kept.Add(c);
+            }
+            else if (App.Debugging) Log.Write("화면 번역: 뗌 [" + c.Text + "] 잉크 " + InkShare(c, px, w, h) + "%" + (scrolling ? " (스크롤)" : ""));
         }
         return kept;
+    }
+
+    // 새로 읽은 줄에 한국어가 아직 없거나(번역 기다림) 비었으면(옮길 줄이 아니라고 봤거나 번역 실패), 같은 자리의 지난 줄
+    // 한국어를 이어 쓴다. 기다리는 줄은 번역이 오면 그것으로 바뀐다(그 사이 영어로 돌아가지 않게). 빈 줄은 글이 거의 같을
+    // 때만(OCR 이 읽을 때마다 Status ↔ Statu5 처럼 조금씩 달랐다) — 글이 정말 바뀌었으면 새 것을 따른다.
+    // pending: 번역을 기다리는 중(Ko == null) 줄도 지난 한국어를 빌린 '보여 줄 사본' 을 돌려준다. 아니면 chunks 를 고쳐 쓴다.
+    static List<TextChunk> Stick(List<TextChunk> old, List<TextChunk> chunks, bool pending)
+    {
+        List<TextChunk> res = new List<TextChunk>(chunks.Count);
+        foreach (TextChunk n in chunks)
+        {
+            TextChunk o = null;
+            if (old != null && string.IsNullOrEmpty(n.Ko))
+                foreach (TextChunk c in old)
+                    if (!string.IsNullOrEmpty(c.Ko) && Overlap(c.Box, n.Box) > 0.6) { o = c; break; }
+            if (o == null) { res.Add(n); continue; }
+            if (n.Ko == null && pending)
+            {
+                TextChunk show = n.Moved(0);
+                show.Ko = o.Ko;
+                show.Bg = o.Bg;
+                show.Fg = o.Fg;
+                res.Add(show);
+            }
+            else if (n.Ko == "" && Similar(o.Text, n.Text))
+            {
+                n.Ko = o.Ko;
+                res.Add(n);
+            }
+            else res.Add(n);
+        }
+        return res;
+    }
+
+    // 글자(로마자·숫자·그 밖의 글자)만 보아 거의 같은가: 편집 거리가 긴 쪽의 4분의 1 이하(적어도 1).
+    static bool Similar(string a, string b)
+    {
+        string x = Bare(a), y = Bare(b);
+        if (x.Length == 0 || y.Length == 0) return false;
+        int n = x.Length, m = y.Length;
+        if (Math.Abs(n - m) > Math.Max(n, m) / 4 + 1) return false;
+        int[] prev = new int[m + 1], cur = new int[m + 1];
+        for (int j = 0; j <= m; j++) prev[j] = j;
+        for (int i = 1; i <= n; i++)
+        {
+            cur[0] = i;
+            for (int j = 1; j <= m; j++)
+                cur[j] = Math.Min(Math.Min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + (x[i - 1] == y[j - 1] ? 0 : 1));
+            int[] t = prev; prev = cur; cur = t;
+        }
+        return prev[m] <= Math.Max(1, Math.Max(n, m) / 4);
+    }
+
+    static string Bare(string s)
+    {
+        StringBuilder b = new StringBuilder();
+        foreach (char ch in s ?? "") if (char.IsLetterOrDigit(ch)) b.Append(char.ToLowerInvariant(ch));
+        return b.ToString();
     }
 
     static int InkShare(TextChunk c, int[] px, int w, int h)
@@ -611,9 +695,21 @@ static class ScreenKorean
             if (string.IsNullOrEmpty(c.Ko)) continue;
             bool clash = false;
             foreach (TextChunk f in fresh) if (Overlap(c.Box, f.Box) > 0.3) { clash = true; break; }
-            if (!clash && KeepWhileBlank(c, px, w, h, now)) carry.Add(c);
+            if (clash) continue;
+            // 그림이 그대로인데 이번 OCR 이 그 줄을 놓쳤을 뿐이면 그대로 둔다(시간 제한 없이).
+            if (Unchanged(c, px, w, h)) { c.Changed = DateTime.MinValue; carry.Add(c); }
+            else if (KeepWhileBlank(c, px, w, h, now)) carry.Add(c);
         }
         return carry;
+    }
+
+    static bool Unchanged(TextChunk c, int[] px, int w, int h)
+    {
+        Rectangle box = Rectangle.Intersect(c.Box, new Rectangle(0, 0, w, h));
+        if (c.Ref == null || box.Width < 2 || box.Height < 2) return false;
+        int[] xs, ys;
+        Grid4(box, out xs, out ys);
+        return c.Ref.Length == xs.Length * ys.Length && Same(px, w, h, xs, ys, c.Ref, 0, c.Ref.Length * 6);
     }
 
     static void Grid4(Rectangle box, out int[] xs, out int[] ys)
@@ -1358,12 +1454,23 @@ static class ScreenKorean
         return all.Append(line).ToString();
     }
 
+    static string lastDrawn = ""; // 시험용: 보이는 한국어 줄이 바뀔 때만 적는다(깜박임 찾기)
+
     static void ShowOverlay(IntPtr win, Rectangle r, List<TextChunk> chunks, int g)
     {
         if (chunks == null) return;
         Bitmap bmp = Draw(r.Size, chunks);
         if (App.Debugging)
         {
+            List<string> ko = new List<string>();
+            foreach (TextChunk c in chunks) if (!string.IsNullOrEmpty(c.Ko)) ko.Add(c.Ko);
+            ko.Sort(StringComparer.Ordinal);
+            string now = string.Join(" | ", ko);
+            if (now != lastDrawn)
+            {
+                Log.Write("화면 번역: 보이는 한국어 " + ko.Count + "줄 — " + now);
+                lastDrawn = now;
+            }
             try
             {
                 bmp.Save(Path.Combine(dataDir, "screen-overlay.png"));

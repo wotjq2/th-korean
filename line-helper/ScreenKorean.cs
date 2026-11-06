@@ -34,6 +34,8 @@ class TextChunk
     public Color Bg, Fg;
     public string Ko;
     public bool Trusted;  // 그 언어의 윈도우 인식기가 또렷이 읽은 글 — 엔진이 다시 읽지 않는다(일본어·중국어 …)
+    public int[] Ref;     // 이 줄을 읽은 그림에서 뜬 표본 밝기(Track 이 찾는 기준) — 잠깐 지워졌다 다시 그려져도 찾게
+    public DateTime Lost = DateTime.MinValue; // 이 줄 자리가 비어 보이기 시작한 때(아직 한국어를 떼지 않았다)
 
     // 스크롤로 위아래로 옮겨 간 같은 글줄.
     public TextChunk Moved(int dy)
@@ -67,18 +69,26 @@ class ScreenOverlay : Form
         }
     }
 
-    public void Put(IntPtr win, Rectangle bounds, Bitmap bmp)
+    // owned = false: 펼친 메뉴 위에 — 메뉴는 닫히면 없어지니 딸리지 않고(딸린 창은 주인과 같이 없어진다), 늘 맨 위로.
+    public void Put(IntPtr win, Rectangle bounds, Bitmap bmp, bool owned = true)
     {
-        if (owner != win)
+        if (owned && owner != win)
         {
             owner = win;
             Native.SetWindowLongPtr(Handle, Native.GWLP_HWNDPARENT, win);
         }
         bool shown = !Visible;
         if (!Visible) Native.ShowWindow(Handle, Native.SW_SHOWNOACTIVATE);
+        if (!owned)
+        {
+            // 새로 펼친 메뉴도 '항상 위' 맨 위에 온다 — 그릴 때마다 그보다 위로.
+            topmost = true;
+            Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            shown = false;
+        }
         // 대상 창이 '항상 위' 면 이 창도 맨 위여야 밑에 깔리지 않는다.
-        bool top = (Native.GetWindowLongPtr(win, Native.GWL_EXSTYLE).ToInt64() & Native.WS_EX_TOPMOST) != 0;
-        if (top != topmost)
+        bool top = !owned || (Native.GetWindowLongPtr(win, Native.GWL_EXSTYLE).ToInt64() & Native.WS_EX_TOPMOST) != 0;
+        if (owned && top != topmost)
         {
             topmost = top;
             Native.SetWindowPos(Handle, top ? Native.HWND_TOPMOST : Native.HWND_NOTOPMOST, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
@@ -117,6 +127,7 @@ static class ScreenKorean
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     delegate bool EnumProc(IntPtr h, IntPtr l);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc fn, IntPtr l);
     const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_NOREPEAT = 0x4000;
@@ -246,9 +257,112 @@ static class ScreenKorean
         gen++;
         target = IntPtr.Zero;
         HideOverlay();
+        HideMenus();
         App.Show("화면 번역", why, false, 2500);
         App.RefreshTray();
         Log.Write("화면 번역 끔: " + why);
+    }
+
+    // ---- 펼친 메뉴(#32768) ----
+    // 윈도우 메뉴는 프로그램이 부르면 시스템이 그 프로그램 안에 따로 띄우는 '항상 위' 창이다. PrintWindow 로 깨끗이 찍힌다
+    // (시험 창으로 확인). 메뉴마다 겹침 창 하나(UI 스레드에서만 만든다), 그림이 바뀌면(마우스가 고른 줄) 다시 읽는다 —
+    // 번역은 줄마다 기억해 두어 두 번째부터는 바로.
+    class MenuState { public int[] Sig; public Rectangle Rect; public List<TextChunk> Chunks; }
+    static readonly Dictionary<IntPtr, MenuState> menus = new Dictionary<IntPtr, MenuState>();
+    static readonly List<ScreenOverlay> menuOverlays = new List<ScreenOverlay>();
+    static int menusGen = -1;
+
+    static string ClassOf(IntPtr h)
+    {
+        StringBuilder s = new StringBuilder(64);
+        GetClassName(h, s, s.Capacity);
+        return s.ToString();
+    }
+
+    static List<IntPtr> OpenMenus(uint pid)
+    {
+        List<IntPtr> list = new List<IntPtr>();
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (Native.IsWindowVisible(h) && Pid(h) == pid && ClassOf(h) == "#32768") list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        list.Reverse(); // 위 창부터 나온다 — 먼저 펼친 메뉴(아래)부터 겹침 창 차례를 맞춘다
+        return list;
+    }
+
+    static void Menus(List<IntPtr> open, int g)
+    {
+        foreach (IntPtr h in new List<IntPtr>(menus.Keys)) if (!open.Contains(h)) menus.Remove(h);
+        for (int k = 0; k < open.Count; k++)
+        {
+            IntPtr h = open[k];
+            Rectangle r = Native.WindowRect(h);
+            if (r.Width < 20 || r.Height < 10) continue;
+            using (Bitmap bmp = Capture(h, r))
+            {
+                int[] px = Pixels(bmp);
+                int[] sig = Signature(px, r.Width, r.Height);
+                MenuState st;
+                bool had = menus.TryGetValue(h, out st);
+                if (had && st.Rect == r && Changed(sig, st.Sig) == 0) continue;
+                Stopwatch sw = Stopwatch.StartNew();
+                List<TextChunk> chunks = Read(bmp, px);
+                int asked = Translate(chunks, px, r.Width, r.Height, null);
+                if (gen != g) return;
+                menus[h] = new MenuState { Sig = sig, Rect = r, Chunks = chunks };
+                ShowMenu(k, r, chunks, g);
+                if (!had || asked > 0)
+                {
+                    int covered = 0;
+                    foreach (TextChunk c in chunks) if (!string.IsNullOrEmpty(c.Ko)) covered++;
+                    Log.Write("화면 번역: 메뉴 글줄 " + chunks.Count + " · 덮음 " + covered + " · 새로 물음 " + asked + " · 전체 " + sw.ElapsedMilliseconds + "ms");
+                }
+            }
+        }
+        int used = open.Count;
+        ui.BeginInvoke((MethodInvoker)delegate
+        {
+            for (int i = used; i < menuOverlays.Count; i++)
+                if (!menuOverlays[i].IsDisposed && menuOverlays[i].Visible) menuOverlays[i].Hide();
+        });
+    }
+
+    static void ShowMenu(int k, Rectangle r, List<TextChunk> chunks, int g)
+    {
+        Bitmap bmp = Draw(r.Size, chunks);
+        if (App.Debugging)
+        {
+            try
+            {
+                bmp.Save(Path.Combine(dataDir, "menu-overlay.png"));
+                StringBuilder s = new StringBuilder(r + "\r\n");
+                foreach (TextChunk c in chunks) s.Append(c.Box).Append(" em").Append(c.Em.ToString("0.0")).Append(" bg").Append(c.Bg.ToArgb().ToString("X")).Append(" fg").Append(c.Fg.ToArgb().ToString("X")).Append(" [").Append(c.Text).Append("] → [").Append(c.Ko).Append("]\r\n");
+                File.WriteAllText(Path.Combine(dataDir, "menu.txt"), s.ToString(), Encoding.UTF8);
+            }
+            catch { }
+        }
+        ui.BeginInvoke((MethodInvoker)delegate
+        {
+            try
+            {
+                if (g != gen) return;
+                while (menuOverlays.Count <= k) menuOverlays.Add(new ScreenOverlay());
+                if (menuOverlays[k].IsDisposed) menuOverlays[k] = new ScreenOverlay();
+                menuOverlays[k].Put(IntPtr.Zero, r, bmp, false);
+            }
+            catch (Exception e) { Log.Write("화면 번역 메뉴 겹침 창 오류: " + e.Message); }
+            finally { bmp.Dispose(); }
+        });
+    }
+
+    // 겹침 창만 숨긴다(UI 스레드의 Off 에서도 부른다). 메뉴 기억(menus)은 화면 번역 스레드만 만진다.
+    static void HideMenus()
+    {
+        ui.BeginInvoke((MethodInvoker)delegate
+        {
+            foreach (ScreenOverlay o in menuOverlays) if (!o.IsDisposed && o.Visible) o.Hide();
+        });
     }
 
     static string Title(IntPtr win)
@@ -282,6 +396,12 @@ static class ScreenKorean
             {
                 IntPtr win = Follow(target);
                 if (win == IntPtr.Zero) continue;
+                // 펼친 메뉴는 프로그램 창 밖의 따로 된 창이라 예전에는 영어 그대로였다(SoftEther VPN, 2026-11-06). 메뉴가
+                // 열려 있는 동안은 메뉴만 읽고(주 창은 그대로 둔다), 닫히면 메뉴 위 한국어를 걷는다.
+                if (g != menusGen) { menus.Clear(); menusGen = g; }
+                List<IntPtr> open = OpenMenus(targetPid);
+                if (open.Count > 0) { Menus(open, g); continue; }
+                if (menus.Count > 0) { menus.Clear(); HideMenus(); }
                 if (g != myGen || win != myWin)
                 {
                     if (g != myGen) told = false;
@@ -305,6 +425,7 @@ static class ScreenKorean
                         {
                             // 창 크기가 바뀌면 글줄이 다시 배치된다 — 따라갈 수 없으니 걷고 새로 읽는다.
                             HideOverlay();
+                            shown = null;
                             stale = true;
                         }
                         else if (Changed(sig, baseSig) > 3) // 깜빡이는 커서처럼 몇 칸만 바뀐 것은 그대로 둔다
@@ -330,11 +451,18 @@ static class ScreenKorean
                     Stopwatch sw = Stopwatch.StartNew();
                     List<TextChunk> chunks = Read(bmp, px);
                     long ocrMs = sw.ElapsedMilliseconds;
+                    List<TextChunk> carried = Carry(shown, chunks, px, r.Width, r.Height);
                     int asked = Translate(chunks, px, r.Width, r.Height, delegate
                     {
-                        if (gen == g && target == win) ShowOverlay(win, r, chunks, g);
+                        if (gen == g && target == win)
+                        {
+                            List<TextChunk> all = new List<TextChunk>(chunks);
+                            all.AddRange(carried);
+                            ShowOverlay(win, r, all, g);
+                        }
                     });
                     if (gen != g || target != win) continue;
+                    chunks.AddRange(carried);
                     readAt = DateTime.Now;
                     stale = false;
                     baseSig = sig;
@@ -415,29 +543,109 @@ static class ScreenKorean
 
     // 스크롤 따라가기: 지난 그림에서 글줄 자리의 점들을 새 그림에서 위아래로 밀어 가며 찾아, 가장 가까운 같은 자리로
     // 옮긴다. 못 찾은 줄(화면 밖으로 나갔거나 글자가 바뀐 줄)은 빼서 새로 읽을 때까지 원문이 보이게 둔다.
+    // 비어 보이는 줄: 그 자리에 바탕과 다른 점(글자)이 거의 없다. 상태 표시줄처럼 프로그램이 자주 다시 그리는 칸은
+    // PrintWindow 가 지운 순간을 찍기도 한다(SoftEther VPN: 0.15초마다 — 20줄 ↔ 17줄을 오가며 한국어가 깜박였다,
+    // 2026-11-06). 그런 줄은 KeepBlank 동안 한국어를 그대로 두고, 다시 그려지면 처음 읽은 표본(Ref)으로 되찾는다.
+    // 다른 글자로 바뀐 줄은 예전처럼 바로 뗀다.
+    static readonly TimeSpan KeepBlank = TimeSpan.FromMilliseconds(1500);
+
+    static bool Blank(TextChunk c, int[] px, int w, int h)
+    {
+        Rectangle b = Rectangle.Intersect(c.Box, new Rectangle(0, 0, w, h));
+        if (b.Width < 2 || b.Height < 2) return false;
+        int bg = c.Bg.ToArgb(), ink = 0;
+        for (int y = b.Top; y < b.Bottom; y++)
+            for (int x = b.Left; x < b.Right; x++)
+                if (Chat.Dist(px[y * w + x], bg) > 60) ink++;
+        return ink * 100 < b.Width * b.Height;
+    }
+
+    // 한국어를 떼지 않고 둘 줄인가(비었고, 비어 보인 지 KeepBlank 안). 처음 비어 보인 때를 적는다.
+    static bool KeepWhileBlank(TextChunk c, int[] px, int w, int h, DateTime now)
+    {
+        if (!Blank(c, px, w, h)) return false;
+        if (c.Lost == DateTime.MinValue) c.Lost = now;
+        return now - c.Lost < KeepBlank;
+    }
+
     static List<TextChunk> Track(List<TextChunk> chunks, int[] oldPx, int[] px, int w, int h)
     {
         List<TextChunk> kept = new List<TextChunk>();
         if (chunks == null || oldPx == null) return kept;
+        DateTime now = DateTime.Now;
         foreach (TextChunk c in chunks)
         {
-            int dy = Shift(c.Box, oldPx, px, w, h);
-            if (dy != int.MinValue) kept.Add(dy == 0 ? c : c.Moved(dy));
+            if (c.Ref == null) c.Ref = Sample(c.Box, oldPx, w, h);
+            int dy = c.Ref == null ? int.MinValue : Shift(c.Box, c.Ref, px, w, h);
+            if (dy != int.MinValue)
+            {
+                TextChunk m = dy == 0 ? c : c.Moved(dy);
+                m.Lost = DateTime.MinValue;
+                kept.Add(m);
+            }
+            else if (KeepWhileBlank(c, px, w, h, now)) kept.Add(c);
+            else if (App.Debugging) Log.Write("화면 번역: 뗌 [" + c.Text + "] 잉크 " + InkShare(c, px, w, h) + "% 빈 지 " + (c.Lost == DateTime.MinValue ? "-" : ((int)(now - c.Lost).TotalMilliseconds).ToString()) + "ms");
         }
         return kept;
     }
 
-    static int Shift(Rectangle box, int[] oldPx, int[] px, int w, int h)
+    static int InkShare(TextChunk c, int[] px, int w, int h)
+    {
+        Rectangle b = Rectangle.Intersect(c.Box, new Rectangle(0, 0, w, h));
+        if (b.Width < 1 || b.Height < 1) return 0;
+        int bg = c.Bg.ToArgb(), ink = 0;
+        for (int y = b.Top; y < b.Bottom; y++)
+            for (int x = b.Left; x < b.Right; x++)
+                if (Chat.Dist(px[y * w + x], bg) > 60) ink++;
+        return ink * 100 / (b.Width * b.Height);
+    }
+
+    // 새로 읽은 그림에 없는 지난 줄 가운데 자리가 잠깐 비었을 뿐인 줄(새 줄과 겹치지 않는)은 이어서 둔다.
+    static List<TextChunk> Carry(List<TextChunk> old, List<TextChunk> fresh, int[] px, int w, int h)
+    {
+        List<TextChunk> carry = new List<TextChunk>();
+        if (old == null) return carry;
+        DateTime now = DateTime.Now;
+        foreach (TextChunk c in old)
+        {
+            if (string.IsNullOrEmpty(c.Ko)) continue;
+            bool clash = false;
+            foreach (TextChunk f in fresh) if (Overlap(c.Box, f.Box) > 0.3) { clash = true; break; }
+            if (!clash && KeepWhileBlank(c, px, w, h, now)) carry.Add(c);
+        }
+        return carry;
+    }
+
+    static void Grid4(Rectangle box, out int[] xs, out int[] ys)
+    {
+        int cols = Math.Max(4, Math.Min(32, box.Width / 3)), rows = Math.Max(2, Math.Min(6, box.Height / 3));
+        xs = new int[cols];
+        ys = new int[rows];
+        for (int i = 0; i < cols; i++) xs[i] = box.Left + (2 * i + 1) * box.Width / (2 * cols);
+        for (int j = 0; j < rows; j++) ys[j] = box.Top + (2 * j + 1) * box.Height / (2 * rows);
+    }
+
+    // 줄 자리의 표본 밝기(줄 안의 같은 상대 자리 — 위아래로 옮겨 가도 같은 표본).
+    static int[] Sample(Rectangle box, int[] px, int w, int h)
+    {
+        box.Intersect(new Rectangle(0, 0, w, h));
+        if (box.Width < 2 || box.Height < 2) return null;
+        int[] xs, ys;
+        Grid4(box, out xs, out ys);
+        int[] want = new int[xs.Length * ys.Length];
+        for (int j = 0; j < ys.Length; j++)
+            for (int i = 0; i < xs.Length; i++) want[j * xs.Length + i] = Luma(px[ys[j] * w + xs[i]]);
+        return want;
+    }
+
+    static int Shift(Rectangle box, int[] want, int[] px, int w, int h)
     {
         box.Intersect(new Rectangle(0, 0, w, h));
         if (box.Width < 2 || box.Height < 2) return int.MinValue;
-        int cols = Math.Max(4, Math.Min(32, box.Width / 3)), rows = Math.Max(2, Math.Min(6, box.Height / 3));
-        int[] xs = new int[cols], ys = new int[rows], want = new int[cols * rows];
-        for (int i = 0; i < cols; i++) xs[i] = box.Left + (2 * i + 1) * box.Width / (2 * cols);
-        for (int j = 0; j < rows; j++) ys[j] = box.Top + (2 * j + 1) * box.Height / (2 * rows);
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < cols; i++) want[j * cols + i] = Luma(oldPx[ys[j] * w + xs[i]]);
-        int limit = cols * rows * 6; // 점마다 밝기 차이가 평균 6 이하면 같은 글줄
+        int[] xs, ys;
+        Grid4(box, out xs, out ys);
+        if (want.Length != xs.Length * ys.Length) return int.MinValue; // 창 가장자리에서 잘린 줄
+        int limit = want.Length * 6; // 점마다 밝기 차이가 평균 6 이하면 같은 글줄
         for (int k = 0; k < h; k++)
         {
             if (Same(px, w, h, xs, ys, want, k, limit)) return k;
@@ -645,6 +853,7 @@ static class ScreenKorean
         {
             Colors(px, w, h, c);
             c.Right = RoomRight(px, w, h, c);
+            c.Ref = Sample(c.Box, px, w, h);
         }
         return chunks;
     }

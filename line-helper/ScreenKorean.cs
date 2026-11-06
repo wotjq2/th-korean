@@ -598,8 +598,10 @@ static class ScreenKorean
     {
         if (ocr == null) ocr = MakeOcr();
         int w = bmp.Width, h = bmp.Height;
-        // 작은 글씨를 잘 읽게 두 배로 키워 읽는다(큰 창은 그대로).
-        int scale = Math.Max(w, h) <= 1600 && Math.Max(w, h) * 2 <= OcrEngine.MaxImageDimension ? 2 : 1;
+        // 작은 글씨를 잘 읽게 두 배로 키워 읽는다(아주 큰 창은 그대로). 예전에는 폭 1600 까지만 키워서, 화면을 꽉 채운
+        // 1936×1048 바이두 넷디스크의 12px 중국어 메뉴(全部·最近·传输·团队空间 …)를 글줄로 찾지도 못했다 — 두 배로 읽어도
+        // 0.37초로 같고 찾는 줄은 51 → 60(2026-11-06). 2560×1600 넘는 창(4K 꽉 채운 창)만 그대로.
+        int scale = (long)w * h <= 2560L * 1600 && Math.Max(w, h) * 2 <= OcrEngine.MaxImageDimension ? 2 : 1;
         if (Math.Max(w, h) > OcrEngine.MaxImageDimension) throw new Exception("창이 너무 큽니다");
         int sw = w * scale, sh = h * scale;
         byte[] buf;

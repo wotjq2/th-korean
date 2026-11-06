@@ -97,7 +97,7 @@ const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
   'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang', 'rcRefresh',
-  'MY', 'freeTranslateMany', 'SCRIPT_OF',
+  'MY', 'freeTranslateMany', 'SCRIPT_OF', 'langGlossaryMap', 'parseGlossary',
 ];
 // 스크립트가 내 언어를 알면(1.29.0~) 그 값, 아니면 한국어.
 const myLang = () => (T && T.MY) || 'ko';
@@ -301,6 +301,9 @@ function myScriptCount(s) {
 }
 function uiSkip(s) {
   if (/https?:\/\/|www\.|^[A-Za-z]:\\|\S@\S+\.\S/.test(s)) return true;
+  // 상표·모델 번호(Apeos C3071…, zip24#, Windows 11): 로마자 낱말 둘 아래에 숫자 낱말 — 구글이 Apeos 를 '소품' 으로 옮겼다.
+  const toks = s.split(/[\s,]+/).filter(Boolean);
+  if (/^[\x20-\x7E]+$/.test(s) && toks.length <= 3 && toks.some((t) => /\d/.test(t)) && toks.filter((t) => /[A-Za-z]{2}/.test(t) && !/\d/.test(t)).length <= 1) return true;
   const letters = (s.match(/\p{L}/gu) || []).length;
   const mine = myScriptCount(s);
   // 한자·가나는 한 글자도 낱말이다('開'·'閉').
@@ -331,17 +334,22 @@ const cjkCount = (s) => (s.match(new RegExp(`[${CJK_CH}]`, 'g')) || []).length;
 const letterCount = (s) => (s.match(/\p{L}/gu) || []).length;
 const CJK_LANGS = ['chi_sim', 'chi_tra', 'jpn'];
 
+// 작은 글씨에서 Tesseract 중국어가 늘 틀리는 글자(文件夹 → 文件来·文件夫 — 바이두 넷디스크에서 세 번).
+const CJK_FIX = [[/文件[来夫]/g, '文件夹']];
+
 function cjkClean(text) {
-  const t = text
-    .replace(/\s*\n\s*/g, ' ')
-    .replace(new RegExp(`(?<=[${CJK_CH}]) (?=[${CJK_CH}])`, 'g'), '')
-    .trim();
-  // 양 끝의 아이콘 조각: 글자 없는 토막(《 * <), 앞에 떨어진 한 글자(아이콘을 '包'·'心' 으로 읽은 것).
-  const toks = t.split(' ').filter(Boolean);
+  // 양 끝의 아이콘 조각: 글자 없는 토막(《 * <), 앞에 떨어진 한 글자(아이콘을 '包'·'心'·'由' 로 읽은 것) — 띄어쓰기를
+  // 지우기 전에 뗀다(지운 뒤에는 '由新建文件来' 처럼 붙어 버렸다).
+  const toks = text.replace(/\s*\n\s*/g, ' ').trim().split(' ').filter(Boolean);
   const junk = (w) => !/[\p{L}\p{N}]/u.test(w);
   while (toks.length > 1 && (junk(toks[0]) || (toks[0].length === 1 && cjkCount(toks.slice(1).join('')) >= 2))) toks.shift();
   while (toks.length > 1 && junk(toks[toks.length - 1])) toks.pop();
-  return toks.join(' ').replace(/[\s《〈<>〉》*•·]+$/u, '');
+  let t = toks
+    .join(' ')
+    .replace(new RegExp(`(?<=[${CJK_CH}]) (?=[${CJK_CH}])`, 'g'), '')
+    .replace(/[\s《〈<>〉》*•·]+$/u, '');
+  for (const [re, to] of CJK_FIX) t = t.replace(re, to);
+  return t;
 }
 
 // 한자·가나가 둘 넘고 글자의 절반 넘게(영어가 섞인 'Apeos …维修手册.zip' 은 아주 확신할 때), 한 글자 줄('开')은 아주 확신할 때만.
@@ -353,13 +361,29 @@ function cjkOk(r) {
   return letters === 1 && r.conf >= 85;
 }
 
+// 용어집(거꾸로)에 있는 낱말로 읽혔으면 그 읽기를 믿는다 — 작은 글씨에서 인식기마다 한두 글자씩 틀렸다(最近文件 → 最近交件,
+// 传输 → 傳給). 윈도우 한국어 인식기가 한자로 그대로 읽은 줄(最近·同步·回收站)도 먼저 본다. 짧은 줄(한자 6자 이하)은
+// 용어집에 없으면 세 인식기를 다 돌려 가장 확신하는 쪽, 긴 줄은 또렷하면(88) 거기서 그만.
+const inGlossary = async (t) => !!(await reverseGlossary(t).catch(() => ''));
 async function readCjk(it) {
+  const own = cjkClean(String(it.t || ''));
+  if (cjkCount(own) >= 2 && cjkCount(own) === letterCount(own) && (await inGlossary(own))) return { t: own, conf: 99 };
   let best = null;
+  const reads = [];
   for (const lang of CJK_LANGS) {
     const r = await ocr(it.f, { langs: [lang], psm: it.n > 1 ? '6' : '7' });
     const got = { t: cjkClean(r.text), conf: r.conf };
-    if (cjkOk(got) && (!best || got.conf > best.conf)) best = got;
-    if (best && best.conf >= 88) break; // 또렷하면 다른 글자로 읽어 보지 않는다
+    if (!cjkOk(got)) continue;
+    if (await inGlossary(got.t)) return { t: got.t, conf: Math.max(got.conf, 90) };
+    reads.push(got);
+    if (!best || got.conf > best.conf) best = got;
+    if (best.conf >= 88 && cjkCount(best.t) > 6) break;
+  }
+  // 증거: 윈도우 인식기의 글과 다른 인식기들이 읽은 글.
+  for (const g of reads.sort((a, b) => b.conf - a.conf)) {
+    const others = reads.filter((x) => x !== g).map((x) => x.t).join('');
+    const near = await nearGlossary(g.t, String(it.t || '') + others).catch(() => '');
+    if (near) return { t: near, conf: Math.max(g.conf, 90) };
   }
   return best;
 }
@@ -381,6 +405,9 @@ async function uiLine(it, mode = 'auto') {
   const lat = latinCount(it.t);
   const cjk = cjkCount(it.t);
   const letters = letterCount(it.t);
+  // 아이콘 줄: 한 글자씩 떨어진 토막뿐('覓• 哿' — 게임·달력·선물 아이콘을 한자로 읽었고 중국어 OCR 은 '时过' → '시간이 지났다').
+  const toks = String(it.t).split(/\s+/).filter(Boolean);
+  if (toks.length >= 2 && toks.every((w) => letterCount(w) <= 1)) return '';
   const cands = [];
   try {
     // 로마자가 하나도 없는 줄은 영어로 다시 읽지 않는다(한자 줄을 영어 OCR 로 읽으면 'BHATIA' 같은 부스러기).
@@ -400,7 +427,10 @@ async function uiLine(it, mode = 'auto') {
     const thai = async () => {
       const th = await readThai(it);
       // 태국 숫자(๐-๙)는 세지 않는다 — 'ApeosC2450S.' 를 '2๒๑0๐ร624505.' 로 읽고 태국어 줄로 받아들였다.
-      const ok = thaiCount(th.t.replace(/[๐-๙]/g, '')) >= 3 && th.conf >= (mode === 'th' ? 45 : 60);
+      // 윈도우 OCR 이 깨끗한 로마자로 읽은 줄('EEAI' = 库库AI)은 태국어로 아주 또렷할 때만 — 'ธรม' 으로 읽고 '공정한' 이 덮였다.
+      const n = thaiCount(th.t.replace(/[๐-๙]/g, ''));
+      const ascii = /^[\x20-\x7E]+$/.test(it.t) && mode !== 'th';
+      const ok = ascii ? n >= 5 && th.conf >= 80 : n >= 3 && th.conf >= (mode === 'th' ? 45 : 60);
       if (ok) cands.push(th);
       return ok ? th.conf : 0;
     };
@@ -423,6 +453,70 @@ async function uiLine(it, mode = 'auto') {
   return '';
 }
 
+// 그 언어 용어집(th-korean-glossary 의 glossary-zh.txt·glossary-ja.txt, '한국어=그 언어')을 거꾸로: 화면의 중국어·일본어 줄
+// 전체가 어떤 줄의 값과 같으면 그 한국어. 가나가 있으면 일본어, 아니면 중국어 파일. 같은 값이 여러 줄이면 아래 줄.
+const revMaps = new Map(); // 파일 → { text, map: Map(값 → 한국어) }
+// 번체로 읽힌 메뉴 글자도 간체 값과 맞게(번체 인식기가 首页 를 首頁 로 읽었다). 열쇠만 바꾼다 — 화면 글은 그대로.
+const T2S_MAP = new Map(
+  ('頁页 檔档 傳传 輸输 開开 關关 設设 進进 圖图 視视 頻频 訊讯 錄录 紀纪 載载 個个 時时 間间 類类 夾夹 總总 動动 備备 ' +
+    '雲云 網网 盤盘 員员 會会 書书 庫库 識识 問问 轉转 換换 單单 學学 習习 線线 隱隐 訪访 創创 業业 刪删 復复 貼贴 幫帮 ' +
+    '閉闭 儲储 鍵键 級级 與与 為为 這这 說说 點点 擊击 發发 讀读 寫写 錯错 誤误 標标 題题 頭头 條条 號号 碼码 帳账 戶户 務务')
+    .split(' ')
+    .map((p) => [p[0], p[1]])
+);
+const revKey = (s) =>
+  String(s)
+    .replace(/[\s。．.!！?？:：,，、·•]+/g, '')
+    .replace(/./gu, (c) => T2S_MAP.get(c) || c);
+async function reverseGlossary(line) {
+  const m = await revMap(line);
+  return (m && m.get(revKey(line))) || '';
+}
+
+// 한 글자만 틀리게 읽은 메뉴 낱말: 용어집 값과 길이가 같고(네 자 넘게) 한 글자만 다른 값이 하나뿐이며, 네 자 낱말은 그 글자를
+// 윈도우 인식기나 다른 인식기도 이 줄에서 읽었으면 그 값(最近交件 → 最近文件: 윈도우가 '믒近文件' 으로 文 을 읽었다).
+// 고친 중국어를 돌려준다.
+async function nearGlossary(line, win) {
+  const m = await revMap(line);
+  const key = [...revKey(line)];
+  if (!m || key.length < 4) return '';
+  const seen = new Set(revKey(win));
+  let found = '';
+  for (const v of m.keys()) {
+    const cand = [...v];
+    if (cand.length !== key.length) continue;
+    const diff = cand.map((c, i) => (c === key[i] ? -1 : i)).filter((i) => i >= 0);
+    // 다섯 자 넘는 낱말은 한 글자 차이면 그대로 믿는다(文件来备份 → 文件夹备份), 네 자는 증거가 있어야.
+    if (diff.length !== 1 || (key.length < 5 && !seen.has(cand[diff[0]]))) continue;
+    if (found) return ''; // 둘 넘게 맞으면 모른다
+    found = v;
+  }
+  return found;
+}
+
+async function revMap(line) {
+  if (!T.langGlossaryMap || !T.parseGlossary) return null;
+  const id = /[぀-ヿ]/.test(line) ? 'ja' : 'zh';
+  let file = `glossary-${id}.txt`;
+  try {
+    const l = (JSON.parse(configText()).languages || []).find((x) => x.id === id);
+    if (l && l.glossary) file = l.glossary;
+  } catch {
+    /* 설정 사본이 없으면 기본 이름 */
+  }
+  await T.langGlossaryMap(file); // 사본이 없거나 1시간 지났으면 새로 받는다
+  const st = store[`langGlossary:${file}`];
+  if (!st || !st.text) return null;
+  let r = revMaps.get(file);
+  if (!r || r.text !== st.text) {
+    const map = new Map();
+    for (const [ko, v] of Object.entries(T.parseGlossary(st.text).map)) map.set(revKey(v), ko);
+    r = { text: st.text, map };
+    revMaps.set(file, r);
+  }
+  return r.map;
+}
+
 // 줄 묶음 번역. 구글은 한 묶음의 말을 한 언어로 보고 옮겨서, 영어 줄과 섞인 필리핀어 줄은 그대로 돌아왔다
 // (2026-11-01). 태국어 줄은 따로 묶고(메신저 받는 쪽과 같은 손질), 그래도 그대로 돌아온 로마자 줄은 한 줄씩 다시 묻는다.
 async function uiTranslate(lines) {
@@ -430,7 +524,14 @@ async function uiTranslate(lines) {
   const thai = [];
   const latin = [];
   const cjk = []; // 한자·가나 줄은 따로 묶는다 — 한글 부스러기가 섞인 묶음은 구글이 한국어로 보고 한자를 한글 음으로만 바꿨다
-  lines.forEach((s, i) => (thaiCount(s) >= 2 ? thai : cjkCount(s) && cjkCount(s) >= latinCount(s) ? cjk : latin).push(i));
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i];
+    // 메뉴 낱말은 그 언어 용어집에서 먼저(구글: 首页 → 첫 페이지, 同步 → 동기식, 我的分享 → 내 몫). 图片转Excel 처럼
+    // 로마자가 섞인 낱말도.
+    const hit = myKo() && cjkCount(s) ? await reverseGlossary(s).catch(() => '') : '';
+    if (hit) out[i] = hit;
+    else (thaiCount(s) >= 2 ? thai : cjkCount(s) && cjkCount(s) >= latinCount(s) ? cjk : latin).push(i);
+  }
   if (cjk.length) {
     const got = await T.translateToKorean(cjk.map((i) => lines[i]));
     cjk.forEach((i, k) => (out[i] = String(got[k] || '')));

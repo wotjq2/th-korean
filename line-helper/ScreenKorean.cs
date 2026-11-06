@@ -155,6 +155,7 @@ static class ScreenKorean
     public static string Lang = "auto";
     static readonly Regex CleanKorean = new Regex("^[가-힣ㄱ-ㆎ0-9\\s.,!?~·:;()\\[\\]<>\\-'\"/%+&@#*=…]+$");
     static readonly Regex HasHangul = new Regex("[가-힣]");
+    static readonly Regex HasHan = new Regex("[぀-ヿ㐀-鿿豈-﫿]");
     static readonly Regex AsciiOnly = new Regex("^[\\x20-\\x7E]+$");
 
     public static void SetLang(string lang)
@@ -180,7 +181,8 @@ static class ScreenKorean
         if (Lang == "latin") return false;
         string s = t.Trim();
         // 이미 한국어인 줄은 묻지 않는다 — 내 언어가 한국어일 때만(다른 언어면 한국어 줄도 옮긴다).
-        return s.Length >= 3 && !(MyLang.Ko && HasHangul.IsMatch(s) && CleanKorean.IsMatch(s));
+        // 한자가 보이면 두 글자도 낱말이다(上传·视频·首页 — 중국 프로그램의 단추·메뉴는 거의 두 글자, 2026-11-06).
+        return (s.Length >= 3 || s.Length == 2 && HasHan.IsMatch(s)) && !(MyLang.Ko && HasHangul.IsMatch(s) && CleanKorean.IsMatch(s));
     }
     static int cropNo;
 
@@ -199,8 +201,13 @@ static class ScreenKorean
             Log.Write("화면 번역: " + HotkeyName + " 를 다른 프로그램이 이미 쓰고 있습니다");
         new Thread(Loop) { IsBackground = true }.Start();
         if (testProcess == null) return;
+        // 주 창이 작은 곁 창일 수 있다(바이두 넷디스크의 '끌어다 올리기' 창) — 그 프로그램의 가장 큰 창으로.
         foreach (Process p in Process.GetProcessesByName(testProcess))
-            if (p.MainWindowHandle != IntPtr.Zero && Native.IsWindowVisible(p.MainWindowHandle)) { TurnOn(p.MainWindowHandle); break; }
+        {
+            IntPtr big = LargestWindow((uint)p.Id);
+            if (big == IntPtr.Zero && p.MainWindowHandle != IntPtr.Zero && Native.IsWindowVisible(p.MainWindowHandle)) big = p.MainWindowHandle;
+            if (big != IntPtr.Zero) { TurnOn(big); break; }
+        }
     }
 
     public static void Toggle()
@@ -854,6 +861,9 @@ static class ScreenKorean
     // 있느냐에 따라 다르다. 그대로 쓰면 같은 메뉴 줄에서도 'Help' 는 크게, 'File' 은 작게 옮겨진다.
     static float InkShare(string w)
     {
+        // 한자·한글·가나는 글자 칸을 거의 채운다 — 한국어 인식기가 중국어를 '수藏空r司' 처럼 읽으면 r 하나 때문에 소문자 줄(0.62)로
+        // 셈해 글씨가 1.5배로 커졌다(2026-11-06).
+        if (Regex.IsMatch(w, "[가-힣぀-ヿ㐀-鿿]")) return 0.9f;
         bool up = Regex.IsMatch(w, "[A-Zbdfhiklt0-9]"), down = Regex.IsMatch(w, "[gjpqy]");
         return up ? (down ? 1.12f : 0.86f) : (down ? 0.78f : 0.62f);
     }

@@ -322,34 +322,105 @@ async function readThai(it) {
   return { t, conf: r.conf };
 }
 
+// 한자·가나. 한국어 윈도우 OCR 은 중국어를 한자·한글·로마자 뒤범벅으로 읽는다(我的收藏 → 후흘存和iT月, 最近文件 →
+// 뮶近文件, 2026-11-06 바이두 넷디스크). 그 뒤범벅을 구글이 한국어로 보고 한자만 한글 음으로 바꿔 '후유존화 iT월' 같은
+// 엉뚱한 글이 덮였다. 그래서 그런 줄은 Tesseract 중국어(간체 → 번체 → 일본어)로 다시 읽어 가장 확신하는 쪽을 쓴다.
+// 시험(그린 글줄): 간체 줄은 간체 인식기 74~96, 번체 줄은 번체 91~94, 일본어 줄은 일본어 95~96, 태국어 줄은 셋 모두 31 아래.
+const CJK_CH = '぀-ヿ㐀-鿿豈-﫿';
+const cjkCount = (s) => (s.match(new RegExp(`[${CJK_CH}]`, 'g')) || []).length;
+const letterCount = (s) => (s.match(/\p{L}/gu) || []).length;
+const CJK_LANGS = ['chi_sim', 'chi_tra', 'jpn'];
+
+function cjkClean(text) {
+  const t = text
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(new RegExp(`(?<=[${CJK_CH}]) (?=[${CJK_CH}])`, 'g'), '')
+    .trim();
+  // 양 끝의 아이콘 조각: 글자 없는 토막(《 * <), 앞에 떨어진 한 글자(아이콘을 '包'·'心' 으로 읽은 것).
+  const toks = t.split(' ').filter(Boolean);
+  const junk = (w) => !/[\p{L}\p{N}]/u.test(w);
+  while (toks.length > 1 && (junk(toks[0]) || (toks[0].length === 1 && cjkCount(toks.slice(1).join('')) >= 2))) toks.shift();
+  while (toks.length > 1 && junk(toks[toks.length - 1])) toks.pop();
+  return toks.join(' ').replace(/[\s《〈<>〉》*•·]+$/u, '');
+}
+
+// 한자·가나가 둘 넘고 글자의 절반 넘게(영어가 섞인 'Apeos …维修手册.zip' 은 아주 확신할 때), 한 글자 줄('开')은 아주 확신할 때만.
+function cjkOk(r) {
+  const n = cjkCount(r.t);
+  const letters = letterCount(r.t);
+  if (!n || r.conf < 55) return false;
+  if (n >= 2) return n * 2 >= letters || r.conf >= 75;
+  return letters === 1 && r.conf >= 85;
+}
+
+async function readCjk(it) {
+  let best = null;
+  for (const lang of CJK_LANGS) {
+    const r = await ocr(it.f, { langs: [lang], psm: it.n > 1 ? '6' : '7' });
+    const got = { t: cjkClean(r.text), conf: r.conf };
+    if (cjkOk(got) && (!best || got.conf > best.conf)) best = got;
+    if (best && best.conf >= 88) break; // 또렷하면 다른 글자로 읽어 보지 않는다
+  }
+  return best;
+}
+
 // 모든 줄을 영어 OCR 로 한 번 더 읽는다. 헷갈린 표시가 없어도 윈도우 OCR 은 글자를 빠뜨리거나 바꾼다
 // (typing → vping, Spell → SpeII, Use → lJse — 표시만 보고 다시 읽던 때 그대로 번역됐다, 2026-10-24).
 // 글자만 같고 띄어쓰기만 다르면 윈도우 쪽을 쓴다(Setup later ↔ Set up later). 다르면 영어 OCR 이 충분히
 // 확신할 때만 — 윈도우 쪽이 수상하면 덜 확신해도 영어 OCR 을 믿는다.
 // mode(트레이 '화면 번역 글자'): auto = 영어로 안 읽히고 한국어도 아니면 태국어로 읽어 본다, th = 한국어가
 // 아니면 태국어로 먼저, latin = 영어·로마자만(예전처럼).
+// 영어로 안 읽히는 줄(2026-11-06): 태국어·한자·가나 인식기로 읽어 받아들일 만한 것 중 가장 확신하는 쪽. 윈도우 OCR 이 한자를
+// 보았으면 한자 쪽부터, 아니면 태국어부터 — 아주 또렷하면(태국어 85, 한자 88) 다른 쪽은 건너뛴다. 아무것도 못 읽은 뒤범벅 줄은
+// 덮지 않는다('' — 원문이 보이게). 엉뚱한 한국어로 덮는 것보다 낫다.
 async function uiLine(it, mode = 'auto') {
   // 그 언어의 윈도우 인식기가 읽은 줄(w) — 영어 손질(uiFix 는 영어 줄의 한자를 지운다)·다시 읽기 없이 그대로.
   if (it.w) return String(it.t || '').replace(/\s+/g, ' ').trim();
   const win = uiFix(it.t);
   if (!it.f) return win;
+  const lat = latinCount(it.t);
+  const cjk = cjkCount(it.t);
+  const letters = letterCount(it.t);
+  const cands = [];
   try {
-    if (mode !== 'th') {
+    // 로마자가 하나도 없는 줄은 영어로 다시 읽지 않는다(한자 줄을 영어 OCR 로 읽으면 'BHATIA' 같은 부스러기).
+    if (mode !== 'th' && (lat > 0 || mode === 'latin')) {
       const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
       const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
       const bare = (s) => s.toLowerCase().replace(/[^a-z]/g, '');
       const ascii = /^[\x20-\x7E]+$/.test(it.t);
       if (bare(tess) === bare(win) && (ascii || mode === 'latin')) return win;
-      if (r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7) return tess;
-      if (mode === 'latin') return win;
+      const engOk = r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7;
+      if (mode === 'latin') return engOk ? tess : win;
+      if (engOk && !cjk) return tess;
+      if (engOk) cands.push({ t: tess, conf: r.conf }); // 한자가 섞였다 — 한자 인식기와 겨룬다
     }
+    if (mode === 'latin') return win;
     if (cleanKorean(it.t)) return win;
-    const th = await readThai(it);
-    if (thaiCount(th.t) >= 3 && th.conf >= (mode === 'th' ? 45 : 60)) return th.t;
+    const thai = async () => {
+      const th = await readThai(it);
+      // 태국 숫자(๐-๙)는 세지 않는다 — 'ApeosC2450S.' 를 '2๒๑0๐ร624505.' 로 읽고 태국어 줄로 받아들였다.
+      const ok = thaiCount(th.t.replace(/[๐-๙]/g, '')) >= 3 && th.conf >= (mode === 'th' ? 45 : 60);
+      if (ok) cands.push(th);
+      return ok ? th.conf : 0;
+    };
+    const han = async () => {
+      const c = await readCjk(it);
+      if (c) cands.push(c);
+      return c ? c.conf : 0;
+    };
+    if (mode === 'th') await thai();
+    else if (cjk) {
+      if ((await han()) < 88) await thai();
+    } else if ((await thai()) < 85 && lat * 2 < letters) await han(); // 로마자 줄은 영어 아니면 태국어 뒤범벅
   } catch (e) {
     console.error('화면 글줄 다시 읽기 실패:', e.message);
   }
-  return win;
+  if (cands.length) return cands.sort((a, b) => b.conf - a.conf)[0].t;
+  if (lat >= 2 && lat * 2 >= letters) return win; // 로마자 줄 — 예전처럼 윈도우 글로
+  if (cjk && cjk === letters) return win; // 한자만 — 한국어 인식기가 한자로 읽은 그대로
+  if (!cjk && hangulCount(it.t) * 10 >= letters * 7) return win; // 한국어 줄(부스러기 섞임)
+  return '';
 }
 
 // 줄 묶음 번역. 구글은 한 묶음의 말을 한 언어로 보고 옮겨서, 영어 줄과 섞인 필리핀어 줄은 그대로 돌아왔다
@@ -358,7 +429,17 @@ async function uiTranslate(lines) {
   const out = new Array(lines.length).fill('');
   const thai = [];
   const latin = [];
-  lines.forEach((s, i) => (thaiCount(s) >= 2 ? thai : latin).push(i));
+  const cjk = []; // 한자·가나 줄은 따로 묶는다 — 한글 부스러기가 섞인 묶음은 구글이 한국어로 보고 한자를 한글 음으로만 바꿨다
+  lines.forEach((s, i) => (thaiCount(s) >= 2 ? thai : cjkCount(s) && cjkCount(s) >= latinCount(s) ? cjk : latin).push(i));
+  if (cjk.length) {
+    const got = await T.translateToKorean(cjk.map((i) => lines[i]));
+    cjk.forEach((i, k) => (out[i] = String(got[k] || '')));
+    const same = (i) => (myKo() ? !T.HANGUL.test(out[i]) : out[i].trim() === lines[i].trim());
+    for (const i of cjk.filter(same).slice(0, 8)) {
+      const [one] = await T.translateToKorean([lines[i]]);
+      if (one) out[i] = one;
+    }
+  }
   if (thai.length && !myKo()) {
     const got = await T.translateToKorean(thai.map((i) => lines[i]));
     thai.forEach((i, k) => (out[i] = String(got[k] || '')));

@@ -97,7 +97,7 @@ const NAMES = [
   'ensureGlossary', 'chatKoreanToThai', 'koEnZhLookup', 'freeTranslateOne', 'TYPE_LANGS',
   'chatPrepThai', 'chatThaiWhole', 'TH_SHORT_REPLY', 'translateToKorean', 'chatFixKorean',
   'thaiSpeakerGender', 'HANGUL', 'THAI', 'refreshGlossary', 'koreanToLang', 'rcRefresh',
-  'MY', 'freeTranslateMany', 'SCRIPT_OF', 'langGlossaryMap', 'parseGlossary',
+  'MY', 'freeTranslateMany', 'SCRIPT_OF', 'langGlossaryMap', 'parseGlossary', 'crossLookup', 'chatScriptLang',
 ];
 // 스크립트가 내 언어를 알면(1.29.0~) 그 값, 아니면 한국어.
 const myLang = () => (T && T.MY) || 'ko';
@@ -179,9 +179,18 @@ async function toKorean(src) {
   if (whole) return { out: whole, via: '표' };
   if (T.TH_SHORT_REPLY.test(s)) return { out: '네', via: '표' };
   const lines = s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const dict = await crossOneLine(lines, 'th');
+  if (dict) return dict;
   const got = await T.translateToKorean(lines);
   if (!got.every(Boolean)) throw new Error('번역 결과가 비어 있습니다');
   return { out: T.chatFixKorean(got.join('\n'), s), via: '번역' };
+}
+
+// 한 줄짜리 낱말이 언어 교차 표(기초사전)에 있으면 구글 대신. LINE 은 상대 언어를 모르니 글자로 정해지는 언어만(로마자·키릴은 안 씀).
+async function crossOneLine(lines, from) {
+  if (lines.length !== 1 || !T.crossLookup || !from) return null;
+  const out = await T.crossLookup(lines[0], from, myKo() ? 'ko' : myLang());
+  return out ? { out, via: '사전' } : null;
 }
 
 // 크롬 실시간 자막 한 줄(LiveCaption.cs). 영상은 나에게 하는 말이 아니라서 호칭(พี่→오빠)은 바꾸지 않는다(mine).
@@ -199,6 +208,8 @@ async function captionKorean(src) {
 // 내 언어가 한국어가 아니면: 손질(พี่→오빠)·표·말투 다듬기는 한국어용이라 빼고 줄마다 구글로 내 언어에.
 async function toMine(src) {
   const lines = src.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const dict = await crossOneLine(lines, T.chatScriptLang && lines.length === 1 ? T.chatScriptLang(lines[0]) : '');
+  if (dict) return dict;
   const got = await T.translateToKorean(lines);
   if (!got.every(Boolean)) throw new Error('번역 결과가 비어 있습니다');
   return { out: got.join('\n'), via: '번역' };

@@ -74,7 +74,7 @@
   const SCRIPT_OF = {
     ko: HANGUL, th: THAI, ja: /[぀-ヿ一-鿿]/, zh: /[一-鿿]/, yue: /[一-鿿]/,
     ar: /[؀-ۿ]/, ur: /[؀-ۿ]/, fa: /[؀-ۿ]/, he: /[֐-׿]/, hi: /[ऀ-ॿ]/, mr: /[ऀ-ॿ]/, ne: /[ऀ-ॿ]/,
-    bn: /[ঀ-৿]/, te: /[ఀ-౿]/, ta: /[஀-௿]/, ru: /[Ѐ-ӿ]/, uk: /[Ѐ-ӿ]/, km: /[ក-៿]/, lo: /[຀-໿]/,
+    bn: /[ঀ-৿]/, te: /[ఀ-౿]/, ta: /[஀-௿]/, ru: /[Ѐ-ӿ]/, uk: /[Ѐ-ӿ]/, mn: /[Ѐ-ӿ]/, km: /[ក-៿]/, lo: /[຀-໿]/,
     my: /[က-႟]/, ka: /[Ⴀ-ჿ]/, el: /[Ͱ-Ͽ]/,
   };
   let MY_SCRIPT = SCRIPT_OF[MY2] || null;
@@ -348,28 +348,29 @@
     // config.json 과 같은 목록 — 처음 깐 브라우저의 첫 페이지와 처음 깐 번역 도우미는 원격 설정을 받기 전에 이 값을 쓴다
     // (2026-11-04 예전 7개 그대로라 첫 화면에 언어 7개, 언어별 용어집 없음).
     languages: [
-      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt' },
-      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt' },
-      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt' },
+      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt', reverse: 'reverse-th.txt' },
+      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt', reverse: 'reverse-en.txt' },
+      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt', reverse: 'reverse-zh.txt' },
       { id: 'hi', label: '힌', name: '힌디어', mt: 'hi', chip: '→ हिन्दी', glossary: 'glossary-hi.txt' },
-      { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt' },
-      { id: 'ar', label: '아', name: '아랍어', mt: 'ar', chip: '→ العربية', glossary: 'glossary-ar.txt' },
-      { id: 'fr', label: '프', name: '프랑스어', mt: 'fr', chip: '→ FR', glossary: 'glossary-fr.txt' },
+      { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt', reverse: 'reverse-es.txt' },
+      { id: 'ar', label: '아', name: '아랍어', mt: 'ar', chip: '→ العربية', glossary: 'glossary-ar.txt', reverse: 'reverse-ar.txt' },
+      { id: 'fr', label: '프', name: '프랑스어', mt: 'fr', chip: '→ FR', glossary: 'glossary-fr.txt', reverse: 'reverse-fr.txt' },
       { id: 'bn', label: '벵', name: '벵골어', mt: 'bn', chip: '→ বাংলা', glossary: 'glossary-bn.txt' },
       { id: 'pt', label: '포', name: '포르투갈어', mt: 'pt', chip: '→ PT', glossary: 'glossary-pt.txt' },
-      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU', glossary: 'glossary-ru.txt' },
+      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU', glossary: 'glossary-ru.txt', reverse: 'reverse-ru.txt' },
       { id: 'ur', label: '우', name: '우르두어', mt: 'ur', chip: '→ اردو', glossary: 'glossary-ur.txt' },
-      { id: 'id', label: '인', name: '인도네시아어', mt: 'id', chip: '→ ID', glossary: 'glossary-id.txt' },
+      { id: 'id', label: '인', name: '인도네시아어', mt: 'id', chip: '→ ID', glossary: 'glossary-id.txt', reverse: 'reverse-id.txt' },
       { id: 'de', label: '독', name: '독일어', mt: 'de', chip: '→ DE', glossary: 'glossary-de.txt' },
-      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語', glossary: 'glossary-ja.txt' },
+      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語', glossary: 'glossary-ja.txt', reverse: 'reverse-ja.txt' },
       { id: 'mr', label: '마', name: '마라티어', mt: 'mr', chip: '→ मराठी', glossary: 'glossary-mr.txt' },
       { id: 'te', label: '텔', name: '텔루구어', mt: 'te', chip: '→ తెలుగు', glossary: 'glossary-te.txt' },
       { id: 'tr', label: '터', name: '튀르키예어', mt: 'tr', chip: '→ TR', glossary: 'glossary-tr.txt' },
       { id: 'ta', label: '타', name: '타밀어', mt: 'ta', chip: '→ தமிழ்', glossary: 'glossary-ta.txt' },
       { id: 'yue', label: '광', name: '광둥어', mt: 'yue', chip: '→ 粵語', glossary: 'glossary-yue.txt' },
-      { id: 'vi', label: '베', name: '베트남어', mt: 'vi', chip: '→ VI', glossary: 'glossary-vi.txt' },
+      { id: 'vi', label: '베', name: '베트남어', mt: 'vi', chip: '→ VI', glossary: 'glossary-vi.txt', reverse: 'reverse-vi.txt' },
       { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית', glossary: 'glossary-he.txt' },
       { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL', glossary: 'glossary-pl.txt' },
+      { id: 'mn', label: '몽', name: '몽골어', mt: 'mn', chip: '→ МОН', glossary: 'glossary-mn.txt', reverse: 'reverse-mn.txt' },
     ],
     // 무료 번역 주소를 써 보는 차례: gtx(translate_a/single), dict(translate_a/t)
     translate: { order: ['gtx', 'dict'] },
@@ -425,6 +426,7 @@
         mt: rcStr(l.mt, id, RC_LANG),
         chip: rcStr(l.chip, `→ ${id.toUpperCase()}`, /^.{1,20}$/u),
         glossary: rcStr(l.glossary, '', /^[\w.-]{1,60}\.txt$/),
+        reverse: rcStr(l.reverse, '', /^[\w.-]{1,60}\.txt$/), // 그 언어 → 한국어 거꾸로 표(언어 교차). 지우면 심사 없이 꺼진다
       });
     }
     if (!out.length) return RC_DEFAULT.languages;
@@ -1525,6 +1527,8 @@
     const trimmed = normKey(korean);
     // 내 언어가 한국어가 아니면 용어집(한국어=태국어)은 맞지 않는다 — 구글로 내 말 → 태국어.
     if (!MY_KO) {
+      const crossed = await crossLookup(trimmed, MY2, 'th');
+      if (crossed) return { thai: crossed, via: '사전' };
       const hit = cacheGet(MY + '>' + trimmed, 'th');
       if (hit) return { thai: hit, via: '저장' };
       const th = (await freeRaw(trimmed, 'auto', 'th', SEARCH_FREE_TIMEOUT)).trim();
@@ -5164,7 +5168,16 @@
   const LANG_GLOSSARY_TTL = 60 * 60 * 1000;
   const langGlossaryMaps = new Map(); // 파일 → Map(squash(한국어) → 그 언어)
 
-  async function langGlossaryMap(file) {
+  // 메신저는 줄 여러 개를 한꺼번에 찾는다 — 같은 파일을 동시에 여러 번 받지 않게 받는 중인 것을 나눠 쓴다.
+  const langGlossaryLoading = new Map();
+  function langGlossaryMap(file) {
+    if (!langGlossaryLoading.has(file)) {
+      langGlossaryLoading.set(file, loadLangGlossary(file).finally(() => langGlossaryLoading.delete(file)));
+    }
+    return langGlossaryLoading.get(file);
+  }
+
+  async function loadLangGlossary(file) {
     const key = `langGlossary:${file}`;
     let store = GM_getValue(key, null);
     if (!store || Date.now() - store.at > LANG_GLOSSARY_TTL) {
@@ -5210,12 +5223,48 @@
     ]);
   }
 
+  // 언어 교차(한국어기초사전): 그 언어 낱말 → 한국어(거꾸로 표 reverse-xx.txt) → 다른 언어(glossary-yy.txt). 표에는 사전 전체에서
+  // 한국어 한 표기로만 이어지는 낱말만 있어(fire 처럼 뜻이 여럿인 말은 없다) 없으면 지금처럼 구글로 간다. 입력·메시지 전체가 맞을
+  // 때만 쓰고, 페이지 글·자막·화면 번역에는 쓰지 않는다 — 메뉴 낱말과 상표는 앞뒤 없이 옮기면 드문 말이 나온다.
+  const CROSS_MAX_LEN = 40;
+  async function crossLookupNow(text, from, to) {
+    const src = TYPE_LANGS.find((l) => l.id === from);
+    if (!src || !src.reverse || from === to || /[?？؟]\s*$/.test(text)) return '';
+    const word = text.replace(/[\s.!~,。！…]+$/, '').replace(/^[¡¿\s]+/, '');
+    if (!word || [...word].length > CROSS_MAX_LEN) return '';
+    const back = await langGlossaryMap(src.reverse);
+    const ko = back && back.get(squash(normKey(word)).replace(/[ً-ْٰ]/g, '')); // 아랍어 모음 부호는 보지 않는다
+    if (!ko || to === 'ko') return ko || '';
+    if (to === 'th') {
+      await ensureGlossary();
+      const reviewed = buildGlossary()[ko]; // 태국어는 사람이 고른 말 먼저
+      if (reviewed) return reviewed;
+    }
+    const dst = TYPE_LANGS.find((l) => l.id === to);
+    if (!dst || !dst.glossary) return '';
+    const there = await langGlossaryMap(dst.glossary);
+    return (there && there.get(squash(ko))) || '';
+  }
+
+  // 언어 코드는 zh-CN 처럼 와도 된다. 표를 처음 받느라 늦으면 기다리지 않고 구글로(받기는 뒤에서 끝난다).
+  function crossLookup(text, from, to) {
+    const base = (c) => String(c || '').split('-')[0].toLowerCase();
+    return Promise.race([
+      crossLookupNow(String(text || '').trim(), base(from), base(to)).catch(() => ''),
+      new Promise((resolve) => setTimeout(() => resolve(''), 1500)),
+    ]);
+  }
+
   // 고른 언어로. 태국어는 용어집(+문장 번역), 다른 언어는 그 언어의 용어집(있으면) → 영어·중국어 샘플 용어집 →
   // 무료 번역.
   async function koreanToLang(value, lang) {
     // 내 언어가 한국어가 아니면 용어집(한국어=…)은 맞지 않는다 — 구글 번역(원문 언어는 구글이 알아본다: 영어 사용자가
     // 한국어를 섞어 써도 맞게. 내 언어로 못 박았더니 일본어 사용자의 '내일 봐요' 가 엉뚱한 태국어가 됐다 — 2026-11-05 시험).
-    if (!MY_KO) return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: '번역' };
+    if (!MY_KO) {
+      const crossed = await crossLookup(value, MY2, lang.id);
+      if (crossed) return { thai: crossed, via: '사전' };
+      return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: '번역' };
+    }
     if (lang.id === 'th') {
       await ensureGlossary();
       return koreanToThai(value);
@@ -8654,7 +8703,11 @@
 
   async function chatKoreanToThai(text) {
     // 내 언어가 한국어가 아니면 용어집·한국어 말투 다듬기는 맞지 않는다 — 내 말 → 태국어 구글 번역.
-    if (!MY_KO) return { thai: (await freeTranslateOne(text, 'auto', 'th')).trim(), via: '번역' };
+    if (!MY_KO) {
+      const crossed = await crossLookup(text, MY2, 'th');
+      if (crossed) return { thai: crossed, via: '사전' };
+      return { thai: (await freeTranslateOne(text, 'auto', 'th')).trim(), via: '번역' };
+    }
     await ensureGlossary();
     const idx = buildIndex();
     const out = [];
@@ -9654,6 +9707,24 @@
     box.textContent = ko;
   }
 
+  // 받은 말풍선의 짧은 줄이 언어 교차 표에 있으면 구글 대신. 출발 언어는 글자 → 구글이 알아본 그 말풍선의 언어 → 이 대화방 상대 언어.
+  // 로마자처럼 글자로 언어를 모르는데 상대 언어도 모르면 쓰지 않는다(pan 이 영어인지 스페인어인지 모른다).
+  async function chatDictLines(lines) {
+    const out = new Map();
+    const partner = chatPartnerLang();
+    const to = MY_KO ? 'ko' : MY2;
+    await Promise.all(
+      lines
+        .filter((l) => [...l].length <= CROSS_MAX_LEN)
+        .map(async (line) => {
+          const from = chatScriptLang(line) || chatLangCache.get(line) || partner;
+          const v = from ? await crossLookup(line, from, to) : '';
+          if (v) out.set(line, v);
+        })
+    );
+    return out;
+  }
+
   async function scanChat() {
     chatScanTimer = null;
     chatLangMemo = null;
@@ -9690,8 +9761,10 @@
       // 여러 줄 말풍선은 줄마다 옮겨 줄을 살린다(묶어 옮기면 한 덩어리로 뭉친다).
       const split = (s) => s.split(/\n+/).map((l) => l.trim()).filter(Boolean);
       const lines = [...new Set(ask.flatMap(split))];
-      const got = lines.length ? await translateToKorean(lines) : [];
-      const byLine = new Map(lines.map((l, i) => [l, got[i]]));
+      const dict = lines.length ? await chatDictLines(lines) : new Map();
+      const rest = lines.filter((l) => !dict.has(l));
+      const got = rest.length ? await translateToKorean(rest) : [];
+      const byLine = new Map([...dict, ...rest.map((l, i) => [l, got[i]])]);
       const kos = new Map(
         ask.map((s) => {
           const ko = split(s).map((l) => byLine.get(l));

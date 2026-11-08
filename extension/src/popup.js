@@ -18,7 +18,7 @@ $('#ver').textContent = chrome.runtime.getManifest().version;
 // background.js 가 번역 도우미에 넘긴다. 'ko' 면 예전과 똑같다.
 const MY_LANGS = [
   'ko', 'th', 'en', 'zh-CN', 'zh-TW', 'ja', 'vi', 'id', 'ms', 'tl', 'km', 'lo', 'my', 'hi', 'bn', 'ur', 'ar',
-  'he', 'tr', 'ru', 'de', 'fr', 'es', 'pt', 'it', 'pl', 'ta', 'te', 'mr', 'yue',
+  'he', 'tr', 'ru', 'mn', 'de', 'fr', 'es', 'pt', 'it', 'pl', 'ta', 'te', 'mr', 'yue',
 ];
 const langNameIn = (code, inLang) => {
   try {

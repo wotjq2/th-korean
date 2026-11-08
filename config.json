@@ -3,7 +3,7 @@
 
   "languages": [
     { "id": "th", "label": "태", "name": "태국어", "mt": "th", "chip": "→ ไทย", "glossary": "glossary-th-krdict.txt", "reverse": "reverse-th.txt", "reverseKo": "reverse-th-ko.txt" },
-    { "id": "en", "label": "미", "name": "영어", "mt": "en", "chip": "→ EN", "glossary": "glossary-en.txt", "reverse": "reverse-en.txt", "reverseKo": "reverse-en-ko.txt" },
+    { "id": "en", "label": "미", "name": "영어", "mt": "en", "chip": "→ EN", "glossary": "glossary-en.txt", "reverse": "reverse-en.txt", "toKo": false },
     { "id": "zh", "label": "중", "name": "중국어", "mt": "zh-CN", "chip": "→ 中文", "glossary": "glossary-zh.txt", "reverse": "reverse-zh.txt", "reverseKo": "reverse-zh-ko.txt" },
     { "id": "hi", "label": "힌", "name": "힌디어", "mt": "hi", "chip": "→ हिन्दी", "glossary": "glossary-hi.txt" },
     { "id": "es", "label": "스", "name": "스페인어", "mt": "es", "chip": "→ ES", "glossary": "glossary-es.txt", "reverse": "reverse-es.txt", "reverseKo": "reverse-es-ko.txt" },

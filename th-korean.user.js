@@ -349,7 +349,7 @@
     // (2026-11-04 예전 7개 그대로라 첫 화면에 언어 7개, 언어별 용어집 없음).
     languages: [
       { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt', reverse: 'reverse-th.txt', reverseKo: 'reverse-th-ko.txt' },
-      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt', reverse: 'reverse-en.txt', reverseKo: 'reverse-en-ko.txt' },
+      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt', reverse: 'reverse-en.txt', toKo: false },
       { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt', reverse: 'reverse-zh.txt', reverseKo: 'reverse-zh-ko.txt' },
       { id: 'hi', label: '힌', name: '힌디어', mt: 'hi', chip: '→ हिन्दी', glossary: 'glossary-hi.txt' },
       { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt', reverse: 'reverse-es.txt', reverseKo: 'reverse-es-ko.txt' },
@@ -428,6 +428,7 @@
         glossary: rcStr(l.glossary, '', /^[\w.-]{1,60}\.txt$/),
         reverse: rcStr(l.reverse, '', /^[\w.-]{1,60}\.txt$/), // 그 언어 → 한국어 거꾸로 표(언어 교차). 지우면 심사 없이 꺼진다
         reverseKo: rcStr(l.reverseKo, '', /^[\w.-]{1,60}\.txt$/), // 한국어 쪽 뜻이 여럿인 낱말 — 한국어로 옮길 때만
+        toKo: l.toKo !== false, // false 면 그 언어 → 한국어는 구글로. 영어는 구글이 더 나았다(2026-11-09 사전 4 : 구글 9)
       });
     }
     if (!out.length) return RC_DEFAULT.languages;
@@ -5231,6 +5232,7 @@
   async function crossLookupNow(text, from, to) {
     const src = TYPE_LANGS.find((l) => l.id === from);
     if (!src || !src.reverse || from === to || /[?？؟]\s*$/.test(text)) return '';
+    if (to === 'ko' && src.toKo === false) return '';
     const word = text.replace(/[\s.!~,。！…]+$/, '').replace(/^[¡¿\s]+/, '');
     if (!word || [...word].length > CROSS_MAX_LEN) return '';
     const key = squash(normKey(word)).replace(/[ً-ْٰ]/g, ''); // 아랍어 모음 부호는 보지 않는다

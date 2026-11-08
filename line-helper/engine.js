@@ -461,6 +461,7 @@ async function uiLine(it, mode = 'auto') {
 // 그 언어 용어집(th-korean-glossary 의 glossary-zh.txt·glossary-ja.txt, '한국어=그 언어')을 거꾸로: 화면의 중국어·일본어 줄
 // 전체가 어떤 줄의 값과 같으면 그 한국어. 가나가 있으면 일본어, 아니면 중국어 파일. 같은 값이 여러 줄이면 아래 줄.
 const revMaps = new Map(); // 파일 → { text, map: Map(값 → 한국어) }
+const KRDICT_END = '# === 한국어기초사전 끝'; // 이 줄 위는 사전에서 온 낱말, 아래는 직접 고른 말
 // 번체로 읽힌 메뉴 글자도 간체 값과 맞게(번체 인식기가 首页 를 首頁 로 읽었다). 열쇠만 바꾼다 — 화면 글은 그대로.
 const T2S_MAP = new Map(
   ('頁页 檔档 傳传 輸输 開开 關关 設设 進进 圖图 視视 頻频 訊讯 錄录 紀纪 載载 個个 時时 間间 類类 夾夹 總总 動动 備备 ' +
@@ -515,7 +516,11 @@ async function revMap(line) {
   let r = revMaps.get(file);
   if (!r || r.text !== st.text) {
     const map = new Map();
-    for (const [ko, v] of Object.entries(T.parseGlossary(st.text).map)) map.set(revKey(v), ko);
+    // 파일 위쪽의 기초사전 낱말(3만 줄)은 거꾸로 쓰지 않는다 — 뜻이 비슷한 표제어가 같은 값을 가져(시작·개시 = 开始) 드문 말이
+    // 나오고, 글자 교정(nearGlossary)도 엉뚱한 낱말로 맞춘다. 화면 번역은 직접 고른 말(표시 아래쪽)만.
+    const cut = st.text.lastIndexOf(KRDICT_END);
+    const own = cut < 0 ? st.text : st.text.slice(cut);
+    for (const [ko, v] of Object.entries(T.parseGlossary(own).map)) map.set(revKey(v), ko);
     r = { text: st.text, map };
     revMaps.set(file, r);
   }

@@ -348,7 +348,7 @@
     // config.json 과 같은 목록 — 처음 깐 브라우저의 첫 페이지와 처음 깐 번역 도우미는 원격 설정을 받기 전에 이 값을 쓴다
     // (2026-11-04 예전 7개 그대로라 첫 화면에 언어 7개, 언어별 용어집 없음).
     languages: [
-      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย' },
+      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt' },
       { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt' },
       { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt' },
       { id: 'hi', label: '힌', name: '힌디어', mt: 'hi', chip: '→ हिन्दी', glossary: 'glossary-hi.txt' },
@@ -1542,6 +1542,10 @@
       const used = pieces.filter((p) => p.kind === 'glossary' || p.kind === 'literal').length;
       if (thai) return { thai, via: used > 1 ? '용어집 조합' : '용어집' };
     }
+
+    // glossary.txt 로 다 못 옮긴 말이 통째로 한국어기초사전에 있으면 그 값. 조각만 구글에 묻는 것보다 낫다.
+    const dict = await thaiDictLookup(trimmed);
+    if (dict) return { thai: dict, via: '사전' };
 
     const known = pieces.filter((p) => p.kind === 'glossary');
 
@@ -5193,6 +5197,17 @@
     const v = m && m.get(squash(value.replace(/[\s.!?~,？！]+$/, '')));
     if (!v || (/[?？]\s*$/.test(value) && !/[?？؟]\s*$/.test(v))) return '';
     return v;
+  }
+
+  // 태국어 사전 파일(config.json 태국어 줄의 glossary — 값을 지우면 심사 없이 꺼진다). 사전의 첫 대역어라 딱딱한 말이 섞여
+  // 있어, 사람이 고른 glossary.txt 로 못 옮긴 말에만 쓴다. 첫 내려받기가 늦으면 기다리지 않고 구글로(받기는 뒤에서 끝난다).
+  function thaiDictLookup(value) {
+    const lang = TYPE_LANGS.find((l) => l.id === 'th');
+    if (!lang || !lang.glossary) return '';
+    return Promise.race([
+      langGlossaryLookup(value, lang).catch(() => ''),
+      new Promise((resolve) => setTimeout(() => resolve(''), 1500)),
+    ]);
   }
 
   // 고른 언어로. 태국어는 용어집(+문장 번역), 다른 언어는 그 언어의 용어집(있으면) → 영어·중국어 샘플 용어집 →

@@ -2,7 +2,7 @@
   "_설명": "통합 번역(크롬 확장)·태국 사이트 한국어(몽키)·번역 도우미가 함께 읽는 원격 설정. 고쳐서 GitHub 에 올리면 브라우저는 1시간 안에(다음 페이지부터), 번역 도우미는 6시간 안에(언어 막대는 다음에 켤 때부터) 따른다. 크롬 웹스토어 심사가 필요 없다. 값만 읽고(코드로 실행하지 않는다) 칸마다 꼴을 맞춰 보아, 틀린 칸은 무시하고 프로그램에 적힌 기본값을 쓴다. 저장 전에 JSON 문법(쉼표·따옴표)만 확인할 것.",
 
   "languages": [
-    { "id": "th", "label": "태", "name": "태국어", "mt": "th", "chip": "→ ไทย" },
+    { "id": "th", "label": "태", "name": "태국어", "mt": "th", "chip": "→ ไทย", "glossary": "glossary-th-krdict.txt" },
     { "id": "en", "label": "미", "name": "영어", "mt": "en", "chip": "→ EN", "glossary": "glossary-en.txt" },
     { "id": "zh", "label": "중", "name": "중국어", "mt": "zh-CN", "chip": "→ 中文", "glossary": "glossary-zh.txt" },
     { "id": "hi", "label": "힌", "name": "힌디어", "mt": "hi", "chip": "→ हिन्दी", "glossary": "glossary-hi.txt" },

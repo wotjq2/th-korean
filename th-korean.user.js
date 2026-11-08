@@ -348,29 +348,29 @@
     // config.json 과 같은 목록 — 처음 깐 브라우저의 첫 페이지와 처음 깐 번역 도우미는 원격 설정을 받기 전에 이 값을 쓴다
     // (2026-11-04 예전 7개 그대로라 첫 화면에 언어 7개, 언어별 용어집 없음).
     languages: [
-      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt', reverse: 'reverse-th.txt' },
-      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt', reverse: 'reverse-en.txt' },
-      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt', reverse: 'reverse-zh.txt' },
+      { id: 'th', label: '태', name: '태국어', mt: 'th', chip: '→ ไทย', glossary: 'glossary-th-krdict.txt', reverse: 'reverse-th.txt', reverseKo: 'reverse-th-ko.txt' },
+      { id: 'en', label: '미', name: '영어', mt: 'en', chip: '→ EN', glossary: 'glossary-en.txt', reverse: 'reverse-en.txt', reverseKo: 'reverse-en-ko.txt' },
+      { id: 'zh', label: '중', name: '중국어', mt: 'zh-CN', chip: '→ 中文', glossary: 'glossary-zh.txt', reverse: 'reverse-zh.txt', reverseKo: 'reverse-zh-ko.txt' },
       { id: 'hi', label: '힌', name: '힌디어', mt: 'hi', chip: '→ हिन्दी', glossary: 'glossary-hi.txt' },
-      { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt', reverse: 'reverse-es.txt' },
-      { id: 'ar', label: '아', name: '아랍어', mt: 'ar', chip: '→ العربية', glossary: 'glossary-ar.txt', reverse: 'reverse-ar.txt' },
-      { id: 'fr', label: '프', name: '프랑스어', mt: 'fr', chip: '→ FR', glossary: 'glossary-fr.txt', reverse: 'reverse-fr.txt' },
+      { id: 'es', label: '스', name: '스페인어', mt: 'es', chip: '→ ES', glossary: 'glossary-es.txt', reverse: 'reverse-es.txt', reverseKo: 'reverse-es-ko.txt' },
+      { id: 'ar', label: '아', name: '아랍어', mt: 'ar', chip: '→ العربية', glossary: 'glossary-ar.txt', reverse: 'reverse-ar.txt', reverseKo: 'reverse-ar-ko.txt' },
+      { id: 'fr', label: '프', name: '프랑스어', mt: 'fr', chip: '→ FR', glossary: 'glossary-fr.txt', reverse: 'reverse-fr.txt', reverseKo: 'reverse-fr-ko.txt' },
       { id: 'bn', label: '벵', name: '벵골어', mt: 'bn', chip: '→ বাংলা', glossary: 'glossary-bn.txt' },
       { id: 'pt', label: '포', name: '포르투갈어', mt: 'pt', chip: '→ PT', glossary: 'glossary-pt.txt' },
-      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU', glossary: 'glossary-ru.txt', reverse: 'reverse-ru.txt' },
+      { id: 'ru', label: '러', name: '러시아어', mt: 'ru', chip: '→ RU', glossary: 'glossary-ru.txt', reverse: 'reverse-ru.txt', reverseKo: 'reverse-ru-ko.txt' },
       { id: 'ur', label: '우', name: '우르두어', mt: 'ur', chip: '→ اردو', glossary: 'glossary-ur.txt' },
-      { id: 'id', label: '인', name: '인도네시아어', mt: 'id', chip: '→ ID', glossary: 'glossary-id.txt', reverse: 'reverse-id.txt' },
+      { id: 'id', label: '인', name: '인도네시아어', mt: 'id', chip: '→ ID', glossary: 'glossary-id.txt', reverse: 'reverse-id.txt', reverseKo: 'reverse-id-ko.txt' },
       { id: 'de', label: '독', name: '독일어', mt: 'de', chip: '→ DE', glossary: 'glossary-de.txt' },
-      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語', glossary: 'glossary-ja.txt', reverse: 'reverse-ja.txt' },
+      { id: 'ja', label: '일', name: '일본어', mt: 'ja', chip: '→ 日本語', glossary: 'glossary-ja.txt', reverse: 'reverse-ja.txt', reverseKo: 'reverse-ja-ko.txt' },
       { id: 'mr', label: '마', name: '마라티어', mt: 'mr', chip: '→ मराठी', glossary: 'glossary-mr.txt' },
       { id: 'te', label: '텔', name: '텔루구어', mt: 'te', chip: '→ తెలుగు', glossary: 'glossary-te.txt' },
       { id: 'tr', label: '터', name: '튀르키예어', mt: 'tr', chip: '→ TR', glossary: 'glossary-tr.txt' },
       { id: 'ta', label: '타', name: '타밀어', mt: 'ta', chip: '→ தமிழ்', glossary: 'glossary-ta.txt' },
       { id: 'yue', label: '광', name: '광둥어', mt: 'yue', chip: '→ 粵語', glossary: 'glossary-yue.txt' },
-      { id: 'vi', label: '베', name: '베트남어', mt: 'vi', chip: '→ VI', glossary: 'glossary-vi.txt', reverse: 'reverse-vi.txt' },
+      { id: 'vi', label: '베', name: '베트남어', mt: 'vi', chip: '→ VI', glossary: 'glossary-vi.txt', reverse: 'reverse-vi.txt', reverseKo: 'reverse-vi-ko.txt' },
       { id: 'he', label: '이', name: '히브리어', mt: 'he', chip: '→ עברית', glossary: 'glossary-he.txt' },
       { id: 'pl', label: '폴', name: '폴란드어', mt: 'pl', chip: '→ PL', glossary: 'glossary-pl.txt' },
-      { id: 'mn', label: '몽', name: '몽골어', mt: 'mn', chip: '→ МОН', glossary: 'glossary-mn.txt', reverse: 'reverse-mn.txt' },
+      { id: 'mn', label: '몽', name: '몽골어', mt: 'mn', chip: '→ МОН', glossary: 'glossary-mn.txt', reverse: 'reverse-mn.txt', reverseKo: 'reverse-mn-ko.txt' },
     ],
     // 무료 번역 주소를 써 보는 차례: gtx(translate_a/single), dict(translate_a/t)
     translate: { order: ['gtx', 'dict'] },
@@ -427,6 +427,7 @@
         chip: rcStr(l.chip, `→ ${id.toUpperCase()}`, /^.{1,20}$/u),
         glossary: rcStr(l.glossary, '', /^[\w.-]{1,60}\.txt$/),
         reverse: rcStr(l.reverse, '', /^[\w.-]{1,60}\.txt$/), // 그 언어 → 한국어 거꾸로 표(언어 교차). 지우면 심사 없이 꺼진다
+        reverseKo: rcStr(l.reverseKo, '', /^[\w.-]{1,60}\.txt$/), // 한국어 쪽 뜻이 여럿인 낱말 — 한국어로 옮길 때만
       });
     }
     if (!out.length) return RC_DEFAULT.languages;
@@ -5232,8 +5233,14 @@
     if (!src || !src.reverse || from === to || /[?？؟]\s*$/.test(text)) return '';
     const word = text.replace(/[\s.!~,。！…]+$/, '').replace(/^[¡¿\s]+/, '');
     if (!word || [...word].length > CROSS_MAX_LEN) return '';
+    const key = squash(normKey(word)).replace(/[ً-ْٰ]/g, ''); // 아랍어 모음 부호는 보지 않는다
     const back = await langGlossaryMap(src.reverse);
-    const ko = back && back.get(squash(normKey(word)).replace(/[ً-ْٰ]/g, '')); // 아랍어 모음 부호는 보지 않는다
+    let ko = back && back.get(key);
+    // 한국어 쪽 뜻이 여럿인 말은 한국어까지만 — 다른 언어로 건너가면 다른 뜻이 나온다(consciousness → 의식 → พิธี 예식).
+    if (!ko && to === 'ko' && src.reverseKo) {
+      const koOnly = await langGlossaryMap(src.reverseKo);
+      ko = koOnly && koOnly.get(key);
+    }
     if (!ko || to === 'ko') return ko || '';
     if (to === 'th') {
       await ensureGlossary();

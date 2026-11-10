@@ -24,14 +24,50 @@ const DESCRIPTION =
   '외국어 사이트·메신저·영상을 한국어로 — 태국 쇼핑몰 검색·읽기, 페이스북 메신저, 유튜브·웹 영상 더빙(자막+목소리), 입력칸 한국어→외국어, 사진 속 글자';
 // @connect 에 없지만 스크립트가 확장 권한으로 부르는 주소(사진 글자 읽기 Vision).
 const EXTRA_HOSTS = ['vision.googleapis.com'];
-// 사진 글자 읽기(Tesseract) 엔진. 몽키판은 CDN 에서 받지만, 크롬 웹스토어는 밖에서 받은 코드를 돌리지 못하게 해서
-// (Manifest V3) 확장 안에 넣는다. 받은 파일은 sha256 을 맞춰 본다. 태국어 자료(tha.traineddata)는 코드가 아니라
-// 자료라서 예전처럼 처음 쓸 때 받는다.
+// 사진 글자 읽기(Tesseract) 엔진과 태국어 자료. 몽키판은 CDN 에서 받지만, 크롬 웹스토어는 밖에서 받은 코드를
+// 돌리지 못하게 해서(Manifest V3) 확장 안에 넣는다. 받은 파일은 sha256 을 맞춰 본다(빌드할 때만 받는다).
 const OCR_FILES = [
   ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js', 'aca1229639fc9907d86f96e825955a2b7c5716d17f3bc3acd71f9c7ab66181fc'],
   ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-lstm.wasm.js', '8f04aa0cc81e7bde33f80e92fa01a7a665f0b4884d098acf5de9c7104a11dfaa'],
   ['https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core-simd-lstm.wasm.js', 'ce20eda9533cbed1e6c2b4276fbae1e0adc61b6754b5513084be601787b457cf'],
+  ['https://cdn.jsdelivr.net/npm/@tesseract.js-data/tha/4.0.0_best_int/tha.traineddata.gz', '4550a5505184d1b79cf10416d5b19e643001d95411d5e717954dd26feef3ae74'],
 ];
+// 웹스토어가 1.30.1 을 거부했다(2026-11-10, Blue Argon — 원격 호스팅 코드). 경로를 늘 확장 안으로 넘겨 실제로는
+// CDN 을 쓰지 않았지만, 라이브러리 속 '안 넘기면 CDN 에서 받는' 기본 주소가 코드에 남아 있었다. 패키지에서 지운다.
+// 찾는 글이 없으면(라이브러리 판이 바뀌면) 빌드를 멈춘다.
+const CDN = 'https://cdn.jsdelivr.net/npm';
+const SCRUB = {
+  'tesseract.min.js': [[`workerPath:"${CDN}/tesseract.js@v".concat(c,"/dist/worker.min.js")`, 'workerPath:""']],
+  'worker.min.js': [
+    [`f=o||"${CDN}/tesseract.js-core@v".concat(s.substring(1))`, 'f=o||""'],
+    [`v=s||"${CDN}/@tesseract.js-data/".concat(i,m?"/4.0.0_best_int":"/4.0.0")`, 'v=s||""'],
+  ],
+  // 머리말의 @require·@updateURL 도 코드 주소다. 확장은 머리말을 읽지 않으므로 통째로 뺀다(extension 판 content.js).
+  'th-korean.user.js': [
+    [`const OCR_LIB = '${CDN}/tesseract.js@5.1.1/dist';`, "const OCR_LIB = '';"],
+    [`const OCR_CORE = '${CDN}/tesseract.js-core@5.1.1';`, "const OCR_CORE = '';"],
+  ],
+};
+function scrub(name, text) {
+  for (const [from, to] of SCRUB[name] || []) {
+    if (!text.includes(from)) throw new Error(`${name} 에서 지울 CDN 주소를 찾지 못했습니다: ${from}`);
+    text = text.replace(from, () => to);
+  }
+  return text;
+}
+// 만든 패키지를 끝까지 읽어, 바깥의 코드를 가리키는 주소가 하나라도 있으면 빌드를 멈춘다.
+// (cdn.jsdelivr.net/gh/… 의 thai-words.tsv 는 코드가 아니라 자료 — 주소가 .tsv 라 걸리지 않는다.)
+const REMOTE_CODE = /https?:\/\/[^\s"'`)]*\.(?:m?js|wasm)\b|cdn\.jsdelivr\.net\/npm|unpkg\.com|cdnjs\.cloudflare\.com/;
+function checkNoRemoteCode(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) checkNoRemoteCode(p);
+    else if (/\.(js|html|json)$/.test(e.name)) {
+      const m = REMOTE_CODE.exec(fs.readFileSync(p, 'utf8'));
+      if (m) throw new Error(`${path.relative(OUT, p)} 에 바깥 코드 주소가 남았습니다: ${m[0]}`);
+    }
+  }
+}
 // 사진 글자 엔진은 고장이 아닌 안내 줄도 console.warn 으로 낸다. 크롬은 이것을 확장 카드의 '오류' 목록에 줄줄이
 // 모아 보여 줬다(2026-11-05, 1.29.2 에서 인식기 하나를 켜고 한 장 읽으면 5줄):
 //   'Warning: Parameter not found: chop_enable' 등 4줄 — 태국어 자료(tha.traineddata)에 든 옛 인식 방식용 설정을
@@ -90,7 +126,7 @@ async function main() {
   const vendored = [];
   for (const url of h.require) {
     const file = await vendorFile(url);
-    fs.copyFileSync(file, path.join(OUT, path.basename(file)));
+    fs.writeFileSync(path.join(OUT, path.basename(file)), scrub(path.basename(file), fs.readFileSync(file, 'utf8')));
     vendored.push(path.basename(file));
   }
 
@@ -101,7 +137,7 @@ async function main() {
     '',
     'gmReady',
     '  .then(() => {',
-    script,
+    scrub('th-korean.user.js', script.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\r?\n/, '')),
     '  })',
     `  .catch((e) => console.error('[통합 번역] 시작 실패:', e));`,
     '',
@@ -112,7 +148,7 @@ async function main() {
   for (const [url, sha] of OCR_FILES) {
     const file = await vendorFile(`${url}#sha256=${sha}`);
     const to = path.join(OUT, 'tesseract', path.basename(file));
-    if (path.basename(file) === 'worker.min.js') fs.writeFileSync(to, OCR_QUIET + fs.readFileSync(file, 'utf8'));
+    if (path.basename(file) === 'worker.min.js') fs.writeFileSync(to, OCR_QUIET + scrub('worker.min.js', fs.readFileSync(file, 'utf8')));
     else fs.copyFileSync(file, to);
   }
 
@@ -159,6 +195,7 @@ async function main() {
     web_accessible_resources: [{ resources: ['tesseract/*'], matches: ['http://*/*', 'https://*/*'] }],
   };
   fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  checkNoRemoteCode(OUT);
 
   console.log(`통합 번역 ${h.version} → ${OUT}${STORE ? ' (웹스토어판: 개발용 key 없음)' : ''}`);
   console.log(`  content.js ${(Buffer.byteLength(content) / 1024).toFixed(0)} KB, 접속 주소 ${hosts.length}개, 함께 넣은 파일: ${vendored.join(', ') || '없음'}`);

@@ -13,4 +13,5 @@ extension/dist/
 extension/store/
 # 사진 글자 읽기 엔진(8 MB) — build.js 가 jsdelivr 에서 받아 sha256 을 맞춰 보고 여기에 둔다
 extension/vendor/worker.min.js
+extension/vendor/tha.traineddata.gz
 extension/vendor/tesseract-core-*.js

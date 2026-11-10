@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.30.1
+// @version      1.31.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -3016,11 +3016,16 @@
   let ocrIdleTimer = null;
 
   async function makeOcrWorker() {
-    // 확장(통합 번역)은 엔진을 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다. 몽키판은 CDN.
+    // 확장(통합 번역)은 엔진과 태국어 자료를 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다.
+    // 그래서 확장은 넣어 둔 tha 만 읽는다(config.json 의 ocr.lang 은 몽키판에만 듣는다). 몽키판은 CDN.
     const local = typeof GM_extensionURL === 'function';
-    const w = await Tesseract.createWorker(RC.ocr.lang, 1, {
-      workerPath: local ? GM_extensionURL('tesseract/worker.min.js') : `${OCR_LIB}/worker.min.js`,
-      corePath: local ? GM_extensionURL('tesseract') : OCR_CORE,
+    const w = await Tesseract.createWorker(local ? 'tha' : RC.ocr.lang, 1, local ? {
+      workerPath: GM_extensionURL('tesseract/worker.min.js'),
+      corePath: GM_extensionURL('tesseract'),
+      langPath: GM_extensionURL('tesseract'),
+    } : {
+      workerPath: `${OCR_LIB}/worker.min.js`,
+      corePath: OCR_CORE,
     });
     // 태국어 모델은 숫자·영어도 읽는다. 영어 자료(5MB)는 받지 않는다.
     await w.setParameters({ tessedit_pageseg_mode: '11', preserve_interword_spaces: '1' });

@@ -55,7 +55,7 @@
   "_youtube": "유튜브 화면의 CSS 선택자. 유튜브가 화면을 바꿔 한국어 자막·'한' 단추가 안 붙으면 여기만 고친다. adShowing 은 광고 중일 때 플레이어에 붙는 클래스 이름.",
 
   "ocr": { "lang": "tha" },
-  "_ocr": "사진 속 글자 읽기 언어(Tesseract 언어 이름 — tha, eng, chi_sim, jpn, vie … 여럿이면 'tha+eng'). 언어를 더할수록 처음 받는 자료가 커지고 느려진다.",
+  "_ocr": "사진 속 글자 읽기 언어(Tesseract 언어 이름 — tha, eng, chi_sim, jpn, vie … 여럿이면 'tha+eng'). 언어를 더할수록 처음 받는 자료가 커지고 느려진다. 몽키판에만 듣는다 — 크롬 확장은 패키지에 넣은 tha 만 읽는다(웹스토어 규칙).",
 
   "shops": {},
   "_shops": "한국어 검색어를 태국어로 바꿔 검색해 주는 쇼핑몰. 라자다(lazada)·쇼피(shopee)는 바뀐 칸만 적으면 고쳐진다. 새 쇼핑몰은 label·host·searchUrl·inputSelectors 를 다 적는다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며 그 사이트 주소여야 한다. 예: \"shops\": { \"shopee\": { \"inputSelectors\": [\"input[name=keyword]\"] }, \"bigc\": { \"label\": \"빅씨\", \"host\": \"bigc.co.th\", \"searchUrl\": \"https://www.bigc.co.th/search?q={q}\", \"inputSelectors\": [\"input[type=search]\"], \"queryParam\": \"q\" } }",

@@ -530,7 +530,15 @@ async function revMap(line) {
     // 파일 위쪽의 기초사전 낱말(3만 줄)은 거꾸로 쓰지 않는다 — 뜻이 비슷한 표제어가 같은 값을 가져(시작·개시 = 开始) 드문 말이
     // 나오고, 글자 교정(nearGlossary)도 엉뚱한 낱말로 맞춘다. 화면 번역은 직접 고른 말(표시 아래쪽)만.
     const cut = st.text.lastIndexOf(KRDICT_END);
-    const own = cut < 0 ? st.text : st.text.slice(cut);
+    // '# --- 대화 …' 칸(메신저 말투: 넵=はい, 오키=好的)도 거꾸로 쓰지 않는다 — 프로그램 화면의 はい 가 '넵' 으로 나왔다.
+    let chat = false;
+    const own = (cut < 0 ? st.text : st.text.slice(cut))
+      .split('\n')
+      .filter((l) => {
+        if (l.startsWith('# ---')) chat = l.startsWith('# --- 대화');
+        return !chat;
+      })
+      .join('\n');
     for (const [ko, v] of Object.entries(T.parseGlossary(own).map)) map.set(revKey(v), ko);
     r = { text: st.text, map };
     revMaps.set(file, r);

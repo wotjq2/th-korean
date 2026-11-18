@@ -44,9 +44,13 @@
     "subFontTall": 26,
     "subFontWide": 19,
     "subBottomTall": 0.22,
-    "subBottomWide": 0.12
+    "subBottomWide": 0.12,
+    "hsOn": 1,
+    "hsEveryMs": 250,
+    "hsTop": 0.55,
+    "hsMinPeak": 8
   },
-  "_video": "영상 자막. liveMaxChars = 크롬 실시간 자막을 영상 위에 보일 때 끝에서 몇 글자(10~400), liveMaxAgeMs = 새 말이 없으면 내리기까지(1000~60000ms), subFontTall/subFontWide = 자막 글자 크기(세로 영상 폭 / 값, 가로 영상 높이 / 값 — 클수록 작은 글자, 5~100), subBottomTall/subBottomWide = 영상 아래에서 띄우는 높이(영상 높이에 대한 비율 0~0.9).",
+  "_video": "영상 자막. liveMaxChars = 크롬 실시간 자막을 영상 위에 보일 때 끝에서 몇 글자(10~400), liveMaxAgeMs = 새 말이 없으면 내리기까지(1000~60000ms), subFontTall/subFontWide = 자막 글자 크기(세로 영상 폭 / 값, 가로 영상 높이 / 값 — 클수록 작은 글자, 5~100), subBottomTall/subBottomWide = 영상 아래에서 띄우는 높이(영상 높이에 대한 비율 0~0.9). hs… = 화면에 박힌 자막(중국 드라마 등)을 읽어 옮기기(1.32.0, 번역 도우미 필요): hsOn 1 켜기/0 끄기, hsEveryMs = 몇 ms 마다 볼지(100~3000), hsTop = 영상 위에서 이 비율 아래만 본다(0.2~0.9), hsMinPeak = 한 줄에 획 토막이 이만큼은 있어야 자막 줄로 본다(3~60, 크면 덜 찾고 덜 틀린다).",
 
   "chip": { "place": "auto", "hosts": {} },
   "_chip": "영상 위 '한국어 자막' 단추 자리. auto = 영상 왼쪽 밖에 자리가 있으면 거기, 없으면 안쪽 왼쪽 위에서 조금 아래. 그 밖에 outside-left, top-left, top-right, bottom-left. 사이트마다: \"hosts\": { \"www.tiktok.com\": \"top-right\" }",

@@ -625,7 +625,115 @@ async function screenLines(items, mode) {
   return out;
 }
 
+// ---- 화면에 박힌 자막(하드 자막) 읽기 ----
+// 사용자(2026-11-18, 중국 드라마 vrGIeGBPXwc): 자막 파일이 없어 크롬 실시간 자막(소리 → 번역)이 한 문장씩 늦게 나와
+// 화면에 박힌 중국어 자막과 엇갈렸다. 확장이 영상에서 자막 줄을 찾아 원본 크기(줄 높이 72 화소 안쪽)로 잘라 보내면
+// (RGBA), 여기서 '획'만 남긴 흑백으로 바꿔 Tesseract 로 읽는다. 글자 고르기를 여기(엔진)에 둔 것은 손볼 때 스토어에
+// 다시 올리지 않으려고 — engine.js 는 번역 도우미가 GitHub 에서 6시간마다 받아 엔진만 다시 띄운다.
+// 시험(5개 드라마 64장, 자막 25줄): 획 고르기 + psm 13 = 20줄 정확, 글자 오류 4.7%. 한 줄 30~90ms.
+
+// 획: 밝은 무채색 화소가 짧게(획 두께 안) 이어지고 그 양 끝 가까이에 어두운 테두리가 있는 곳. 가로·세로 두 방향.
+// 넓게 밝은 배경(하늘·흰 옷)은 끝이 어둡지 않거나 너무 길어 빠진다.
+function hsInk(px, w, h, o) {
+  const { white, satMax, drop, maxS, edge } = o;
+  const lum = new Uint8Array(w * h);
+  const ok = new Uint8Array(w * h);
+  for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+    const r = px[p], g = px[p + 1], b = px[p + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const l = (r * 299 + g * 587 + b * 114) / 1000;
+    lum[i] = l;
+    ok[i] = l >= white && mx - mn <= satMax ? 1 : 0;
+  }
+  const ink = new Uint8Array(w * h);
+  const scan = (start, n, step) => {
+    let a = -1;
+    for (let k = 0; k <= n; k++) {
+      const on = k < n && ok[start + k * step];
+      if (on && a < 0) a = k;
+      if (!on && a >= 0) {
+        if (k - a <= maxS) {
+          let peak = 0;
+          for (let t = a; t < k; t++) peak = Math.max(peak, lum[start + t * step]);
+          const lim = peak - drop;
+          let L = false, R = false;
+          for (let d = 1; d <= edge && !L; d++) if (a - d >= 0 && lum[start + (a - d) * step] <= lim) L = true;
+          for (let d = 0; d < edge && !R; d++) if (k + d < n && lum[start + (k + d) * step] <= lim) R = true;
+          if (L && R) for (let t = a; t < k; t++) ink[start + t * step] = 1;
+        }
+        a = -1;
+      }
+    }
+  };
+  for (let y = 0; y < h; y++) scan(y * w, w, 1);
+  for (let x = 0; x < w; x++) scan(x, h, w);
+  return ink;
+}
+
+// 자막 흰색은 그 줄에서 가장 밝은 무채색(위 2%) — 그보다 28 어두운 것까지만 글자로 본다(흰 옷·밝은 배경이 글자 사이를 메우지 않게).
+// 시험에서 고른 값: 획 두께 한계 = 영상 높이 × 0.045, 테두리 거리 = 영상 높이 × 0.004(최소 2).
+function hsBinarize(px, w, h, rows, vh) {
+  const hist = new Array(256).fill(0);
+  let n = 0;
+  for (let y = rows[0]; y < rows[1]; y++)
+    for (let x = 0; x < w; x++) {
+      const p = (y * w + x) * 4;
+      const r = px[p], g = px[p + 1], b = px[p + 2];
+      if (Math.max(r, g, b) - Math.min(r, g, b) > 70) continue;
+      hist[Math.round((r * 299 + g * 587 + b * 114) / 1000)]++;
+      n++;
+    }
+  let acc = 0, top = 255;
+  for (let v = 255; v >= 0; v--) {
+    acc += hist[v];
+    if (acc >= n * 0.02) {
+      top = v;
+      break;
+    }
+  }
+  const ink = hsInk(px, w, h, {
+    white: Math.max(150, Math.min(235, top - 28)),
+    satMax: 70,
+    drop: 70,
+    maxS: Math.max(3, Math.round(vh * 0.045)),
+    edge: Math.max(2, Math.round(vh * 0.004)),
+  });
+  const out = Buffer.alloc(w * h, 255);
+  for (let y = rows[0]; y < rows[1]; y++) for (let x = 0; x < w; x++) if (ink[y * w + x]) out[y * w + x] = 0;
+  return Buffer.concat([Buffer.from(`P5\n${w} ${h}\n255\n`), out]); // PGM — Tesseract(Leptonica)가 바로 읽는다
+}
+
+// 읽은 줄 손질: 한자 사이 띄어쓰기를 지우고 양 끝 부스러기(따옴표·쉼표·> 등)를 뗀다.
+function hsClean(t) {
+  return String(t || '')
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(new RegExp(`(?<=[${CJK_CH}，。？！、]) +(?=[${CJK_CH}，。？！、])`, 'g'), '')
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}？！。…]+$/gu, '')
+    .trim();
+}
+
+// text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], px: RGBA base64}
+// 답: {ocr: 1, text, conf, lang} — 간체로 읽고, 덜 확신하면(70 아래) 번체로도 읽어 더 확신하는 쪽.
+async function hardsub(text) {
+  const j = JSON.parse(text);
+  const w = j.w | 0, h = j.h | 0;
+  const px = Buffer.from(String(j.px || ''), 'base64');
+  if (!(w > 0 && h > 0 && w * h <= 4e6 && px.length === w * h * 4)) throw new Error('자막 그림이 잘못되었습니다');
+  const rows = Array.isArray(j.rows) ? [Math.max(0, j.rows[0] | 0), Math.min(h, j.rows[1] | 0)] : [0, h];
+  const file = `data:image/pgm;base64,${hsBinarize(px, w, h, rows, Number(j.vh) || h * 8).toString('base64')}`;
+  let best = null;
+  for (const lang of ['chi_sim', 'chi_tra']) {
+    const r = await ocr(file, { langs: [lang], psm: '13' });
+    const got = { text: hsClean(r.text), conf: Math.round(r.conf), lang: lang === 'chi_sim' ? 'zh-CN' : 'zh-TW' };
+    if (!best || got.conf > best.conf) best = got;
+    if (best.conf >= 70) break;
+  }
+  return { out: JSON.stringify({ ocr: 1, ...best }), via: String(best.conf) };
+}
+
 async function handle(req) {
+  // 하드 자막은 스크립트·용어집이 필요 없다 — 엔진이 막 뜬 참이어도 기다리지 않는다.
+  if (req.op === 'hardsub') return hardsub(req.text);
   await ready;
   if (req.op === 'ocr') {
     const { text, conf, lines } = await ocr(req.text);

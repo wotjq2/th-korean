@@ -98,42 +98,125 @@ static class LiveCaption
             l.Start();
         }
         catch (Exception e) { Log.Write("실시간 자막: 확장에 내줄 통로를 못 열었습니다 — " + e.Message); return; }
-        System.Web.Script.Serialization.JavaScriptSerializer json = new System.Web.Script.Serialization.JavaScriptSerializer();
         while (true)
         {
-            try
-            {
-                using (System.Net.Sockets.TcpClient c = l.AcceptTcpClient())
-                {
-                    c.ReceiveTimeout = 1000;
-                    c.SendTimeout = 1000;
-                    System.IO.Stream s = c.GetStream();
-                    byte[] req = new byte[2048];
-                    s.Read(req, 0, req.Length); // GET /caption — 무엇을 물어도 같은 답
-                    Dictionary<string, object> d = new Dictionary<string, object>();
-                    lock (lk)
-                    {
-                        d["on"] = On;
-                        d["text"] = latest;
-                        d["age"] = (int)(DateTime.Now - latestAt).TotalMilliseconds;
-                    }
-                    d["cc"] = ChromeCc();
-                    d["ccLang"] = ccLang;
-                    d["ccTr"] = ccTr;
-                    d["ko"] = latest.Length == 0 && (DateTime.Now - koreanAt).TotalSeconds < 6;
-                    d["dead"] = dead;
-                    lastPolled = DateTime.Now;
-                    byte[] body = System.Text.Encoding.UTF8.GetBytes(json.Serialize(d));
-                    // 'Access-Control-Allow-Origin' 은 붙이지 않는다 — 붙이면 아무 웹사이트나 사용자가 듣는 말(자막)을 읽어 갈 수
-                    // 있다(2026-11-04 전수검사). 확장·몽키는 권한 있는 요청(GM_xmlhttpRequest)이라 이 머리글 없이도 읽는다.
-                    byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
-                        + "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.Length + "\r\n\r\n");
-                    s.Write(head, 0, head.Length);
-                    s.Write(body, 0, body.Length);
-                }
-            }
-            catch (Exception) { /* 끊긴 연결 */ }
+            System.Net.Sockets.TcpClient c;
+            try { c = l.AcceptTcpClient(); }
+            catch (Exception) { Thread.Sleep(50); continue; }
+            // 연결마다 따로 — 자막 그림 읽기(POST /ocr, 0.1초 남짓)가 다른 탭의 자막 묻기(0.7초마다)를 막지 않게.
+            ThreadPool.QueueUserWorkItem(delegate { Answer(c); });
         }
+    }
+
+    const int MaxBody = 4 * 1024 * 1024; // 자막 줄 그림(RGBA base64) — 보통 0.2~0.4MB
+
+    static void Answer(System.Net.Sockets.TcpClient c)
+    {
+        try
+        {
+            using (c)
+            {
+                c.ReceiveTimeout = 3000;
+                c.SendTimeout = 3000;
+                System.IO.Stream s = c.GetStream();
+                // 머리글(빈 줄까지)을 읽는다. 예전에는 2KB 한 번만 읽고 무엇을 물어도 자막 답을 했다(GET /caption).
+                System.IO.MemoryStream got = new System.IO.MemoryStream();
+                byte[] buf = new byte[16384];
+                int headEnd = -1;
+                while (headEnd < 0 && got.Length < 65536)
+                {
+                    int n = s.Read(buf, 0, buf.Length);
+                    if (n <= 0) break;
+                    got.Write(buf, 0, n);
+                    headEnd = IndexOf(got.GetBuffer(), (int)got.Length, new byte[] { 13, 10, 13, 10 });
+                }
+                string head = System.Text.Encoding.ASCII.GetString(got.GetBuffer(), 0, headEnd < 0 ? (int)got.Length : headEnd);
+                string[] lines = head.Split(new string[] { "\r\n" }, StringSplitOptions.None);
+                string[] first = lines[0].Split(' ');
+                string method = first.Length > 0 ? first[0] : "", path = first.Length > 1 ? first[1] : "";
+                string origin = "";
+                int length = 0;
+                foreach (string h in lines)
+                {
+                    int k = h.IndexOf(':');
+                    if (k <= 0) continue;
+                    string name = h.Substring(0, k).Trim().ToLowerInvariant(), val = h.Substring(k + 1).Trim();
+                    if (name == "origin") origin = val;
+                    else if (name == "content-length") int.TryParse(val, out length);
+                }
+                if (method == "POST" && path.StartsWith("/ocr"))
+                {
+                    // 확장(chrome-extension://)·몽키만 — 웹 페이지가 이 PC 의 도우미에게 일을 시키지 못하게.
+                    if (origin.Length > 0 && !origin.StartsWith("chrome-extension://") && !origin.StartsWith("moz-extension://"))
+                    {
+                        Send(s, "403 Forbidden", "{\"ocr\":0,\"err\":\"origin\"}");
+                        return;
+                    }
+                    if (headEnd < 0 || length <= 0 || length > MaxBody)
+                    {
+                        Send(s, "413 Payload Too Large", "{\"ocr\":0,\"err\":\"size\"}");
+                        return;
+                    }
+                    byte[] body = new byte[length];
+                    int have = (int)got.Length - (headEnd + 4);
+                    Buffer.BlockCopy(got.GetBuffer(), headEnd + 4, body, 0, Math.Min(have, length));
+                    while (have < length)
+                    {
+                        int n = s.Read(body, have, length - have);
+                        if (n <= 0) break;
+                        have += n;
+                    }
+                    string answer;
+                    try { answer = engine.Call("hardsub", "", System.Text.Encoding.UTF8.GetString(body, 0, have), 8000)[0]; }
+                    catch (Exception e)
+                    {
+                        answer = new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(
+                            new Dictionary<string, object> { { "ocr", 0 }, { "err", e.Message } });
+                    }
+                    Send(s, "200 OK", answer);
+                    return;
+                }
+                // GET /caption (그 밖의 무엇을 물어도) — 지금 자막
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                lock (lk)
+                {
+                    d["on"] = On;
+                    d["text"] = latest;
+                    d["age"] = (int)(DateTime.Now - latestAt).TotalMilliseconds;
+                }
+                d["cc"] = ChromeCc();
+                d["ccLang"] = ccLang;
+                d["ccTr"] = ccTr;
+                d["ko"] = latest.Length == 0 && (DateTime.Now - koreanAt).TotalSeconds < 6;
+                d["dead"] = dead;
+                d["ocr"] = 1; // 이 도우미는 화면 자막 그림을 읽는다(POST /ocr) — 확장이 옛 도우미와 가린다
+                lastPolled = DateTime.Now;
+                Send(s, "200 OK", new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(d));
+            }
+        }
+        catch (Exception) { /* 끊긴 연결 */ }
+    }
+
+    // 'Access-Control-Allow-Origin' 은 붙이지 않는다 — 붙이면 아무 웹사이트나 사용자가 듣는 말(자막)을 읽어 갈 수
+    // 있다(2026-11-04 전수검사). 확장·몽키는 권한 있는 요청(GM_xmlhttpRequest)이라 이 머리글 없이도 읽는다.
+    static void Send(System.IO.Stream s, string status, string json)
+    {
+        byte[] body = System.Text.Encoding.UTF8.GetBytes(json);
+        byte[] head = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 " + status + "\r\nContent-Type: application/json; charset=utf-8\r\n"
+            + "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " + body.Length + "\r\n\r\n");
+        s.Write(head, 0, head.Length);
+        s.Write(body, 0, body.Length);
+    }
+
+    static int IndexOf(byte[] a, int len, byte[] pat)
+    {
+        for (int i = 0; i + pat.Length <= len; i++)
+        {
+            int k = 0;
+            while (k < pat.Length && a[i + k] == pat[k]) k++;
+            if (k == pat.Length) return i;
+        }
+        return -1;
     }
 
     // 크롬 설정의 '실시간 자막' 이 켜져 있는가("on"/"off", 모르면 ""). 꺼져 있으면 옮길 글자가 없다 — 사용자

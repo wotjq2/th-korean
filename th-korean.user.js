@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.31.1
+// @version      1.32.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -384,6 +384,12 @@
       subFontWide: 19, // 가로 영상 자막 글자 = 영상 높이 / 이 값
       subBottomTall: 0.22, // 세로 영상 자막을 영상 아래에서 띄우는 높이(영상 높이에 대한 비율)
       subBottomWide: 0.12,
+      // 화면에 박힌 자막(중국 드라마 등) 읽기 — 1 켜기, 0 끄기. 영상 아래쪽(hsTop ~ 끝)을 hsEveryMs 마다 보고,
+      // 획 토막이 hsMinPeak 줄 넘게 몰린 가운데 줄을 자막으로 본다.
+      hsOn: 1,
+      hsEveryMs: 250,
+      hsTop: 0.55,
+      hsMinPeak: 8,
     },
     // 영상 위 '한국어 자막' 단추 자리: auto(영상 왼쪽 밖에 자리가 있으면 거기, 없으면 안쪽 왼쪽 위에서 조금 아래),
     // outside-left, top-left, top-right, bottom-left. hosts 로 사이트마다 따로.
@@ -481,6 +487,10 @@
     subFontWide: [5, 100],
     subBottomTall: [0, 0.9],
     subBottomWide: [0, 0.9],
+    hsOn: [0, 1],
+    hsEveryMs: [100, 3000],
+    hsTop: [0.2, 0.9],
+    hsMinPeak: [3, 60],
   };
 
   function rcBuild(text) {
@@ -5930,7 +5940,8 @@
   }
 
   // video: 자막을 붙일 영상(크롬 실시간 자막이면 지금 재생 중인 영상, 아니면 우리 자막의 dub.video).
-  function dubPlaceSub(video = liveVideo || (dub && dub.video)) {
+  // above: 화면에 박힌 자막 줄의 윗변(영상 높이에 대한 비율) — 우리 자막을 그 줄 바로 위에 둔다(겹치지 않게).
+  function dubPlaceSub(video = liveVideo || (dub && dub.video), above = 0) {
     if (!video || !dubSubEl) return;
     const host = dubHost(video);
     if (dubSubEl.parentNode !== host) host.appendChild(dubSubEl);
@@ -5943,7 +5954,9 @@
     const tall = r.height > r.width;
     // 나누는 값·띄우는 높이는 원격 설정(video.subFontTall·subFontWide·subBottomTall·subBottomWide).
     const base = tall ? r.width / RC.video.subFontTall : Math.min(r.height / RC.video.subFontWide, r.width / (RC.video.subFontWide * 1.58));
-    dubSubEl.style.bottom = `${window.innerHeight - r.bottom + r.height * (tall ? RC.video.subBottomTall : RC.video.subBottomWide)}px`;
+    let bottom = window.innerHeight - r.bottom + r.height * (tall ? RC.video.subBottomTall : RC.video.subBottomWide);
+    if (above > 0) bottom = Math.max(bottom, window.innerHeight - (r.top + r.height * above) + r.height * 0.01);
+    dubSubEl.style.bottom = `${bottom}px`;
     dubSubEl.style.fontSize = `${Math.round(Math.max(12, Math.min(40, base * (dubCfg.subScale || 1))))}px`;
   }
 
@@ -5965,6 +5978,8 @@
       dubWanted = keep;
       return;
     }
+    // 자막 파일을 아직 받는 중(문장 0) — 화면에 박힌 자막을 읽어 띄우는 중이면 그 자막을 지우거나 옮기지 않는다.
+    if (!d.sentences.length && hsOwns(v)) return;
     dubPlaceSub();
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) {
       if (d.cur !== -2) {
@@ -6496,8 +6511,11 @@
     }
     // 유튜브에서 자막 파일이 없어 크롬 실시간 자막이 이 영상 위에 나오는 중 — 창에 '꺼짐' 이라고 쓰면 고장처럼 보인다.
     const liveHere = YOUTUBE && !mine && liveFor && liveFor === dubPanel.lzkVideo && ['ok', 'pause'].includes(liveState);
-    if (!on && !liveHere)
+    // 화면에 박힌 자막을 읽어 옮기는 중(hsTick)
+    const hsHere = (!mine || dub.failed) && hsOwns(dubPanel.lzkVideo);
+    if (!on && !liveHere && !hsHere)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
+    else if (hsHere) st.textContent = `화면에 박힌 중국어 자막을 읽어 옮기는 중 · ${hs.lines}줄 (번역 도우미)`;
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : liveHere ? '자막 파일이 없는 영상 · ' : '켜짐 · '}${liveNote()}`;
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
@@ -6903,7 +6921,8 @@
     // 자막 창(검은 상자)을 화면 밖으로 치워 둔다(사용자 2026-11-02: 쇼츠·페이스북에서 그 창이 댓글을 가려 불편). 답은 안 쓴다.
     if (YOUTUBE) ytLearnSpoken();
     const korean = ytKoreanVideo();
-    const quiet = !want || dubOwns(v) || korean;
+    // 화면에 박힌 자막을 읽어 옮기는 영상이면 그쪽이 정확하다(타이밍·글자 모두) — 실시간 자막은 띄우지 않는다.
+    const quiet = !want || dubOwns(v) || korean || hsOwns(v);
     if (quiet) {
       if (want) liveVideo = null;
       if (korean) {
@@ -6921,7 +6940,7 @@
       if (quiet) return;
       if (text) liveHad = true;
       liveSetState(state === 'quiet' && liveHad ? 'pause' : state);
-      if (dubOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
+      if (dubOwns(v) || hsOwns(v) || (!YOUTUBE && !dubCfg.pageSubs)) return;
       if (!liveHinted && state === 'ccoff') {
         liveHinted = true;
         liveHintUntil = Date.now() + 9000;
@@ -6944,6 +6963,7 @@
     };
     const fail = () => {
       liveFails++;
+      hsHelperOk = false;
       // 도우미가 답하지 않는다(꺼졌다) — 확장이면 '크롬과 함께 켜기' 설정에 따라 다시 켜 달라고 한다(1분에 한 번).
       if (typeof GM_helperAutoStart === 'function') GM_helperAutoStart();
       liveNext = Date.now() + Math.min(30000, 1500 * liveFails);
@@ -6961,6 +6981,7 @@
         } catch {
           j = null;
         }
+        hsHelperOk = !!(j && j.ocr); // 화면 자막 그림을 읽는 도우미(1.32.0 과 함께 나온 판)
         const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < Date.now() - liveSince; // 이 영상을 틀고 나서 바뀐 말
         const text = fresh ? liveTail(String(j.text || '').split('\n').slice(-2).join(' ')) : '';
         if (j && Date.now() < liveCcHoldUntil) j.ccTr = liveCc.tr; // 방금 창에서 바꿨다 — 크롬이 설정 파일을 쓰기까지
@@ -6978,8 +6999,321 @@
     });
   }
 
+  // --- 화면에 박힌 자막(하드 자막) → 영상 위 한국어 ---
+  // 사용자(2026-11-18, 중국 드라마 vrGIeGBPXwc '자막이 너무 맞지 않아서 보기 힘들어요'): 자막 파일이 없는 영상은 크롬
+  // 실시간 자막(소리 → 받아 적기 → 번역)이라 한 문장씩 늦게 나와 화면의 중국어 자막과 엇갈렸다. 중국 드라마는 거의 다
+  // 중국어 자막이 화면에 박혀 있어, 그 줄을 읽으면 글자도 타이밍도 원본 그대로다.
+  // 영상 아래쪽(hsTop~끝)을 hsEveryMs 마다 영상 높이 360 으로 줄여 보고, '획'(밝은 무채색이 짧게 이어지고 양 끝이 어두운
+  // 테두리)이 몰린 가운데 줄을 찾는다. 같은 줄이 두 번 이어 보이면 원본 크기로 잘라 번역 도우미(POST 127.0.0.1:38291/ocr,
+  // engine.js hardsub — 흑백으로 바꿔 Tesseract 간체·번체)에 읽히고, 옮겨서 그 줄 바로 위에 띄운다. 줄이 바뀌면 바로
+  // 내리고 새 줄을 읽는다. 한 영상에서 자막을 두 번(아주 또렷하면 한 번) 읽어 내면 그 영상은 이쪽이 맡고 실시간 자막은 쉰다.
+  // 시험(드라마 5개 64장): 자막 27줄 모두 찾음, 잘못 찾은 3곳은 읽기에서 걸러짐, 읽기 21/25줄 정확(글자 오류 4.7%).
+  const HS_URL = 'http://127.0.0.1:38291/ocr';
+  const HS_GW = 48;
+  const HS_GH = 6;
+  let hsHelperOk = false; // liveTick 이 도우미 답(ocr: 1)으로 정한다 — 옛 도우미·도우미 없음이면 묻지 않는다
+  let hs = null; // 지금 영상: { v, key, on, hits, lines, seen(지금 화면의 줄), cand, same, read(읽은 줄), busy, showing }
+  let hsCv = null;
+  let hsG = null;
+  let hsNext = 0;
+  let hsFails = 0;
+  const hsOwns = (v) => !!(hs && hs.on && hs.v === v);
+  const HS_CJK = /[㐀-鿿豈-﫿]/g;
+
+  // 띠(px, w×h — 영상 높이 360 기준)에서 자막 줄 상자 { x, y, w, h, sig } 또는 null.
+  function hsFind(px, w, h) {
+    const n = w * h;
+    const lum = new Uint8Array(n);
+    const ok = new Uint8Array(n);
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      const r = px[p];
+      const g = px[p + 1];
+      const b = px[p + 2];
+      const l = (r * 299 + g * 587 + b * 114) / 1000;
+      lum[i] = l;
+      ok[i] = l >= 170 && Math.max(r, g, b) - Math.min(r, g, b) <= 70 ? 1 : 0;
+    }
+    // 가로로만 본다(줄 찾기에는 충분하고 절반 빠르다). 획 두께 한계 10(영상 높이의 2.8%), 테두리 3화소 안.
+    const ink = new Uint8Array(n);
+    const rows = new Uint16Array(h);
+    const x0 = Math.floor(w * 0.08);
+    const x1 = Math.ceil(w * 0.92);
+    for (let y = 0; y < h; y++) {
+      const s = y * w;
+      let a = -1;
+      for (let x = 0; x <= w; x++) {
+        const on = x < w && ok[s + x];
+        if (on && a < 0) a = x;
+        if (on || a < 0) continue;
+        if (x - a <= 10) {
+          let peak = 0;
+          for (let t = a; t < x; t++) if (lum[s + t] > peak) peak = lum[s + t];
+          const lim = peak - 70;
+          let L = false;
+          let R = false;
+          for (let d = 1; d <= 3 && !L; d++) if (a - d >= 0 && lum[s + a - d] <= lim) L = true;
+          for (let d = 0; d < 3 && !R; d++) if (x + d < w && lum[s + x + d] <= lim) R = true;
+          if (L && R) {
+            ink.fill(1, s + a, s + x);
+            if (a >= x0 && x <= x1) rows[y]++;
+          }
+        }
+        a = -1;
+      }
+    }
+    let peak = 0;
+    for (let y = 0; y < h; y++) if (rows[y] > peak) peak = rows[y];
+    if (peak < RC.video.hsMinPeak) return null;
+    // 획 토막이 많은 줄들(빈 줄 둘까지는 잇는다), 높이 9~40(영상 높이의 2.5~11%)
+    const thr = Math.max(3, Math.round(peak * 0.3));
+    const lines = [];
+    let s0 = -1;
+    let gap = 0;
+    for (let y = 0; y <= h; y++) {
+      if (y < h && rows[y] >= thr) {
+        if (s0 < 0) s0 = y;
+        gap = 0;
+      } else if (s0 >= 0 && (++gap > 2 || y === h)) {
+        const e = y - gap + 1;
+        if (e - s0 >= 9 && e - s0 <= 40) lines.push([s0, e]);
+        s0 = -1;
+        gap = 0;
+      }
+    }
+    if (!lines.length) return null;
+    const score = ([a, b]) => rows.slice(a, b).reduce((x, y) => x + y, 0);
+    let bi = 0;
+    lines.forEach((l, i) => score(l) > score(lines[bi]) && (bi = i));
+    let [top, bot] = lines[bi];
+    // 줄 높이만큼 가까운 위·아래 줄은 같은 자막(두 줄 자막)
+    for (let k = bi - 1; k >= 0 && top - lines[k][1] <= (bot - top) * 0.8; k--) top = lines[k][0];
+    for (let k = bi + 1; k < lines.length && lines[k][0] - bot <= (bot - top) * 0.8; k++) bot = lines[k][1];
+    const lh = bot - top;
+    const cols = new Uint16Array(w);
+    for (let y = top; y < bot; y++) for (let x = 0; x < w; x++) cols[x] += ink[y * w + x];
+    // 가로 덩어리(글자 높이 1.5배 넘는 빈 틈에서 끊는다) 중 획이 가장 많은 것 — 띄어 쓴 자막('为你生 为你爱')도 하나로
+    let best = null;
+    let cs = -1;
+    let cg = 0;
+    for (let x = 0; x <= w; x++) {
+      if (x < w && cols[x] > 0) {
+        if (cs < 0) cs = x;
+        cg = 0;
+      } else if (cs >= 0 && (++cg > lh * 1.5 || x === w)) {
+        const b = x - cg + 1;
+        let m = 0;
+        for (let t = cs; t < b; t++) m += cols[t];
+        if (!best || m > best.n) best = { a: cs, b, n: m };
+        cs = -1;
+        cg = 0;
+      }
+    }
+    if (!best) return null;
+    const bw = best.b - best.a;
+    const fill = best.n / (bw * lh);
+    if (bw < lh * 1.5 || fill < 0.05 || fill > 0.6 || Math.abs((best.a + best.b) / 2 - w / 2) > w * 0.16) return null;
+    // 모양 지문(48×6 칸) — 줄이 바뀌었는지 견준다
+    const sig = new Uint8Array(HS_GW * HS_GH);
+    for (let gy = 0; gy < HS_GH; gy++) {
+      const ya = top + Math.floor((gy * lh) / HS_GH);
+      const yb = Math.max(ya + 1, top + Math.floor(((gy + 1) * lh) / HS_GH));
+      for (let gx = 0; gx < HS_GW; gx++) {
+        const xa = best.a + Math.floor((gx * bw) / HS_GW);
+        const xb = Math.max(xa + 1, best.a + Math.floor(((gx + 1) * bw) / HS_GW));
+        let m = 0;
+        for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) m += ink[y * w + x];
+        sig[gy * HS_GW + gx] = m / ((yb - ya) * (xb - xa)) > 0.15 ? 1 : 0;
+      }
+    }
+    return { x: best.a, y: top, w: bw, h: lh, sig };
+  }
+
+  // 같은 자막 줄인가(자리가 거의 같고 모양 지문이 90% 넘게 같다).
+  function hsSame(a, b) {
+    if (!a || !b) return false;
+    if (Math.abs(a.x - b.x) > Math.max(6, b.w * 0.08) || Math.abs(a.w - b.w) > Math.max(6, b.w * 0.1) || Math.abs(a.y - b.y) > 4) return false;
+    let d = 0;
+    for (let i = 0; i < a.sig.length; i++) d += a.sig[i] !== b.sig[i];
+    return d <= a.sig.length * 0.1;
+  }
+
+  // 영상 아래쪽 띠를 떠서 자막 줄을 찾는다. 다른 곳에서 온 영상(그림을 읽을 수 없음)은 SecurityError 를 던진다.
+  function hsGrab(v) {
+    const vw = v.videoWidth;
+    const vh = v.videoHeight;
+    if (!vw || !vh) return null;
+    const top = Math.floor(vh * RC.video.hsTop);
+    const k = 360 / vh;
+    const w = Math.max(1, Math.round(vw * k));
+    const h = Math.max(1, Math.round((vh - top) * k));
+    if (!hsCv) {
+      hsCv = document.createElement('canvas');
+      hsG = hsCv.getContext('2d', { willReadFrequently: true });
+    }
+    if (hsCv.width !== w || hsCv.height !== h) {
+      hsCv.width = w;
+      hsCv.height = h;
+    }
+    hsG.drawImage(v, 0, top, vw, vh - top, 0, 0, w, h);
+    const f = hsFind(hsG.getImageData(0, 0, w, h).data, w, h);
+    return f && { ...f, k, top, vw, vh, above: (top + f.y / k) / vh };
+  }
+
+  // 찾은 줄을 원본 크기로 잘라(줄 높이 72화소 안쪽으로 줄여 — 읽기 시험이 이 크기였다) RGBA 그대로 보낸다.
+  function hsCrop(v, f) {
+    const lineH = f.h / f.k;
+    const sc = Math.min(1, 72 / lineH);
+    const pad = Math.round(lineH * 0.3);
+    const sx = Math.max(0, Math.floor(f.x / f.k) - pad);
+    const sy = Math.max(0, f.top + Math.floor(f.y / f.k) - pad);
+    const sw = Math.min(f.vw - sx, Math.ceil(f.w / f.k) + 2 * pad);
+    const sh = Math.min(f.vh - sy, Math.ceil(lineH) + 2 * pad);
+    const W = Math.max(1, Math.round(sw * sc));
+    const H = Math.max(1, Math.round(sh * sc));
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(v, sx, sy, sw, sh, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data;
+    let bin = '';
+    for (let i = 0; i < d.length; i += 32768) bin += String.fromCharCode.apply(null, d.subarray(i, i + 32768));
+    const ry = (f.top + Math.floor(f.y / f.k) - sy) * sc;
+    return { w: W, h: H, vh: Math.round(f.vh * sc), rows: [Math.max(0, Math.floor(ry) - 2), Math.min(H, Math.ceil(ry + lineH * sc) + 2)], px: btoa(bin) };
+  }
+
+  // 읽은 글이 자막인가: 한자가 둘 넘고 글자·숫자의 80% 넘게 한자, 확신도 40 넘게(자막이 아닌 곳은 0~4, 광고의 한글은 숫자·부스러기가 섞였다).
+  function hsAccept(j) {
+    const t = String((j && j.text) || '');
+    const cjk = (t.match(HS_CJK) || []).length;
+    const all = (t.match(/[\p{L}\p{N}]/gu) || []).length;
+    return !!(j && j.ocr && cjk >= 2 && cjk >= all * 0.8 && j.conf >= 40);
+  }
+
+  function hsRead(st, f) {
+    let crop;
+    try {
+      crop = hsCrop(st.v, f);
+    } catch {
+      return;
+    }
+    st.busy = true;
+    const failed = () => {
+      st.busy = false;
+      hsFails++;
+      hsNext = Date.now() + Math.min(30000, 2000 * hsFails);
+    };
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: HS_URL,
+      data: JSON.stringify(crop),
+      headers: { 'Content-Type': 'text/plain' },
+      timeout: 8000,
+      onload: async (r) => {
+        let j = null;
+        try {
+          j = JSON.parse(r.responseText);
+        } catch {
+          j = null;
+        }
+        if (!j || !j.ocr) return failed();
+        hsFails = 0;
+        const good = hsAccept(j);
+        let ko = '';
+        if (good) {
+          st.hits++;
+          st.lines++;
+          if (!st.on && (st.hits >= 2 || (j.conf >= 75 && (j.text.match(HS_CJK) || []).length >= 4))) {
+            st.on = true;
+            if (st.v === liveVideo) liveVideo = null; // 실시간 자막을 띄우던 영상 — 이제 이쪽이 쓴다
+            dubStatus();
+          }
+          try {
+            ko = (await translateToKorean([j.text]))[0] || '';
+          } catch {
+            ko = '';
+          }
+        }
+        st.read = { ...f, text: j.text, ko, good };
+        st.busy = false;
+        if (hs === st) hsRender();
+      },
+      onerror: failed,
+      ontimeout: failed,
+    });
+  }
+
+  // 지금 화면의 줄이 읽어 옮긴 줄과 같으면 그 번역을, 아니면(바뀌었거나 사라졌으면) 아무것도.
+  function hsRender() {
+    const st = hs;
+    if (!st) return;
+    const r = st.read;
+    const text = st.on && st.seen && r && r.good && r.ko && hsSame(st.seen, r) ? r.ko : '';
+    if (text) {
+      dubShowSub(text);
+      dubPlaceSub(st.v, r.above);
+      st.showing = true;
+    } else if (st.showing) {
+      dubShowSub('');
+      st.showing = false;
+    }
+  }
+
+  function hsStop() {
+    if (hs && hs.showing) dubShowSub('');
+    hs = null;
+  }
+
+  function hsTick() {
+    // 내 언어가 중국어면 화면 자막을 그대로 읽으면 된다.
+    if (!RC.video.hsOn || !hsHelperOk || !dubCfg.subs || MY2 === 'zh' || MY2 === 'yue') return hsStop();
+    if (document.visibilityState !== 'visible' || Date.now() < hsNext) return;
+    let v = livePlayingVideo();
+    if (!v && hs && hs.v.isConnected && hs.v.paused && !hs.v.ended) v = hs.v; // 멈춘 동안에는 보이던 번역을 그대로
+    if (!(YOUTUBE || dubCfg.pageSubs) || !v) return hsStop();
+    if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) return hsStop();
+    // 자막 파일 자막(dub)이 문장을 가졌으면 그쪽. 아직 받는 중(광고 기다림 등, 문장 0)이면 화면 자막을 먼저 읽는다 —
+    // 시험 크롬에서 자막 파일이 없는 이 드라마도 '광고가 끝나면 시작합니다…' 로 10~30초를 붙잡고 있었다.
+    if ((dubOwns(v) && dub.sentences.length) || ytKoreanVideo()) return hsStop();
+    const key =`${YOUTUBE ? ytVideoId() : v.currentSrc}|${location.pathname}`;
+    if (!hs || hs.v !== v || hs.key !== key) {
+      hsStop();
+      hs = { v, key, on: false, hits: 0, lines: 0, ticks: 0, miss: 0, seen: null, cand: null, same: 0, read: null, busy: false, showing: false };
+    }
+    const st = hs;
+    if (st.tainted || v.paused || v.seeking) return hsRender();
+    // 2분 넘게 자막을 한 줄도 못 읽은 영상(박힌 자막이 없는 영상)은 2초에 한 번만 본다.
+    if (++st.ticks > 120000 / RC.video.hsEveryMs && !st.hits && st.ticks % 8) return;
+    let f = null;
+    try {
+      f = hsGrab(v);
+    } catch {
+      st.tainted = true; // 다른 곳에서 온 영상 — 그림을 읽을 수 없다
+      return;
+    }
+    if (!f) {
+      // 한 번 못 찾은 것은 넘긴다(장면 바뀜·흔들림) — 두 번 이어 없으면 자막이 사라진 것
+      if (++st.miss >= 2) {
+        st.seen = null;
+        st.cand = null;
+        st.same = 0;
+      }
+      return hsRender();
+    }
+    st.miss = 0;
+    st.seen = f;
+    if (hsSame(f, st.cand)) st.same++;
+    else {
+      st.cand = f;
+      st.same = 1;
+    }
+    if (st.same >= 2 && !st.busy && !(st.read && hsSame(f, st.read))) hsRead(st, f);
+    hsRender();
+  }
+
   function videoDubInit() {
     setInterval(liveTick, 700);
+    setInterval(hsTick, RC.video.hsEveryMs);
     // 넘기면 앞 영상이 멈춘다 — 다음 liveTick(0.7초)을 기다리지 않고 그 영상의 실시간 자막을 바로 내린다.
     document.addEventListener('pause', (e) => e.target === liveVideo && liveHide(), true);
     try {

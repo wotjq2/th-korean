@@ -225,10 +225,10 @@ function ocr(file, opts) {
   if (!ocrThread) {
     const { Worker } = require('worker_threads');
     ocrThread = new Worker(path.join(__dirname, 'ocr-worker.js'), { workerData: { cachePath: DATA } });
-    ocrThread.on('message', ({ id, text, conf, lines, err }) => {
+    ocrThread.on('message', ({ id, text, conf, lines, words, err }) => {
       const w = ocrWaiting.get(id);
       ocrWaiting.delete(id);
-      if (w) (err ? w.reject(new Error(err)) : w.resolve({ text, conf, lines }));
+      if (w) (err ? w.reject(new Error(err)) : w.resolve({ text, conf, lines, words }));
     });
     ocrThread.on('error', (e) => {
       for (const w of ocrWaiting.values()) w.reject(e);
@@ -712,20 +712,52 @@ function hsClean(t) {
     .trim();
 }
 
+// 낱말 자리로 줄을 다시 잇는다. 사용자(2026-11-19 캡처): 구절을 띄어 쓴 자막의 빈칸을 지우고 붙이니 구글이 뜻을 뭉갰다 —
+// '谁说的你们俩谁说的' → '너희 둘은 누가 그랬어?', 쉼표로 두면 '누가 말했어? 둘 중 누가 말했나요?'. 그래서 한자 사이가 한 글자
+// 크기(em)의 75% 넘게 벌어졌으면 '，' — 시험(28줄): 보통 글자 사이는 em 의 0.71 까지, 구절 사이 빈칸은 0.77~1.25. 양 끝의 한자 없는 부스러기(자른 가장자리를 읽은 '1')는 떨어져 있거나 흐리면 버린다
+// ('1扒衣服吧把他衣服脱了1' → '1옷을 벗으세요 1' 이었다).
+function hsJoin(words, fallback) {
+  const isCjk = (t) => new RegExp(`[${CJK_CH}]`).test(t);
+  const ws = (words || []).map((w) => ({ ...w, t: String(w.t || '').trim() })).filter((w) => w.t);
+  // 글자 크기(em) = 한자 낱말 높이 중 큰 쪽(一·二 처럼 납작한 글자는 낮다)
+  const hs = ws.filter((w) => isCjk(w.t)).map((w) => w.h || 0).sort((a, b) => a - b);
+  if (hs.length < 2) return hsClean(fallback);
+  const cw = hs[Math.floor((hs.length - 1) * 0.8)];
+  if (process.env.TH_HS_DEBUG) console.error(`[hs] em ${cw} ` + ws.map((w, i) => (i ? `(${w.x0 - ws[i - 1].x1})` : '') + w.t).join(''));
+  const junk = (w, gap) => !isCjk(w.t) && [...w.t].length <= 2 && (gap > cw * 0.4 || w.c < 50);
+  while (ws.length > 1 && junk(ws[0], ws[1].x0 - ws[0].x1)) ws.shift();
+  while (ws.length > 1 && junk(ws[ws.length - 1], ws[ws.length - 1].x0 - ws[ws.length - 2].x1)) ws.pop();
+  let out = '';
+  ws.forEach((w, i) => {
+    if (i) {
+      const a = isCjk(ws[i - 1].t);
+      const b = isCjk(w.t);
+      if (a && b && w.x0 - ws[i - 1].x1 > cw * 0.75 && !/[，。？！、…：；,.?!]$/.test(out)) out += '，';
+      else if (!a || !b) out += ' ';
+    }
+    out += w.t;
+  });
+  return hsClean(out);
+}
+
 // text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], px: RGBA base64}
-// 답: {ocr: 1, text, conf, lang} — 간체로 읽고, 덜 확신하면(70 아래) 번체로도 읽어 더 확신하는 쪽.
+// 답: {ocr: 1, text, conf, lang} — 간체로 읽고, 덜 확신하면(70 아래) 번체로도 읽는다. 번체는 간체보다 6 넘게 더 확신할 때만
+// — 간체 자막을 번체로 읽으면 엉뚱한 글자가 섞였다(枪毙了我我也不干: 간체 67 '枪此了…', 번체 67 '槍緒了…不千' → 구글이
+// '내가 뭘 하고 있는지 모르겠어요'). 번체 자막 드라마는 번체 쪽이 훨씬 높게 나온다(81 대 50대).
 async function hardsub(text) {
   const j = JSON.parse(text);
   const w = j.w | 0, h = j.h | 0;
   const px = Buffer.from(String(j.px || ''), 'base64');
   if (!(w > 0 && h > 0 && w * h <= 4e6 && px.length === w * h * 4)) throw new Error('자막 그림이 잘못되었습니다');
   const rows = Array.isArray(j.rows) ? [Math.max(0, j.rows[0] | 0), Math.min(h, j.rows[1] | 0)] : [0, h];
-  const file = `data:image/pgm;base64,${hsBinarize(px, w, h, rows, Number(j.vh) || h * 8).toString('base64')}`;
+  const pgm = hsBinarize(px, w, h, rows, Number(j.vh) || h * 8);
+  if (process.env.TH_HS_DEBUG) fs.writeFileSync(path.join(require('os').tmpdir(), `hs-${Date.now()}.pgm`), pgm);
+  const file = `data:image/pgm;base64,${pgm.toString('base64')}`;
   let best = null;
   for (const lang of ['chi_sim', 'chi_tra']) {
     const r = await ocr(file, { langs: [lang], psm: '13' });
-    const got = { text: hsClean(r.text), conf: Math.round(r.conf), lang: lang === 'chi_sim' ? 'zh-CN' : 'zh-TW' };
-    if (!best || got.conf > best.conf) best = got;
+    const got = { text: hsJoin(r.words, r.text), conf: Math.round(r.conf), lang: lang === 'chi_sim' ? 'zh-CN' : 'zh-TW' };
+    if (!best || got.conf > best.conf + 6) best = got;
     if (best.conf >= 70) break;
   }
   return { out: JSON.stringify({ ocr: 1, ...best }), via: String(best.conf) };

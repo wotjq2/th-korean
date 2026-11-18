@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.32.0
+// @version      1.32.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -7089,9 +7089,33 @@
     for (let k = bi - 1; k >= 0 && top - lines[k][1] <= (bot - top) * 0.8; k--) top = lines[k][0];
     for (let k = bi + 1; k < lines.length && lines[k][0] - bot <= (bot - top) * 0.8; k++) bot = lines[k][1];
     const lh = bot - top;
+    // 줄 안에서는 세로로도 본다(작은 구역이라 싸다). 三·二·一 처럼 가로획뿐인 글자는 가로로 보면 긴 밝은 토막이라 획으로
+    // 치지 않아, 줄 앞의 '三号 二号' 가 잘려 '号交替跟踪目标车辆' 만 읽혔다(사용자 캡처 2026-11-19).
+    const ya = Math.max(0, top - 3);
+    const yb = Math.min(h, bot + 3);
+    for (let x = 0; x < w; x++) {
+      let a = -1;
+      for (let y = ya; y <= yb; y++) {
+        const on = y < yb && ok[y * w + x];
+        if (on && a < 0) a = y;
+        if (on || a < 0) continue;
+        if (y - a <= 10) {
+          let pk = 0;
+          for (let t = a; t < y; t++) if (lum[t * w + x] > pk) pk = lum[t * w + x];
+          const lim = pk - 70;
+          let U = false;
+          let D = false;
+          for (let d = 1; d <= 3 && !U; d++) if (a - d >= 0 && lum[(a - d) * w + x] <= lim) U = true;
+          for (let d = 0; d < 3 && !D; d++) if (y + d < h && lum[(y + d) * w + x] <= lim) D = true;
+          if (U && D) for (let t = Math.max(a, top); t < Math.min(y, bot); t++) ink[t * w + x] = 1;
+        }
+        a = -1;
+      }
+    }
     const cols = new Uint16Array(w);
     for (let y = top; y < bot; y++) for (let x = 0; x < w; x++) cols[x] += ink[y * w + x];
-    // 가로 덩어리(글자 높이 1.5배 넘는 빈 틈에서 끊는다) 중 획이 가장 많은 것 — 띄어 쓴 자막('为你生 为你爱')도 하나로
+    // 가로 덩어리(글자 높이 2.2배 넘는 빈 틈에서 끊는다) 중 획이 가장 많은 것 — 띄어 쓴 자막('三号 二号 交替…',
+    // '为你生 为你爱')도 하나로. 1.5배로는 구절 사이 빈칸(한 글자 + 양쪽 여백)에서 끊겨 앞 구절이 빠졌다.
     let best = null;
     let cs = -1;
     let cg = 0;
@@ -7099,7 +7123,7 @@
       if (x < w && cols[x] > 0) {
         if (cs < 0) cs = x;
         cg = 0;
-      } else if (cs >= 0 && (++cg > lh * 1.5 || x === w)) {
+      } else if (cs >= 0 && (++cg > lh * 2.2 || x === w)) {
         const b = x - cg + 1;
         let m = 0;
         for (let t = cs; t < b; t++) m += cols[t];

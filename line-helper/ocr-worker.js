@@ -26,7 +26,13 @@ parentPort.on('message', async ({ id, file, langs, psm }) => {
     const { data } = await w.recognize(file, {}, { blocks: true });
     // 줄마다 확신도를 같이 넘긴다 — 말풍선 테두리를 글자로 읽은 부스러기 줄은 확신도가 낮다.
     const lines = (data.lines || []).map((l) => ({ text: l.text, conf: l.confidence }));
-    parentPort.postMessage({ id, text: data.text || '', conf: data.confidence || 0, lines });
+    // 낱말마다 가로 자리 — 화면 자막의 구절 사이 빈칸('扒衣服吧 把他衣服脱了')을 쉼표로 살리는 데 쓴다(engine.js hsJoin).
+    const words = [];
+    for (const b of data.blocks || [])
+      for (const p of b.paragraphs || [])
+        for (const l of p.lines || [])
+          for (const wd of l.words || []) words.push({ t: wd.text, c: wd.confidence, x0: wd.bbox.x0, x1: wd.bbox.x1, h: wd.bbox.y1 - wd.bbox.y0 });
+    parentPort.postMessage({ id, text: data.text || '', conf: data.confidence || 0, lines, words });
   } catch (e) {
     parentPort.postMessage({ id, err: String((e && e.message) || e) });
   }

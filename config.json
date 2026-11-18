@@ -24,7 +24,14 @@
     { "id": "vi", "label": "베", "name": "베트남어", "mt": "vi", "chip": "→ VI", "glossary": "glossary-vi.txt", "reverse": "reverse-vi.txt", "reverseKo": "reverse-vi-ko.txt" },
     { "id": "he", "label": "이", "name": "히브리어", "mt": "he", "chip": "→ עברית", "glossary": "glossary-he.txt" },
     { "id": "pl", "label": "폴", "name": "폴란드어", "mt": "pl", "chip": "→ PL", "glossary": "glossary-pl.txt" },
-    { "id": "mn", "label": "몽", "name": "몽골어", "mt": "mn", "chip": "→ МОН", "glossary": "glossary-mn.txt", "reverse": "reverse-mn.txt", "reverseKo": "reverse-mn-ko.txt" }
+    { "id": "mn", "label": "몽", "name": "몽골어", "mt": "mn", "chip": "→ МОН", "glossary": "glossary-mn.txt", "reverse": "reverse-mn.txt", "reverseKo": "reverse-mn-ko.txt" },
+    { "id": "zh-TW", "label": "대", "name": "중국어(번체·대만)", "mt": "zh-TW", "chip": "→ 繁體中文" },
+    { "id": "ms", "label": "말", "name": "말레이어", "mt": "ms", "chip": "→ MS" },
+    { "id": "tl", "label": "필", "name": "필리핀어", "mt": "tl", "chip": "→ FIL" },
+    { "id": "km", "label": "캄", "name": "크메르어(캄보디아)", "mt": "km", "chip": "→ ខ្មែរ" },
+    { "id": "lo", "label": "라", "name": "라오어", "mt": "lo", "chip": "→ ລາວ" },
+    { "id": "my", "label": "미얀", "name": "미얀마어", "mt": "my", "chip": "→ မြန်မာ" },
+    { "id": "it", "label": "이탈", "name": "이탈리아어", "mt": "it", "chip": "→ IT" }
   ],
   "_languages": "입력칸의 한국어를 바꿀 언어(사이트의 '번역' 단추·LINE 언어 막대). id = 구글 번역 언어 코드(ko·th·en·vi·id·ms·km·lo·my·fr …), label = 단추 글자(1~3자), name = 이름, mt = 번역에 쓸 코드가 id 와 다를 때(중국어 zh-CN), chip = 입력칸 옆 표시. 용어집을 쓰려면 \"glossary\": \"glossary-vi.txt\" 처럼 th-korean-glossary 저장소의 파일 이름을 적는다(한 줄에 '한국어=그 언어', 태국어 glossary.txt 와 같은 꼴) — 입력 전체가 용어집 줄과 맞으면 그 값, 아니면 구글 번역. 태국어(th)는 빼도 늘 들어간다. 예: { \"id\": \"vi\", \"label\": \"베\", \"name\": \"베트남어\", \"chip\": \"→ VI\", \"glossary\": \"glossary-vi.txt\" }",
 

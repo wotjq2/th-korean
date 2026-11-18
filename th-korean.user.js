@@ -108,8 +108,11 @@
     }
   }
   // 언어 단추 글자. 한국어면 '태·미·중', 다른 언어면 'TH·EN·ZH'(한국어 줄임말은 다른 나라 사람이 못 읽는다).
+  // 한국어가 아니면 언어 코드. 지역이 붙은 코드는 3글자로(zh-TW → ZHT) — 'ZH-TW' 는 30px 동그라미에서 두 줄로 갈렸다.
   function langLabel(lang) {
-    return MY_KO ? lang.label : String(lang.id).toUpperCase();
+    if (MY_KO) return lang.label;
+    const [a, b] = String(lang.id).split('-');
+    return (b ? a + b[0] : a).toUpperCase();
   }
 
   // ---- 화면 글 옮기기 (내 언어가 한국어가 아닐 때만) ----
@@ -4883,7 +4886,10 @@
   const KO_LANG = { id: 'ko', label: '한', name: '한국어', mt: 'ko', chip: '→ 한국어' };
   function myTypeLangs() {
     if (MY_KO) return TYPE_LANGS;
-    return [KO_LANG, ...TYPE_LANGS.filter((l) => l.id !== MY2 && (l.mt || l.id) !== MY)];
+    // 내 언어 자신만 뺀다. 중국어는 간체(zh, mt zh-CN)·번체(zh-TW)가 따로 있어 서로 남긴다 — 전에는 앞 두 글자(zh)로도
+    // 빼서 번체 사용자에게 간체 칸이 없었다. 지역 없는 칸만 있는 언어면(zh-CN 에 zh) 그 칸을 뺀다(번역 도우미 LangBar 와 같다).
+    const exact = TYPE_LANGS.some((l) => l.id === MY);
+    return [KO_LANG, ...TYPE_LANGS.filter((l) => l.id !== MY && (l.mt || l.id) !== MY && !(l.id === MY2 && !exact))];
   }
   // 영어·중국어 샘플 용어집(2026-10-23, 한국어 키 188개 — 지금의 태국어 값을 뜻 힌트로 만들었다: 차=茶·면=棉·수도=自来水).
   // 미·중 을 고르면 입력 전체가 이 키와 맞을 때만 쓰고, 나머지는 무료 번역. 원본 .dev-tools/data/multilang/sample-en-zh.tsv.
@@ -5583,7 +5589,8 @@
 
   function dubVoices() {
     try {
-      return speechSynthesis.getVoices().filter((v) => /^ko/i.test(v.lang));
+      // 자막은 내 언어로 나오니 목소리도 내 언어(한국어 사용자면 한국어 — 예전 그대로)
+      return speechSynthesis.getVoices().filter((v) => YT_MY_RE.test(v.lang || ''));
     } catch {
       return [];
     }
@@ -5697,7 +5704,8 @@
     const ask = [];
     for (const s of batch) {
       s.tried = true;
-      if (d.lang === (MY_KO ? 'ko' : MY2)) {
+      // 이미 내 언어인 자막은 옮기지 않는다(히브리어 iw·필리핀어 fil 처럼 유튜브 코드가 다른 언어도 — YT_MY_RE).
+      if (d.lang && YT_MY_RE.test(d.lang)) {
         s.ko = s.src;
         continue;
       }
@@ -5856,7 +5864,7 @@
       const rate = Math.min(prof.maxRate, Math.max(1, (speed / prof.base) ** (1 / prof.pow)));
       const u = new SpeechSynthesisUtterance(s.ko);
       if (voice) u.voice = voice;
-      u.lang = voice ? voice.lang : 'ko-KR';
+      u.lang = voice ? voice.lang : MY_KO ? 'ko-KR' : MY;
       u.rate = rate;
       u.volume = dubCfg.dubVol;
       if (dubSubEl) dubSubEl.dataset.rate = rate.toFixed(2); // 시험·문제 찾기용
@@ -6073,10 +6081,11 @@
       d.status = '이 영상에는 자막이 없습니다. 자막 없는 영상(음성 인식)은 아직 못 합니다.';
       return null;
     }
-    const t = tracks.find((x) => /^ko/i.test(x.language)) || tracks.find((x) => x.mode === 'showing') || tracks[0];
+    // 내 언어 자막이 있으면 그것(한국어 사용자면 한국어 — 예전 그대로)
+    const t = tracks.find((x) => YT_MY_RE.test(x.language || '')) || tracks.find((x) => x.mode === 'showing') || tracks[0];
     if (t.mode === 'disabled') t.mode = 'hidden'; // 화면에 띄우지 않고 내용만 읽는다
     d.track = t;
-    d.lang = (t.language || '').slice(0, 2).toLowerCase();
+    d.lang = (t.language || '').split('-')[0].toLowerCase();
     // 자막을 조금씩 받는 영상(HLS)도 있어 늘어나는지 계속 본다.
     d.trackPoll = setInterval(() => {
       if (d !== dub) return;
@@ -6147,10 +6156,20 @@
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
   // 내 언어(한국어가 아니면 그 언어)로 — 내 말 영상에는 자막을 덧붙이지 않고, 모자란 줄은 유튜브가 그 언어로 옮긴 자막(tlang)으로.
-  let YT_MY, YT_MY_RE, YT_TLANG;
+  // 유튜브 자막 언어 코드가 구글 번역 코드와 다른 언어(2026-11-18 유튜브 자료로 확인): 히브리어 = iw, 필리핀어 = fil.
+  // 앞의 것이 유튜브에 물을 때 쓰는 코드. 다른 사이트의 자막·목소리는 구글 쪽 코드(he·tl)로 올 수도 있어 둘 다 본다.
+  const YT_CODES = { he: ['iw', 'he'], tl: ['fil', 'tl'] };
+  // 유튜브 자동 자막은 말레이어 말을 인도네시아어(id)로 받아 적는다(말레이시아 뉴스 3개 모두 id:asr) — 말 언어를 가늠할
+  // 때만(내 말 영상인가) 내 말로 친다. 자막을 옮길지는 YT_MY_RE(정확한 언어)로 정한다.
+  const YT_SPOKEN_ALSO = { ms: ['id'] };
+  let YT_MY, YT_MY_RE, YT_SPOKEN_RE, YT_TLANG;
   function ytMyRecalc() {
-    YT_MY = MY_KO ? 'ko' : MY2;
-    YT_MY_RE = new RegExp('^' + YT_MY, 'i');
+    const base = MY_KO ? 'ko' : MY2;
+    const codes = YT_CODES[base] || [base];
+    YT_MY = codes[0];
+    // 뒤에 '-'·':'(자막 목록의 'ko:asr') 나 끝이 와야 한다(ko-KR·zh-Hans 는 맞고, ko 로 시작하는 다른 언어 kok 는 아니다).
+    YT_MY_RE = new RegExp(`^(${codes.join('|')})([-:]|$)`, 'i');
+    YT_SPOKEN_RE = new RegExp(`^(${[...codes, ...(YT_SPOKEN_ALSO[base] || [])].join('|')})([-:]|$)`, 'i');
     YT_TLANG = MY === 'zh-CN' ? 'zh-Hans' : MY === 'zh-TW' ? 'zh-Hant' : YT_MY;
   }
   ytMyRecalc();
@@ -6176,7 +6195,7 @@
   const ytSpokenFrom = (tracks, meta, variants) => {
     const list = (tracks || []).filter((t, i) => !(Array.isArray(variants) && RC.youtube.extraAsr.includes(variants[i])));
     const asr = list.filter((t) => t.endsWith(':asr')).map((t) => t.split(':')[0].toLowerCase());
-    if (asr.length) return asr.some((l) => YT_MY_RE.test(l)) ? YT_MY : asr[0];
+    if (asr.length) return asr.some((l) => YT_SPOKEN_RE.test(l)) ? YT_MY : asr[0];
     if (list.length && list.every((t) => YT_MY_RE.test(t))) return YT_MY;
     return ytMostlyHangul(meta) ? YT_MY : '';
   };
@@ -6335,7 +6354,7 @@
         // 띄우지 않는다(사용자 2026-11-03). 플레이어가 부른 자막이 한국어라도 사람이 만든 것(kind 없음)이면 말은 외국어일
         // 수 있다 — 한국어 화면의 계정은 TED 같은 외국어 영상에서도 한국어 자막을 먼저 부른다. 그래서 자막 목록으로 안
         // 말 언어(ytSpoken)를 먼저 보고, 모를 때만 한국어 자동 자막(asr)을 한국어 말로 친다.
-        if (koVideo() || (!ytSpoken.get(id) && asr && YT_MY_RE.test(spoken))) {
+        if (koVideo() || (!ytSpoken.get(id) && asr && YT_SPOKEN_RE.test(spoken))) {
           ytSpoken.set(id, YT_MY);
           d.status = KO_VIDEO;
           return null;
@@ -6355,7 +6374,7 @@
           if (cues && cues.length) {
             // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
             if (d.auto && lang === YT_MY) return null;
-            d.lang = lang.slice(0, 2).toLowerCase();
+            d.lang = lang.split('-')[0].toLowerCase(); // 앞 두 글자만 자르면 fil → fi(핀란드어), yue → yu 가 됐다
             if (d.lang !== YT_MY) d.koFallback = async () => (await get(mk(base, lang, kind, YT_TLANG))) || [];
             return cues;
           }
@@ -6366,7 +6385,7 @@
           u.searchParams.set('fmt', 'json3');
           const cues = await get(u.href);
           if (cues && cues.length) {
-            d.lang = (p.get('tlang') || spoken).slice(0, 2).toLowerCase();
+            d.lang = (p.get('tlang') || spoken).split('-')[0].toLowerCase();
             return cues;
           }
         } catch {
@@ -7022,7 +7041,8 @@
         }
         if (dub) return;
         const tracks = [...v.textTracks].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
-        if (!tracks.length || tracks.some((t) => /^ko/i.test(t.language))) return;
+        // 내 언어 자막이 이미 있는 영상은 저절로 켜지 않는다(사이트 자막으로 보면 된다) — 한국어 사용자면 한국어(예전 그대로).
+        if (!tracks.length || tracks.some((t) => YT_MY_RE.test(t.language || ''))) return;
         dubStart(v, true);
       },
       true

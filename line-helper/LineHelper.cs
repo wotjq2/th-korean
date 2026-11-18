@@ -531,9 +531,12 @@ class LangBar : FloatForm
             if (c == "ko") return BaseLangs;
             if (myLangsFor != c)
             {
+                // 내 언어 자신만 뺀다. 중국어 간체(zh)·번체(zh-TW)는 서로 남긴다 — 전에는 앞 두 글자(zh)로도 빼서 번체
+                // 사용자에게 간체 칸이 없었다. 지역 없는 칸만 있는 언어면(zh-CN 에 zh) 그 칸을 뺀다(웹의 myTypeLangs 와 같다).
                 string c2 = c.Split('-')[0];
+                bool exact = Array.Exists(BaseLangs, x => x[0] == c);
                 List<string[]> l = new List<string[]> { new[] { "ko", "한", "한국어" } };
-                foreach (string[] x in BaseLangs) if (x[0] != c2 && x[0] != c) l.Add(x);
+                foreach (string[] x in BaseLangs) if (x[0] != c && !(x[0] == c2 && !exact)) l.Add(x);
                 myLangs = l.ToArray();
                 myLangsFor = c;
             }
@@ -575,7 +578,13 @@ class LangBar : FloatForm
     }
 
     // 칸 글자: 한국어면 '태·미·중', 다른 언어면 'TH·EN·ZH'(한국어 줄임말은 다른 나라 사람이 못 읽는다).
-    public static string Label(string[] l) { return MyLang.Ko ? l[1] : l[0].ToUpperInvariant(); }
+    // 한국어가 아니면 언어 코드. 지역이 붙은 코드는 3글자로(zh-TW → ZHT — 웹의 langLabel 과 같다; 'ZH-TW' 는 칸을 넘쳤다).
+    public static string Label(string[] l)
+    {
+        if (MyLang.Ko) return l[1];
+        string[] p = l[0].Split('-');
+        return (p.Length > 1 && p[1].Length > 0 ? p[0] + p[1][0] : p[0]).ToUpperInvariant();
+    }
     // 원문도 같이 보내기 칸: '+한' 또는 '+EN' 처럼 내 언어 코드.
     public static string BothLabel { get { return MyLang.Ko ? "+한" : "+" + MyLang.Code.Split('-')[0].ToUpperInvariant(); } }
 

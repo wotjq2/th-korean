@@ -7128,13 +7128,14 @@
     return { x: best.a, y: top, w: bw, h: lh, sig };
   }
 
-  // 같은 자막 줄인가(자리가 거의 같고 모양 지문이 90% 넘게 같다).
+  // 같은 자막 줄인가(자리가 거의 같고 모양 지문이 85% 넘게 같다). 시험(2026-11-18): 같은 줄끼리 0~32칸(짧은 '定有文章'
+  // 은 칸이 작아 화질 잡음이 커서 32 — 10% 로는 다른 줄로 보고 다시 읽느라 깜빡였다), 다른 줄은 130칸 넘게 달랐다.
   function hsSame(a, b) {
     if (!a || !b) return false;
     if (Math.abs(a.x - b.x) > Math.max(6, b.w * 0.08) || Math.abs(a.w - b.w) > Math.max(6, b.w * 0.1) || Math.abs(a.y - b.y) > 4) return false;
     let d = 0;
     for (let i = 0; i < a.sig.length; i++) d += a.sig[i] !== b.sig[i];
-    return d <= a.sig.length * 0.1;
+    return d <= a.sig.length * 0.15;
   }
 
   // 영상 아래쪽 띠를 떠서 자막 줄을 찾는다. 다른 곳에서 온 영상(그림을 읽을 수 없음)은 SecurityError 를 던진다.

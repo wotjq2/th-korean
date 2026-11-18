@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.31.0
+// @version      1.31.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -392,6 +392,9 @@
       ccButton: '.ytp-subtitles-button',
       rightControls: '.ytp-right-controls',
       adShowing: 'ad-showing',
+      // 말 언어를 가늠할 때 빼는 자동 자막의 variant(자막 주소의 variant=) — 유튜브가 진짜 자동 자막 말고 하나 더 붙이는
+      // 것으로, 언어가 말과 상관없다(한국어 쇼츠에 en, 태국어 영상에 en-US — 2026-11-18).
+      extraAsr: ['timing-optimized'],
     },
     ocr: { lang: 'tha' }, // 사진 글자 읽기 언어(Tesseract, 'tha+eng' 처럼 여럿)
     shops: {}, // 검색 가로채기 사이트(라자다·쇼피 칸 고치기, 새 쇼핑몰 더하기) — SITES 참고
@@ -502,9 +505,16 @@
       translate: { order: order.length ? order : D.translate.order },
       video: Object.fromEntries(Object.entries(D.video).map(([k, d]) => [k, rcNum(v[k], d, ...RC_VIDEO_RANGE[k])])),
       chip: { place: places.includes(chip.place) ? chip.place : D.chip.place, hosts },
-      youtube: Object.fromEntries(
-        Object.entries(D.youtube).map(([k, d]) => [k, k === 'adShowing' ? rcStr(yt[k], d, /^[\w-]{1,40}$/) : rcSel(yt[k], d)])
-      ),
+      youtube: {
+        ...Object.fromEntries(
+          Object.entries(D.youtube)
+            .filter(([k]) => k !== 'extraAsr')
+            .map(([k, d]) => [k, k === 'adShowing' ? rcStr(yt[k], d, /^[\w-]{1,40}$/) : rcSel(yt[k], d)])
+        ),
+        extraAsr: Array.isArray(yt.extraAsr)
+          ? yt.extraAsr.filter((s) => typeof s === 'string' && /^[\w-]{1,40}$/.test(s)).slice(0, 10)
+          : D.youtube.extraAsr,
+      },
       ocr: { lang: rcStr(j.ocr && j.ocr.lang, D.ocr.lang, /^[a-z_]{3,10}(\+[a-z_]{3,10}){0,3}$/) },
       shops: rcShops(j.shops),
     };
@@ -6157,10 +6167,17 @@
     const other = (s.match(/[A-Za-z가-힣฀-๿぀-ヿ一-鿿Ѐ-ӿ؀-ۿऀ-ॿ]/g) || []).length - ko;
     return ko > 0 && ko * 2.5 >= other;
   };
-  const ytSpokenFrom = (tracks, meta) => {
-    const asr = (tracks || []).find((t) => t.endsWith(':asr'));
-    if (asr) return asr.split(':')[0].toLowerCase();
-    if (tracks && tracks.length && tracks.every((t) => YT_MY_RE.test(t))) return YT_MY;
+  // 유튜브는 2026-11 부터 진짜 자동 자막(말 언어) 말고도 말과 상관없는 언어의 자동 자막(variant=timing-optimized)을
+  // 하나 더 붙인다 — 한국어 쇼츠 AdgTEqVRQ54 = ['en:asr'(timing-optimized), 'ko:asr'(gemini)]. 첫 자동 자막을 말
+  // 언어로 믿었더니 한국어 쇼츠를 영어 영상으로 보고 화면을 가리는 한국어 자막을 띄웠다(사용자 2026-11-18: 한국 영상에도
+  // 자막 — 내 언어를 고른 사람에게 내 언어 영상의 번역 자막이 저절로 나오면 안 된다). 그래서 그런 자막
+  // (RC.youtube.extraAsr — variants 는 확장의 페이지 쪽 조각이 알려 준다)은 빼고 보고, 자동 자막이 여럿이면(자동 더빙
+  // 등) 그중 하나라도 내 언어면 내 언어 영상으로 친다.
+  const ytSpokenFrom = (tracks, meta, variants) => {
+    const list = (tracks || []).filter((t, i) => !(Array.isArray(variants) && RC.youtube.extraAsr.includes(variants[i])));
+    const asr = list.filter((t) => t.endsWith(':asr')).map((t) => t.split(':')[0].toLowerCase());
+    if (asr.length) return asr.some((l) => YT_MY_RE.test(l)) ? YT_MY : asr[0];
+    if (list.length && list.every((t) => YT_MY_RE.test(t))) return YT_MY;
     return ytMostlyHangul(meta) ? YT_MY : '';
   };
   const ytKoreanVideo = () => YOUTUBE && YT_MY_RE.test(ytSpoken.get(ytVideoId()) || '');
@@ -6177,7 +6194,7 @@
         const cc = await ytCaptions('peek', sel);
         // 조각이 없다(몽키) — '' (모름)로 적어 둔다. 안 적으면 0.7초마다(liveTick) 0.5초씩 기다리며 다시 물었다.
         if (!cc) return ytSpoken.set(id, '');
-        if (cc.id === id && cc.tracks) return ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta));
+        if (cc.id === id && cc.tracks) return ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta, cc.variants));
         await sleep(300);
       }
     })().finally(() => ytSpokenBusy.delete(id));
@@ -6212,14 +6229,16 @@
     const tracks = cc && cc.id === id ? cc.tracks : null;
     if (tracks) {
       d.tracks = tracks;
-      ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta));
+      ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta, cc.variants));
     }
+    const mineVideo = !!tracks && YT_MY_RE.test(ytSpoken.get(id) || '');
     // 자막이 하나도 없는 영상, 또는 저절로 켰는데 한국어 자막뿐인 영상(한국어 영상) — CC 를 켜지 않고 기다리지도
     // 않는다. 자막이 없는 영상은 바로 크롬 실시간 자막으로 넘어간다. 보통 영상도 그렇다: 전에는 '자막 사용 불가'
     // CC 단추를 눌러 보며 15초씩 두 번 기다려, 그 35초 동안 실시간 자막까지 막혀 있었다(사용자 2026-11-06:
     // 자막이 아예 없는 유튜브 영상은 번역이 안 된다 — 페이스북·틱톡은 되는데). 한국어 쇼츠에 CC 를 켜 두면
     // 유튜브 한국어 자막이 떴다.
-    if (tracks && (!tracks.length || (d.auto && tracks.every((t) => YT_MY_RE.test(t))))) {
+    // 내 언어 영상(ytSpokenFrom)도 — 쇼츠 CC 를 켜 보면 유튜브 자막이 뜬다.
+    if (tracks && (!tracks.length || mineVideo || (d.auto && tracks.every((t) => YT_MY_RE.test(t))))) {
       d.noCaptions = true;
       d.why = tracks.length ? `${MY_KO ? '한국어' : '내 언어'} ${ytIsShorts() ? '쇼츠' : '영상'}` : `자막이 없는 ${ytIsShorts() ? '쇼츠' : '영상'} — 크롬 실시간 자막으로`;
       return got();
@@ -6266,7 +6285,7 @@
     d.status = '자막 주소 받는 중…';
     dubStatus();
     // 한국어 영상이면(자막 목록 — ytSpokenFrom) CC 를 껐다 켜 보지도 않는다.
-    const koVideo = () => /^ko/.test(ytSpoken.get(id) || '');
+    const koVideo = () => YT_MY_RE.test(ytSpoken.get(id) || ''); // 내 언어 영상(한국어 사용자면 한국어)
     const KO_VIDEO = MY_KO ? '한국어 영상이라 한국어 자막을 덧붙이지 않습니다' : '내 언어 영상이라 자막을 덧붙이지 않습니다';
     await ytLearnSpoken();
     if (d !== dub) return null;

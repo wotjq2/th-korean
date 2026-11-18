@@ -6,7 +6,7 @@
 // 이벤트 'lzk-yt-cc' 로 부탁하면 여기서 부르고 'lzk-yt-cc-done' 으로 답한다(둘 다 JSON 글자).
 //   부탁: { cmd: 'peek'(보기만) / 'on' / 'off', player, any: 쇼츠 플레이어 선택자 — 스크립트의 원격 설정에서 }
 //   답:   { was: 부르기 전 CC 'on' / 'off' / 'none', id: 영상 id, tracks: ['th:asr', 'en', …] 또는 null(모름),
-//           meta: { title, author, keywords, live } }
+//           variants: ['gemini', '', …](tracks 와 같은 차례), meta: { title, author, keywords, live } }
 // 선택자를 스크립트가 넘기므로 유튜브가 바뀌어도 config.json 만 고치면 이 파일은 그대로다.
 // ---------------------------------------------------------------------------
 
@@ -41,7 +41,14 @@ document.addEventListener('lzk-yt-cc', (e) => {
         // 번역해 보이지 않는다).
         out.meta = { title: v.title || '', author: v.author || '', keywords: (v.keywords || []).slice(0, 30), live: !!v.isLiveContent };
         const list = r && r.captions && r.captions.playerCaptionsTracklistRenderer;
-        out.tracks = ((list && list.captionTracks) || []).map((t) => t.languageCode + (t.kind ? `:${t.kind}` : ''));
+        const caps = (list && list.captionTracks) || [];
+        out.tracks = caps.map((t) => t.languageCode + (t.kind ? `:${t.kind}` : ''));
+        // 자막마다 주소의 variant(tracks 와 같은 차례, 없으면 '') — 유튜브가 2026-11 부터 말 언어와 상관없는 자동 자막
+        // ('timing-optimized')을 하나 더 붙여서, 스크립트가 그것을 빼고 말 언어를 가늠한다.
+        out.variants = caps.map((t) => {
+          const m = /[?&]variant=([\w-]{1,40})/.exec(t.baseUrl || '');
+          return m ? m[1] : '';
+        });
       } catch {
         out.tracks = null;
       }

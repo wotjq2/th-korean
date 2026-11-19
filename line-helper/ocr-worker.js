@@ -6,9 +6,21 @@ const { parentPort, workerData } = require('worker_threads');
 const { createWorker } = require('tesseract.js');
 
 const workers = new Map();
+// 화면 자막은 30개 언어 중 영상마다 몇 개를 읽어 본다 — 언어·방식마다 하나씩 띄운 Tesseract(모델마다 수십 MB)가 쌓이지
+// 않게, 가장 오래 안 쓴 것부터 닫아 10개까지만 둔다.
+const MAX_WORKERS = 10;
 function get(langs, psm) {
   const key = langs.join('+') + '/' + psm;
   let worker = workers.get(key);
+  if (worker) {
+    workers.delete(key); // 맨 뒤로(최근에 씀)
+    workers.set(key, worker);
+  }
+  while (!worker && workers.size >= MAX_WORKERS) {
+    const [old, w] = workers.entries().next().value;
+    workers.delete(old);
+    w.then((x) => x.terminate()).catch(() => {});
+  }
   if (!worker) {
     worker = createWorker(langs, 1, { cachePath: workerData.cachePath, logger: () => {} }).then(async (w) => {
       await w.setParameters({ tessedit_pageseg_mode: psm, preserve_interword_spaces: '1' });

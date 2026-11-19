@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.32.1
+// @version      1.33.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -391,6 +391,8 @@
       hsTop: 0.55,
       hsMinPeak: 8,
     },
+    // 화면 자막 언어를 영상(제목·자동 자막)으로 못 가늠할 때 읽어 볼 언어(구글 코드, 4개까지).
+    hardsub: { fallback: ['zh-CN', 'en'] },
     // 영상 위 '한국어 자막' 단추 자리: auto(영상 왼쪽 밖에 자리가 있으면 거기, 없으면 안쪽 왼쪽 위에서 조금 아래),
     // outside-left, top-left, top-right, bottom-left. hosts 로 사이트마다 따로.
     chip: { place: 'auto', hosts: {} },
@@ -517,6 +519,11 @@
       languages: rcLanguages(j.languages),
       translate: { order: order.length ? order : D.translate.order },
       video: Object.fromEntries(Object.entries(D.video).map(([k, d]) => [k, rcNum(v[k], d, ...RC_VIDEO_RANGE[k])])),
+      hardsub: {
+        fallback: Array.isArray(j.hardsub && j.hardsub.fallback)
+          ? j.hardsub.fallback.filter((c) => typeof c === 'string' && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(c)).slice(0, 4)
+          : D.hardsub.fallback,
+      },
       chip: { place: places.includes(chip.place) ? chip.place : D.chip.place, hosts },
       youtube: {
         ...Object.fromEntries(
@@ -1492,7 +1499,8 @@
   // ---------------------------------------------------------------------------
 
   // 이름은 예전 그대로지만 '내 언어'(MY)로 옮긴다. 한국어가 아니면 고정 용어(태국어→한국어)·AI(한국어 지시문)는 건너뛴다.
-  async function translateToKorean(texts) {
+  // from: 원문 언어를 알면(화면 자막의 로마자 언어 등) — 기본은 구글이 알아본다.
+  async function translateToKorean(texts, from = 'auto') {
     const result = new Array(texts.length);
     const pending = [];
     const pinned = MY_KO ? { ...SEED_PAGE_GLOSSARY, ...cfg.pageGlossary } : {};
@@ -1525,7 +1533,7 @@
     }
 
     if (!translated) {
-      translated = await freeTranslateMany(pendingTexts, 'auto', MY);
+      translated = await freeTranslateMany(pendingTexts, from, MY);
     }
 
     pending.forEach((originalIndex, k) => {
@@ -5980,7 +5988,9 @@
     }
     // 자막 파일을 아직 받는 중(문장 0) — 화면에 박힌 자막을 읽어 띄우는 중이면 그 자막을 지우거나 옮기지 않는다.
     if (!d.sentences.length && hsOwns(v)) return;
-    dubPlaceSub();
+    // 자동 자막(asr)뿐인 영상에 화면에 박힌 자막이 있으면 화면 자막(사람이 쓴 글)을 보인다 — 목소리(더빙)는 자동 자막대로.
+    const hsSubs = hsOwns(v) && d.asr;
+    if (!hsSubs) dubPlaceSub();
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) {
       if (d.cur !== -2) {
         d.cur = -2;
@@ -6004,7 +6014,7 @@
     const s = d.sentences[i];
     d.cur = i;
     if (s && s.ko && dubCfg.voiceOn) dubMaybeSpeak(d, s, t);
-    dubShowSub(s && t < Math.min(s.next, s.end + 1500) ? s.ko || '' : '');
+    if (!hsSubs) dubShowSub(s && t < Math.min(s.next, s.end + 1500) ? s.ko || '' : '');
   }
 
   // 목소리를 켜면 영상 소리를 창의 값으로 줄이고, 끄면 원래대로 돌린다.
@@ -6170,6 +6180,7 @@
   // 한국어 영상에는 우리 자막(자막 파일·크롬 실시간 자막)을 띄우지 않는다: 크롬 '실시간 번역' 을 켜 두면 도우미가 한국어
   // 말을 가려내지 못해, 영상의 한국어 자막 위에 우리 한국어 자막이 겹쳤다(사용자 2026-11-03). 영상 id → 'ko' 등('' = 모름).
   const ytSpoken = new Map();
+  const ytMeta = new Map(); // 영상 id → { title, author, keywords } (자막 목록과 같이 온다) — 화면 자막 언어 가늠(hsGuessLangs)
   // 내 언어(한국어가 아니면 그 언어)로 — 내 말 영상에는 자막을 덧붙이지 않고, 모자란 줄은 유튜브가 그 언어로 옮긴 자막(tlang)으로.
   // 유튜브 자막 언어 코드가 구글 번역 코드와 다른 언어(2026-11-18 유튜브 자료로 확인): 히브리어 = iw, 필리핀어 = fil.
   // 앞의 것이 유튜브에 물을 때 쓰는 코드. 다른 사이트의 자막·목소리는 구글 쪽 코드(he·tl)로 올 수도 있어 둘 다 본다.
@@ -6228,6 +6239,7 @@
         const cc = await ytCaptions('peek', sel);
         // 조각이 없다(몽키) — '' (모름)로 적어 둔다. 안 적으면 0.7초마다(liveTick) 0.5초씩 기다리며 다시 물었다.
         if (!cc) return ytSpoken.set(id, '');
+        if (cc.id === id && cc.meta) ytMeta.set(id, cc.meta);
         if (cc.id === id && cc.tracks) return ytSpoken.set(id, ytSpokenFrom(cc.tracks, cc.meta, cc.variants));
         await sleep(300);
       }
@@ -6264,6 +6276,7 @@
     if (tracks) {
       d.tracks = tracks;
       ytSpoken.set(id, ytSpokenFrom(tracks, cc.meta, cc.variants));
+      if (cc.meta) ytMeta.set(id, cc.meta);
     }
     const mineVideo = !!tracks && YT_MY_RE.test(ytSpoken.get(id) || '');
     // 자막이 하나도 없는 영상, 또는 저절로 켰는데 한국어 자막뿐인 영상(한국어 영상) — CC 를 켜지 않고 기다리지도
@@ -6390,6 +6403,7 @@
             // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
             if (d.auto && lang === YT_MY) return null;
             d.lang = lang.split('-')[0].toLowerCase(); // 앞 두 글자만 자르면 fil → fi(핀란드어), yue → yu 가 됐다
+            d.asr = kind === 'asr'; // 자동 자막 — 화면에 박힌 자막이 있으면 그쪽을 보인다(hsTick)
             if (d.lang !== YT_MY) d.koFallback = async () => (await get(mk(base, lang, kind, YT_TLANG))) || [];
             return cues;
           }
@@ -6401,6 +6415,7 @@
           const cues = await get(u.href);
           if (cues && cues.length) {
             d.lang = (p.get('tlang') || spoken).split('-')[0].toLowerCase();
+            d.asr = p.get('kind') === 'asr';
             return cues;
           }
         } catch {
@@ -6512,10 +6527,10 @@
     // 유튜브에서 자막 파일이 없어 크롬 실시간 자막이 이 영상 위에 나오는 중 — 창에 '꺼짐' 이라고 쓰면 고장처럼 보인다.
     const liveHere = YOUTUBE && !mine && liveFor && liveFor === dubPanel.lzkVideo && ['ok', 'pause'].includes(liveState);
     // 화면에 박힌 자막을 읽어 옮기는 중(hsTick)
-    const hsHere = (!mine || dub.failed) && hsOwns(dubPanel.lzkVideo);
+    const hsHere = (!mine || dub.failed || dub.asr) && hsOwns(dubPanel.lzkVideo);
     if (!on && !liveHere && !hsHere)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
-    else if (hsHere) st.textContent = `화면에 박힌 중국어 자막을 읽어 옮기는 중 · ${hs.lines}줄 (번역 도우미)`;
+    else if (hsHere) st.textContent = `화면에 박힌 ${hsLangName(hs.lang || hs.last)} 자막을 읽어 옮기는 중 · ${hs.lines}줄 (번역 도우미)`.replace('  ', ' ');
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : liveHere ? '자막 파일이 없는 영상 · ' : '켜짐 · '}${liveNote()}`;
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
@@ -7064,7 +7079,8 @@
     let peak = 0;
     for (let y = 0; y < h; y++) if (rows[y] > peak) peak = rows[y];
     if (peak < RC.video.hsMinPeak) return null;
-    // 획 토막이 많은 줄들(빈 줄 둘까지는 잇는다), 높이 9~40(영상 높이의 2.5~11%)
+    // 획 토막이 많은 줄들(빈 줄 둘까지는 잇는다), 높이 7~40(영상 높이의 2~11%). 로마자 자막은 획이 몰린 띠가 x 높이(글자
+    // 크기의 절반쯤)뿐이라 작은 글씨는 7 화소까지 본다.
     const thr = Math.max(3, Math.round(peak * 0.3));
     const lines = [];
     let s0 = -1;
@@ -7075,7 +7091,7 @@
         gap = 0;
       } else if (s0 >= 0 && (++gap > 2 || y === h)) {
         const e = y - gap + 1;
-        if (e - s0 >= 9 && e - s0 <= 40) lines.push([s0, e]);
+        if (e - s0 >= 7 && e - s0 <= 40) lines.push([s0, e]);
         s0 = -1;
         gap = 0;
       }
@@ -7084,11 +7100,30 @@
     const score = ([a, b]) => rows.slice(a, b).reduce((x, y) => x + y, 0);
     let bi = 0;
     lines.forEach((l, i) => score(l) > score(lines[bi]) && (bi = i));
-    let [top, bot] = lines[bi];
-    // 줄 높이만큼 가까운 위·아래 줄은 같은 자막(두 줄 자막)
-    for (let k = bi - 1; k >= 0 && top - lines[k][1] <= (bot - top) * 0.8; k--) top = lines[k][0];
-    for (let k = bi + 1; k < lines.length && lines[k][0] - bot <= (bot - top) * 0.8; k++) bot = lines[k][1];
-    const lh = bot - top;
+    // 두 줄 자막: 띠(획이 몰린 줄) 높이가 비슷하고(0.55~1.8배) 띠 높이의 2배 안에 있는 위·아래 줄. 로마자는 띠가 x 높이(글자
+    // 크기의 절반쯤)뿐이라 두 줄의 띠 사이가 띠 높이의 1.6배쯤 된다 — 전처럼 0.8배로는 영어·스페인어·러시아어·태국어 두 줄
+    // 자막이 모두 윗줄만 잡혔다(2026-11-19 30개 언어 시험). 중국 드라마의 '중국어 줄 + 아래 영어 줄' 은 띠 높이가 절반쯤이라
+    // 따로 둔다(묶으면 간체 인식기가 영어 줄까지 읽어 뒤범벅이 된다).
+    const cores = [lines[bi]];
+    const hb = lines[bi][1] - lines[bi][0];
+    // 0.55~1.8 — 태국어 줄의 띠(몸통)는 같은 크기 한자 줄 띠의 0.6 쯤이라 0.7 로는 '태국어 + 중국어' 두 언어 자막이 장면마다
+    // 묶였다 떨어졌다 해서(상자가 흔들려) 번역을 거의 띄우지 못했다. 중국어 줄 아래 영어 줄(x 높이)은 0.4 아래라 그대로 따로.
+    const like = (k) => (lines[k][1] - lines[k][0]) / hb >= 0.55 && (lines[k][1] - lines[k][0]) / hb <= 1.8;
+    let ctop = lines[bi][0];
+    let cbot = lines[bi][1];
+    for (let k = bi - 1; k >= 0 && ctop - lines[k][1] <= hb * 2 && like(k); k--) {
+      ctop = lines[k][0];
+      cores.push(lines[k]);
+    }
+    for (let k = bi + 1; k < lines.length && lines[k][0] - cbot <= hb * 2 && like(k); k++) {
+      cbot = lines[k][1];
+      cores.push(lines[k]);
+    }
+    const nl = cores.length; // 글줄 수
+    const lhc = Math.max(...cores.map(([a, b]) => b - a)); // 띠 한 줄 높이
+    const ch = cores.reduce((s, [a, b]) => s + b - a, 0);
+    let top = ctop;
+    let bot = cbot;
     // 줄 안에서는 세로로도 본다(작은 구역이라 싸다). 三·二·一 처럼 가로획뿐인 글자는 가로로 보면 긴 밝은 토막이라 획으로
     // 치지 않아, 줄 앞의 '三号 二号' 가 잘려 '号交替跟踪目标车辆' 만 읽혔다(사용자 캡처 2026-11-19).
     const ya = Math.max(0, top - 3);
@@ -7113,7 +7148,7 @@
       }
     }
     const cols = new Uint16Array(w);
-    for (let y = top; y < bot; y++) for (let x = 0; x < w; x++) cols[x] += ink[y * w + x];
+    for (const [a, b] of cores) for (let y = a; y < b; y++) for (let x = 0; x < w; x++) cols[x] += ink[y * w + x];
     // 가로 덩어리(글자 높이 2.2배 넘는 빈 틈에서 끊는다) 중 획이 가장 많은 것 — 띄어 쓴 자막('三号 二号 交替…',
     // '为你生 为你爱')도 하나로. 1.5배로는 구절 사이 빈칸(한 글자 + 양쪽 여백)에서 끊겨 앞 구절이 빠졌다.
     let best = null;
@@ -7123,7 +7158,7 @@
       if (x < w && cols[x] > 0) {
         if (cs < 0) cs = x;
         cg = 0;
-      } else if (cs >= 0 && (++cg > lh * 2.2 || x === w)) {
+      } else if (cs >= 0 && (++cg > lhc * 2.2 || x === w)) {
         const b = x - cg + 1;
         let m = 0;
         for (let t = cs; t < b; t++) m += cols[t];
@@ -7134,13 +7169,29 @@
     }
     if (!best) return null;
     const bw = best.b - best.a;
-    const fill = best.n / (bw * lh);
-    if (bw < lh * 1.5 || fill < 0.05 || fill > 0.6 || Math.abs((best.a + best.b) / 2 - w / 2) > w * 0.16) return null;
-    // 모양 지문(48×6 칸) — 줄이 바뀌었는지 견준다
+    const fill = best.n / (bw * ch);
+    if (bw < lhc * 1.5 || fill < 0.05 || fill > 0.6 || Math.abs((best.a + best.b) / 2 - w / 2) > w * 0.16) return null;
+    // 띠 위·아래의 획이 드문 줄(로마자 b·d·g·p, 태국어·힌디어·크메르어의 위아래 부호)까지 늘린다 — 띠만 자르면 위아래가
+    // 잘린다. 자막의 가로 범위 안 획만 센다: 화면 전체로 세면 배경(흰 옷·창틀)의 획을 따라 띠 높이만큼 늘어나, 중국어
+    // 자막 위에 배경이 붙어 읽기가 망가졌다(정확 22 → 20줄). 띠 한 줄의 평균 획 양의 6% 넘는 줄까지, 띠 높이의 0.9배까지.
+    let inkSum = 0;
+    for (const [a, b] of cores) for (let y = a; y < b; y++) for (let x = best.a; x < best.b; x++) inkSum += ink[y * w + x];
+    const minRow = Math.max(2, (inkSum / ch) * 0.06);
+    const inRow = (y) => {
+      let m = 0;
+      for (let x = best.a; x < best.b; x++) m += ink[y * w + x];
+      return m;
+    };
+    while (top > 0 && ctop - top < lhc * 0.9 && inRow(top - 1) >= minRow) top--;
+    while (bot < h && bot - cbot < lhc * 0.9 && inRow(bot) >= minRow) bot++;
+    const lh = bot - top;
+    // 모양 지문(48×6 칸) — 줄이 바뀌었는지 견준다. 띠(획이 몰린 줄)에서 뜬다 — 위아래로 늘린 높이는 배경에 따라 장면마다
+    // 몇 화소씩 흔들려, 그것으로 견주면 베트남어 자막이 늘 '다른 줄' 이 되어 한 줄도 띄우지 못했다(1분에 10줄 읽고 0줄 보임).
     const sig = new Uint8Array(HS_GW * HS_GH);
+    const sh = cbot - ctop;
     for (let gy = 0; gy < HS_GH; gy++) {
-      const ya = top + Math.floor((gy * lh) / HS_GH);
-      const yb = Math.max(ya + 1, top + Math.floor(((gy + 1) * lh) / HS_GH));
+      const ya = ctop + Math.floor((gy * sh) / HS_GH);
+      const yb = Math.max(ya + 1, ctop + Math.floor(((gy + 1) * sh) / HS_GH));
       for (let gx = 0; gx < HS_GW; gx++) {
         const xa = best.a + Math.floor((gx * bw) / HS_GW);
         const xb = Math.max(xa + 1, best.a + Math.floor(((gx + 1) * bw) / HS_GW));
@@ -7149,14 +7200,16 @@
         sig[gy * HS_GW + gx] = m / ((yb - ya) * (xb - xa)) > 0.15 ? 1 : 0;
       }
     }
-    return { x: best.a, y: top, w: bw, h: lh, sig };
+    return { x: best.a, y: top, w: bw, h: lh, n: nl, ct: ctop, cb: cbot, ch, sig };
   }
 
   // 같은 자막 줄인가(자리가 거의 같고 모양 지문이 85% 넘게 같다). 시험(2026-11-18): 같은 줄끼리 0~32칸(짧은 '定有文章'
   // 은 칸이 작아 화질 잡음이 커서 32 — 10% 로는 다른 줄로 보고 다시 읽느라 깜빡였다), 다른 줄은 130칸 넘게 달랐다.
   function hsSame(a, b) {
     if (!a || !b) return false;
-    if (Math.abs(a.x - b.x) > Math.max(6, b.w * 0.08) || Math.abs(a.w - b.w) > Math.max(6, b.w * 0.1) || Math.abs(a.y - b.y) > 4) return false;
+    const ay = a.ct != null ? a.ct : a.y; // 띠 위치(늘린 상자 위치는 흔들린다)
+    const by = b.ct != null ? b.ct : b.y;
+    if (Math.abs(a.x - b.x) > Math.max(6, b.w * 0.08) || Math.abs(a.w - b.w) > Math.max(6, b.w * 0.1) || Math.abs(ay - by) > 4) return false;
     let d = 0;
     for (let i = 0; i < a.sig.length; i++) d += a.sig[i] !== b.sig[i];
     return d <= a.sig.length * 0.15;
@@ -7185,10 +7238,14 @@
   }
 
   // 찾은 줄을 원본 크기로 잘라(줄 높이 72화소 안쪽으로 줄여 — 읽기 시험이 이 크기였다) RGBA 그대로 보낸다.
+  // 줄 높이는 획이 몰린 띠(core)로 잰다(두 줄 자막은 줄마다 72). rows = 위아래 부호까지 늘린 줄, core = 띠 —
+  // 엔진(번역 도우미)이 한자·가나·한글은 띠만, 다른 글자는 늘린 줄까지 흑백으로 바꿔 읽는다.
   function hsCrop(v, f) {
     const lineH = f.h / f.k;
-    const sc = Math.min(1, 72 / lineH);
-    const pad = Math.round(lineH * 0.3);
+    const coreH = ((f.cb != null ? f.cb - f.ct : f.h) || 1) / f.k;
+    const sc = Math.min(1, (72 * (f.n || 1)) / coreH);
+    // 여백은 띠 한 줄 높이의 0.6 — 0.3 으로는 태국어·라오어·크메르어의 위 부호(성조·모음)가 잘렸다.
+    const pad = Math.round((coreH / (f.n || 1)) * 0.6);
     const sx = Math.max(0, Math.floor(f.x / f.k) - pad);
     const sy = Math.max(0, f.top + Math.floor(f.y / f.k) - pad);
     const sw = Math.min(f.vw - sx, Math.ceil(f.w / f.k) + 2 * pad);
@@ -7204,18 +7261,95 @@
     let bin = '';
     for (let i = 0; i < d.length; i += 32768) bin += String.fromCharCode.apply(null, d.subarray(i, i + 32768));
     const ry = (f.top + Math.floor(f.y / f.k) - sy) * sc;
-    return { w: W, h: H, vh: Math.round(f.vh * sc), rows: [Math.max(0, Math.floor(ry) - 2), Math.min(H, Math.ceil(ry + lineH * sc) + 2)], px: btoa(bin) };
+    const span = (y0, hh) => [Math.max(0, Math.floor(y0) - 2), Math.min(H, Math.ceil(y0 + hh) + 2)];
+    const core = f.cb != null ? span((f.top + Math.floor(f.ct / f.k) - sy) * sc, coreH * sc) : null;
+    return { w: W, h: H, vh: Math.round(f.vh * sc), rows: span(ry, lineH * sc), core, n: f.n || 1, px: btoa(bin) };
   }
 
-  // 읽은 글이 자막인가: 한자가 둘 넘고 글자·숫자의 80% 넘게 한자, 확신도 40 넘게(자막이 아닌 곳은 0~4, 광고의 한글은 숫자·부스러기가 섞였다).
+  // 읽은 글이 자막인가. 1.33 도우미는 언어마다 엔진이 가른다(j.ok — 그 언어 글자 비율·확신도·뒤범벅 꼴). 옛 도우미(중국어만):
+  // 한자가 둘 넘고 글자·숫자의 80% 넘게 한자, 확신도 40 넘게(자막이 아닌 곳은 0~4, 광고의 한글은 숫자·부스러기가 섞였다).
   function hsAccept(j) {
-    const t = String((j && j.text) || '');
+    if (!j || !j.ocr) return false;
+    if (typeof j.ok === 'boolean') return j.ok;
+    const t = String(j.text || '');
     const cjk = (t.match(HS_CJK) || []).length;
     const all = (t.match(/[\p{L}\p{N}]/gu) || []).length;
-    return !!(j && j.ocr && cjk >= 2 && cjk >= all * 0.8 && j.conf >= 40);
+    return cjk >= 2 && cjk >= all * 0.8 && j.conf >= 40;
   }
 
-  function hsRead(st, f) {
+  // ---- 화면 자막의 언어(2026-11-19, 사용자: '30개 언어 모두 자막이 있으면 중국어 영상과 동일하게') ----
+  // 번역 도우미가 읽는 언어(구글 코드) — 내 언어 30개 + 한국어(한국어가 내 언어가 아닌 사람이 보는 한국 영상).
+  const HS_LANGS = ['th', 'en', 'zh-CN', 'zh-TW', 'yue', 'ja', 'ko', 'vi', 'id', 'ms', 'tl', 'pt', 'es', 'fr', 'de', 'tr', 'pl',
+    'it', 'ru', 'mn', 'ar', 'ur', 'hi', 'mr', 'bn', 'ta', 'te', 'he', 'km', 'lo', 'my'];
+  const HS_LATIN = new Set(['en', 'vi', 'id', 'ms', 'tl', 'pt', 'es', 'fr', 'de', 'tr', 'pl', 'it']);
+  // 유튜브·구글 코드(zh, zh-Hans, zh-Hant, iw, fil, in, pt-BR, es-419)를 위 코드로. 모르는 언어는 ''.
+  function hsNorm(c) {
+    const [a, b = ''] = String(c || '').replace('_', '-').split('-');
+    const l = a.toLowerCase();
+    if (l === 'zh') return /^(tw|hk|mo|hant)$/i.test(b) ? 'zh-TW' : 'zh-CN';
+    const x = { iw: 'he', fil: 'tl', in: 'id' }[l] || l;
+    return HS_LANGS.includes(x) ? x : '';
+  }
+  // 내 언어 자막 — 그대로 읽으면 되니 옮기지 않는다. 중국어·광둥어 사용자는 간체·번체·광둥어 자막 모두.
+  const hsMine = (l) => !!l && (l === hsNorm(MY) || (/^(zh|yue)/.test(MY2) && /^(zh|yue)/.test(l)));
+  const hsLangName = (c) => {
+    if (!c) return '';
+    if (/^zh|^yue/.test(c)) return c === 'zh-CN' ? '중국어' : c === 'yue' ? '광둥어' : '중국어(번체)';
+    try {
+      return new Intl.DisplayNames(['ko'], { type: 'language' }).of(c) || c;
+    } catch {
+      return c;
+    }
+  };
+
+  // 영상의 화면 자막 언어 후보(번역 도우미가 앞에서부터 읽어 본다, 4개까지):
+  //  1) 제목·채널 이름·태그의 글자 — 많은 글자 둘까지. 태국·가나·한글·크메르… 는 글자로 정해지고, 한자는 간체·번체·광둥어를
+  //     글자로 가르고, 로마자·키릴·아랍·데바나가리는 구글이 알아본 언어(스페인어·몽골어·우르두어·마라티어 …).
+  //  2) 유튜브 자동 자막의 말 언어. 3) config.json hardsub.fallback(중국어·영어 — 제목이 영어인 중국 드라마 등).
+  // 번역 자막을 박아 올린 영상(중국 드라마 + 태국어 자막, 태국어 제목)은 제목 언어가 자막 언어라 제목을 먼저 본다.
+  const hsGuessMemo = new Map();
+  function hsGuessLangs(key) {
+    if (hsGuessMemo.has(key)) return hsGuessMemo.get(key);
+    const job = (async () => {
+      const out = [];
+      const add = (c) => {
+        const x = hsNorm(c);
+        if (x && !out.includes(x)) out.push(x);
+      };
+      let text = document.title.replace(/\s*[-–]\s*YouTube\s*$/i, '');
+      let spoken = '';
+      if (YOUTUBE) {
+        await ytLearnSpoken().catch(() => {});
+        const m = ytMeta.get(ytVideoId());
+        if (m) text = [m.title, m.author, ...(m.keywords || []).slice(0, 8)].filter(Boolean).join(' ');
+        spoken = ytSpoken.get(ytVideoId()) || '';
+      }
+      const s = text.replace(CHAT_NOT_WORDS, ' ');
+      const SCR = [['th', /[฀-๿]/g], ['ja', /[぀-ヿ]/g], ['ko', /[가-힣]/g], ['he', /[֐-׿]/g], ['bn', /[ঀ-৿]/g], ['te', /[ఀ-౿]/g],
+        ['ta', /[஀-௿]/g], ['km', /[ក-៿]/g], ['lo', /[຀-໿]/g], ['my', /[က-႟]/g], ['han', /[一-鿿]/g], ['cyr', /[Ѐ-ӿ]/g],
+        ['arab', /[؀-ۿ]/g], ['deva', /[ऀ-ॿ]/g], ['lat', /[A-Za-zÀ-ɏḀ-ỿ]/g]];
+      const counts = SCR.map(([c, re]) => [c, (s.match(re) || []).length]).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]);
+      const kana = counts.some(([c]) => c === 'ja');
+      for (const [c] of counts.slice(0, 2)) {
+        if (c === 'han') add(kana ? 'ja' : chatHanLang(s));
+        else if (['cyr', 'arab', 'deva', 'lat'].includes(c)) {
+          // 그 글자가 든 낱말만 구글에 — 'EP12 [ENG SUB]' 같은 로마자 꼬리가 몽골어 제목의 언어를 흐리지 않게
+          const re = SCR.find((x) => x[0] === c)[1];
+          const part = (s.match(new RegExp(`\\S*${re.source}\\S*`, 'g')) || []).join(' ').slice(0, 300);
+          const [d] = await detectLangs([part || s.slice(0, 300)]).catch(() => ['']);
+          add(hsNorm(d) || { cyr: 'ru', arab: 'ar', deva: 'hi', lat: 'en' }[c]);
+        } else add(c);
+      }
+      add(spoken);
+      for (const c of RC.hardsub.fallback) add(c);
+      return out.slice(0, 4);
+    })();
+    hsGuessMemo.set(key, job);
+    if (hsGuessMemo.size > 50) hsGuessMemo.delete(hsGuessMemo.keys().next().value);
+    return job;
+  }
+
+  async function hsRead(st, f) {
     let crop;
     try {
       crop = hsCrop(st.v, f);
@@ -7228,6 +7362,9 @@
       hsFails++;
       hsNext = Date.now() + Math.min(30000, 2000 * hsFails);
     };
+    // 언어가 정해졌으면 그 언어만, 아니면 영상으로 가늠한 후보(처음 한 번 — 제목 언어를 구글에 묻느라 조금 걸린다)
+    if (!st.lang && !st.cands) st.cands = await hsGuessLangs(st.key).catch(() => [...RC.hardsub.fallback]);
+    crop.langs = st.lang ? [st.lang] : st.cands;
     GM_xmlhttpRequest({
       method: 'POST',
       url: HS_URL,
@@ -7243,21 +7380,53 @@
         }
         if (!j || !j.ocr) return failed();
         hsFails = 0;
-        const good = hsAccept(j);
+        let good = hsAccept(j);
         let ko = '';
         if (good) {
-          st.hits++;
-          st.lines++;
-          if (!st.on && (st.hits >= 2 || (j.conf >= 75 && (j.text.match(HS_CJK) || []).length >= 4))) {
-            st.on = true;
-            if (st.v === liveVideo) liveVideo = null; // 실시간 자막을 띄우던 영상 — 이제 이쪽이 쓴다
-            dubStatus();
+          // 언어 정하기: 같은 언어로 두 번 읽히면 그 언어만 읽는다. 로마자 언어는 구글이 알아본 언어를 믿는다 — 제목이 영어인
+          // 스페인어 영상을 영어 모델로 읽어도(악센트 빠짐) 다음 줄부터 스페인어 모델로 읽는다. 옛 도우미는 j.lang 이 zh-*.
+          let from = hsNorm(j.lang) || 'zh-CN';
+          if (!st.lang && HS_LATIN.has(from) && st.detects < 3) {
+            st.detects++;
+            const [d] = await detectLangs([j.text]).catch(() => ['']);
+            const dn = hsNorm(d);
+            if (dn && HS_LATIN.has(dn)) {
+              if (dn !== from) st.cands = [dn, ...(st.cands || []).filter((c) => c !== dn)].slice(0, 4);
+              from = dn;
+            }
           }
-          try {
-            ko = (await translateToKorean([j.text]))[0] || '';
-          } catch {
-            ko = '';
+          // 두 번 넘게, 그리고 다른 언어 표의 두 배 넘게 — 한 줄을 엉뚱한 언어로 읽은 것만으로 굳지 않게
+          const fam = /^(zh|yue)/.test(from) ? 'zh' : from;
+          st.votes[fam] = (st.votes[fam] || 0) + 1;
+          st.bad = 0;
+          const rival = Math.max(0, ...Object.entries(st.votes).filter(([k]) => k !== fam).map(([, n]) => n));
+          if (!st.lang && st.votes[fam] >= 2 && st.votes[fam] >= rival * 2) st.lang = from;
+          st.last = from;
+          if (hsMine(from)) {
+            // 내 언어 자막 — 옮길 것이 없다. 두 번이면 이 영상은 더 읽지 않는다.
+            good = false;
+            if (st.lang) st.mine = true;
+          } else {
+            st.hits++;
+            st.lines++;
+            if (!st.on && (st.hits >= 2 || (j.conf >= 80 && (j.text.match(/\p{L}/gu) || []).length >= 6))) {
+              st.on = true;
+              if (st.v === liveVideo) liveVideo = null; // 실시간 자막을 띄우던 영상 — 이제 이쪽이 쓴다
+              dubStatus();
+            }
+            try {
+              // 로마자 언어는 원문 언어를 알려 준다 — 짧은 줄은 구글이 다른 로마자 언어로 잘못 알아보기도 한다
+              ko = (await translateToKorean([j.text], HS_LATIN.has(from) ? from : 'auto'))[0] || '';
+            } catch {
+              ko = '';
+            }
           }
+        }
+        // 정한 언어로 네 번 이어 못 읽으면(언어를 잘못 정했거나 자막 언어가 바뀌었다) 다시 후보 언어들로 읽는다
+        if (!hsAccept(j) && st.lang && ++st.bad >= 4) {
+          st.lang = '';
+          st.votes = {};
+          st.bad = 0;
         }
         st.read = { ...f, text: j.text, ko, good };
         st.busy = false;
@@ -7290,8 +7459,8 @@
   }
 
   function hsTick() {
-    // 내 언어가 중국어면 화면 자막을 그대로 읽으면 된다.
-    if (!RC.video.hsOn || !hsHelperOk || !dubCfg.subs || MY2 === 'zh' || MY2 === 'yue') return hsStop();
+    // 내 언어 자막인 영상은 읽어 보고 알면(hsMine → st.mine) 그 영상만 쉰다(예전에는 중국어 사용자면 늘 껐다).
+    if (!RC.video.hsOn || !hsHelperOk || !dubCfg.subs) return hsStop();
     if (document.visibilityState !== 'visible' || Date.now() < hsNext) return;
     let v = livePlayingVideo();
     if (!v && hs && hs.v.isConnected && hs.v.paused && !hs.v.ended) v = hs.v; // 멈춘 동안에는 보이던 번역을 그대로
@@ -7299,14 +7468,16 @@
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) return hsStop();
     // 자막 파일 자막(dub)이 문장을 가졌으면 그쪽. 아직 받는 중(광고 기다림 등, 문장 0)이면 화면 자막을 먼저 읽는다 —
     // 시험 크롬에서 자막 파일이 없는 이 드라마도 '광고가 끝나면 시작합니다…' 로 10~30초를 붙잡고 있었다.
-    if ((dubOwns(v) && dub.sentences.length) || ytKoreanVideo()) return hsStop();
-    const key =`${YOUTUBE ? ytVideoId() : v.currentSrc}|${location.pathname}`;
+    // 자동 자막(asr, 기계 받아쓰기)뿐이면 화면 자막도 읽는다 — 있으면 사람이 쓴 그쪽을 보인다(dubTick 이 비켜 준다).
+    if ((dubOwns(v) && dub.sentences.length && !dub.asr) || ytKoreanVideo()) return hsStop();
+    const key = `${YOUTUBE ? ytVideoId() : v.currentSrc}|${location.pathname}`;
     if (!hs || hs.v !== v || hs.key !== key) {
       hsStop();
-      hs = { v, key, on: false, hits: 0, lines: 0, ticks: 0, miss: 0, seen: null, cand: null, same: 0, read: null, busy: false, showing: false };
+      hs = { v, key, on: false, hits: 0, lines: 0, ticks: 0, miss: 0, seen: null, cand: null, same: 0, read: null, busy: false, showing: false,
+        lang: '', cands: null, votes: {}, detects: 0, last: '', mine: false, bad: 0 };
     }
     const st = hs;
-    if (st.tainted || v.paused || v.seeking) return hsRender();
+    if (st.tainted || st.mine || v.paused || v.seeking) return hsRender();
     // 2분 넘게 자막을 한 줄도 못 읽은 영상(박힌 자막이 없는 영상)은 2초에 한 번만 본다.
     if (++st.ticks > 120000 / RC.video.hsEveryMs && !st.hits && st.ticks % 8) return;
     let f = null;

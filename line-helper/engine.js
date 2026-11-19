@@ -672,10 +672,13 @@ function hsInk(px, w, h, o) {
 
 // 자막 흰색은 그 줄에서 가장 밝은 무채색(위 2%) — 그보다 28 어두운 것까지만 글자로 본다(흰 옷·밝은 배경이 글자 사이를 메우지 않게).
 // 시험에서 고른 값: 획 두께 한계 = 영상 높이 × 0.045, 테두리 거리 = 영상 높이 × 0.004(최소 2).
-function hsBinarize(px, w, h, rows, vh) {
+// rows = 글줄(위아래 부호까지), core = 획이 몰린 띠(1.33 확장부터). 흰색 기준은 띠에서 잰다. 답: 그 줄 범위만 남긴 흑백
+// 그림을 만드는 함수 — 한자·가나·한글은 띠만(1.32 와 같은 범위), 다른 글자는 글줄 전체.
+function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
   const hist = new Array(256).fill(0);
   let n = 0;
-  for (let y = rows[0]; y < rows[1]; y++)
+  const hr = core || rows;
+  for (let y = hr[0]; y < hr[1]; y++)
     for (let x = 0; x < w; x++) {
       const p = (y * w + x) * 4;
       const r = px[p], g = px[p + 1], b = px[p + 2];
@@ -698,9 +701,84 @@ function hsBinarize(px, w, h, rows, vh) {
     maxS: Math.max(3, Math.round(vh * 0.045)),
     edge: Math.max(2, Math.round(vh * 0.004)),
   });
-  const out = Buffer.alloc(w * h, 255);
-  for (let y = rows[0]; y < rows[1]; y++) for (let x = 0; x < w; x++) if (ink[y * w + x]) out[y * w + x] = 0;
-  return Buffer.concat([Buffer.from(`P5\n${w} ${h}\n255\n`), out]); // PGM — Tesseract(Leptonica)가 바로 읽는다
+  const made = new Map();
+  // r = 잉크를 남길 줄 범위. tight(한자): 그 범위의 잉크 둘레에서 tight 화소만 남기고 자른다 — psm 13(통째로 한 줄)은 그림
+  // 높이를 글줄 높이로 보아, 위아래 빈 곳이 크면 망가졌다(1.32 시험 크기: 둘레 0.3줄). 아니면 그림 전체 + 둘레 흰 여백
+  // margin — 위 부호가 그림 끝에 닿으면 Tesseract 가 부호를 버렸다. gaps = 잉크 없는 세로 틈(빈칸 정하기에 씀).
+  return (r, tight = 0) => {
+    const key = r.join('-') + '/' + tight;
+    if (made.has(key)) return made.get(key);
+    let x0 = w, x1 = 0;
+    const perRow = new Array(h).fill(0);
+    const perCol = new Array(w).fill(0);
+    for (let y = r[0]; y < r[1]; y++)
+      for (let x = 0; x < w; x++)
+        if (ink[y * w + x]) {
+          perRow[y]++;
+          perCol[x]++;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+        }
+    const T = tight | 0;
+    const ox = T ? Math.max(0, x0 - T) : 0;
+    const oy = T ? Math.max(0, r[0] - T) : 0;
+    const ow = T ? Math.min(w, x1 + 1 + T) - ox : w;
+    const oh = T ? Math.min(h, r[1] + T) - oy : h;
+    const M = T ? 0 : margin | 0;
+    const W2 = Math.max(1, ow) + 2 * M;
+    const H2 = Math.max(1, oh) + 2 * M;
+    const out = Buffer.alloc(W2 * H2, 255);
+    for (let y = r[0]; y < r[1]; y++)
+      for (let x = ox; x < ox + ow; x++) if (ink[y * w + x] && y >= oy && y < oy + oh) out[(y - oy + M) * W2 + x - ox + M] = 0;
+    const gaps = [];
+    for (let x = x0, a = -1; x <= x1 + 1; x++) {
+      const empty = x <= x1 && !perCol[x];
+      if (empty && a < 0) a = x;
+      if (!empty && a >= 0) {
+        gaps.push([a - ox + M, x - ox + M]);
+        a = -1;
+      }
+    }
+    const pgm = Buffer.concat([Buffer.from(`P5\n${W2} ${H2}\n255\n`), out]); // PGM — Tesseract(Leptonica)가 바로 읽는다
+    if (process.env.TH_HS_DEBUG) fs.writeFileSync(path.join(require('os').tmpdir(), `hs-${Date.now()}-${key.replace('/', '_')}.pgm`), pgm);
+    const bands = hsLineBands(perRow, r);
+    const got = { file: `data:image/pgm;base64,${pgm.toString('base64')}`, lines: bands.length, bands, gaps };
+    made.set(key, got);
+    return got;
+  };
+}
+
+// 글줄 수 — 두 줄 자막(영어·스페인어 드라마에 흔하다)은 한 줄로 읽으면(psm 7·13) 두 줄이 뒤섞인다.
+// 잉크가 거의 없는 가로줄로 끊긴 덩어리 가운데 큰 것(가장 큰 덩어리 높이의 60% 넘게)만 센다 — 태국어·라오어의 위아래
+// 부호(성조·모음)는 작은 덩어리라 세지 않는다. 사이가 덩어리 높이의 15% 아래면 붙어 있는 것으로 본다.
+// 글줄마다의 줄 범위(위·아래 줄과의 사이 한가운데까지 — 그 사이의 위아래 부호도 그 줄에 든다).
+function hsLineBands(perRow, rows) {
+  let max = 0;
+  for (let y = rows[0]; y < rows[1]; y++) max = Math.max(max, perRow[y]);
+  if (!max) return [];
+  const runs = [];
+  let a = -1;
+  for (let y = rows[0]; y <= rows[1]; y++) {
+    const on = y < rows[1] && perRow[y] > max * 0.04;
+    if (on && a < 0) a = y;
+    if (!on && a >= 0) {
+      runs.push([a, y]);
+      a = -1;
+    }
+  }
+  const tall = Math.max(...runs.map(([s, e]) => e - s));
+  const merged = [];
+  for (const r of runs) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] - last[1] < tall * 0.15) last[1] = r[1];
+    else merged.push([...r]);
+  }
+  const big = Math.max(...merged.map(([s, e]) => e - s));
+  const lines = merged.filter(([s, e]) => e - s >= big * 0.6); // 0.45 로는 라오어 위 부호 줄이 한 줄로 셌다
+  return lines.map(([s, e], i) => [
+    i ? Math.ceil((lines[i - 1][1] + s) / 2) : rows[0],
+    i < lines.length - 1 ? Math.floor((e + lines[i + 1][0]) / 2) : rows[1],
+  ]);
 }
 
 // 읽은 줄 손질: 한자 사이 띄어쓰기를 지우고 양 끝 부스러기(따옴표·쉼표·> 등)를 뗀다.
@@ -740,27 +818,238 @@ function hsJoin(words, fallback) {
   return hsClean(out);
 }
 
-// text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], px: RGBA base64}
-// 답: {ocr: 1, text, conf, lang} — 간체로 읽고, 덜 확신하면(70 아래) 번체로도 읽는다. 번체는 간체보다 6 넘게 더 확신할 때만
-// — 간체 자막을 번체로 읽으면 엉뚱한 글자가 섞였다(枪毙了我我也不干: 간체 67 '枪此了…', 번체 67 '槍緒了…不千' → 구글이
-// '내가 뭘 하고 있는지 모르겠어요'). 번체 자막 드라마는 번체 쪽이 훨씬 높게 나온다(81 대 50대).
+// ---- 30개 언어(2026-11-19, 사용자: '30개 언어 모두 자막이 있으면 중국어 영상과 동일하게') ----
+// 언어(구글 코드) → [Tesseract 모델, 글자 갈래]. 모델은 처음 쓸 때 jsdelivr(@tesseract.js-data)에서 받아 data\ 에 둔다.
+// 필리핀어는 tgl 이 그 저장소에 없어 fil(필리핀어). 광둥어 자막은 번체 한자로 쓴다.
+const HS_LANGS = {
+  'zh-CN': ['chi_sim', 'han'], 'zh-TW': ['chi_tra', 'han'], yue: ['chi_tra', 'han'], ja: ['jpn', 'ja'], ko: ['kor', 'ko'],
+  th: ['tha', 'th'], en: ['eng', 'lat'], vi: ['vie', 'lat'], id: ['ind', 'lat'], ms: ['msa', 'lat'], tl: ['fil', 'lat'],
+  pt: ['por', 'lat'], es: ['spa', 'lat'], fr: ['fra', 'lat'], de: ['deu', 'lat'], tr: ['tur', 'lat'], pl: ['pol', 'lat'],
+  it: ['ita', 'lat'], ru: ['rus', 'cyr'], mn: ['mon', 'cyr'], ar: ['ara', 'arab'], ur: ['urd', 'arab'], hi: ['hin', 'deva'],
+  mr: ['mar', 'deva'], bn: ['ben', 'beng'], ta: ['tam', 'taml'], te: ['tel', 'telu'], he: ['heb', 'hebr'], km: ['khm', 'khmr'],
+  lo: ['lao', 'laoo'], my: ['mya', 'mymr'],
+};
+const HS_SCRIPT = {
+  han: /[㐀-鿿豈-﫿]/, ja: /[぀-ヿㇰ-ㇿ㐀-鿿豈-﫿ー]/, ko: /[가-힣ㄱ-ㆎ]/, th: /[฀-๿]/, lat: /[A-Za-zÀ-ɏḀ-ỿ]/,
+  cyr: /[Ѐ-ԯ]/, arab: /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/, deva: /[ऀ-ॿ]/, beng: /[ঀ-৿]/, taml: /[஀-௿]/, telu: /[ఀ-౿]/,
+  hebr: /[֐-׿]/, khmr: /[ក-៿᧠-᧿]/, laoo: /[຀-໿]/, mymr: /[က-႟ꩠ-ꩿ]/,
+};
+// 낱말 사이를 띄지 않는 글자(빈칸은 구절 사이에만) — 낱말 상자 사이가 벌어진 곳에만 빈칸을 둔다.
+const HS_NOSPACE = new Set(['th', 'khmr', 'laoo', 'mymr', 'ja']);
+
+const hsCount = (s, re) => (String(s).match(new RegExp(re.source, re.flags.replace('g', '') + 'g')) || []).length; // u 깃발(p{L})을 살린다
+// 읽은 글이 그 언어의 자막인가. 자막이 아닌 곳(흰 간판·옷 무늬)을 읽으면 확신도가 낮거나 다른 글자·기호가 섞인다.
+// 한자: 둘 넘고 글자·숫자의 80% 넘게 한자, 확신도 40(1.32.0 과 같은 셈). 일본어는 가나가 하나는 있어야 한다(한자만이면
+// 중국어 자막). 나머지 글자: 그 글자가 셋 넘고(로마자는 넷, 세 글자 넘는 낱말 하나) 80% 넘게, 확신도 55(로마자 60).
+// 다른 글자를 이 글자 모델로 읽은 뒤범벅의 표: 글자에 붙은 숫자(ส่อท1, 6ร0อเล, ௧8), 태국·라오 앞 모음이 자음 없이
+// 끝나거나 연달아(โไล, ไโน), 낱말 첫머리의 뒤 모음·성조, 같은 글자 셋(วววร). 시험(영어·인도네시아어·포르투갈어를 태국어
+// 모델로): 확신도 72~85 인데 모두 이런 꼴이 둘 넘게 있었다. 진짜 자막은 0~1.
+function hsJunkMarks(t, kind) {
+  // 대괄호·중괄호는 이런 글자 자막에 거의 없다(영어 자막을 태국어로 읽으면 '[ไห[เทย [เจ')
+  let n = (t.match(/\p{L}\p{N}|\p{N}\p{L}/gu) || []).length + (t.match(/[[\]{}]/g) || []).length;
+  if (kind === 'th') n += (t.match(/[เแโใไ](?=[\sเแโใไ]|$)|(^|\s)[ะาำิีึืุู่้๊๋็์ั]/g) || []).length;
+  if (kind === 'laoo') n += (t.match(/[ເແໂໃໄ](?=[\sເແໂໃໄ]|$)/g) || []).length;
+  n += (t.match(/(\p{L})\1\1/gu) || []).length;
+  return n;
+}
+
+function hsOk(text, conf, kind) {
+  const t = String(text || '');
+  const all = hsCount(t, /[\p{L}\p{N}]/u);
+  const mine = hsCount(t, HS_SCRIPT[kind]);
+  if (!all || mine < all * 0.8) return false;
+  if (kind !== 'han' && kind !== 'lat' && hsJunkMarks(t, kind) >= 2) return false;
+  if (kind !== 'han' && kind !== 'lat' && hsCount(t, /\p{N}/u) >= 3 && conf < 70) return false; // 숫자 뒤범벅('28:௧8')
+  if (kind === 'han') return mine >= 2 && conf >= 40;
+  if (kind === 'ja') return mine >= 2 && /[぀-ヿ]/.test(t) && conf >= 40;
+  if (kind === 'lat') return mine >= 4 && /[A-Za-zÀ-ɏḀ-ỿ]{3}/.test(t) && conf >= 60;
+  // Tesseract 의 크메르·미얀마·라오 모델은 바르게 읽어도 확신도가 낮다(시험: 크메르 29~54, 미얀마 40~48, 라오 53~67).
+  if (kind === 'khmr') return mine >= 6 && conf >= 25;
+  if (kind === 'mymr') return mine >= 4 && conf >= 35;
+  if (kind === 'laoo') return mine >= 3 && conf >= 30;
+  return mine >= 3 && conf >= 55;
+}
+
+// 글줄 손질(로마자·키릴·아랍 …): 줄끝 '-' 로 잘린 낱말은 잇고, 줄은 빈칸으로, 양 끝 부스러기(| _ ~ 따옴표 조각)는 뗀다.
+// 대화 표시 '-' 와 끝 문장부호는 남긴다.
+function hsTidy(lines) {
+  return lines
+    // 타밀어 등에서 Tesseract 가 비라마 뒤에 붙이는 ZWNJ·ZWSP 는 지운다(ZWJ 는 둔다)
+    .map((l) => String(l).replace(/[​‌﻿]/g, '').replace(/[|_~`^]+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter((l) => /[\p{L}\p{N}]/u.test(l))
+    .join('\n')
+    .replace(/(\p{L})-\n(\p{Ll})/gu, '$1$2')
+    .replace(/\n/g, ' ')
+    .replace(/^[^\p{L}\p{N}¿¡"'«“(-]+|[^\p{L}\p{N}.?!…"'»”)؟।။។]+$/gu, '')
+    .trim();
+}
+
+// 낱말 상자로 잇기(빈칸 없는 글자): 상자 사이가 글자 크기(낱말 높이 중간값)의 gap 배 넘게 벌어졌으면 빈칸, 아니면 붙인다.
+// 줄이 바뀌면 빈칸.
+// Tesseract 는 태국어·라오어 등을 부호(่ ้ ี — \p{M})에서 낱말로 쪼개 돌려준다. 부호만 든 낱말은 앞 낱말에 붙이고(전에는
+// 글자가 없다고 버려 'เด ยว ก อน' 이 됐다), 낱말 사이 빈칸은 그림에 실제로 빈 세로 틈(gaps)이 em × gap 넘게 있을 때만.
+// 다음 줄로 넘어가면(왼쪽으로 돌아감) 빈칸.
+function hsGapJoin(words, gaps, em, gap) {
+  // 확신도 30 아래인 짧은 낱말(글자 넷까지)은 줄 사이·가장자리 부스러기(태국어 두 줄 자막 사이에서 'ซ่๓๑'). 긴 낱말은
+  // 확신도가 낮아도 둔다 — psm 13 의 미얀마어 '-သူဘယံသွားလဲ' 는 맞게 읽고도 30 아래였다.
+  const short = (w) => (w.t.match(/[\p{L}\p{N}]/gu) || []).length <= 4;
+  const junk = (w) => short(w) && ((w.c != null && w.c < 30) || /[๐-๙]/.test(w.t)); // 자막에 태국 숫자는 거의 없다
+  const ws = (words || [])
+    .map((w) => ({ ...w, t: String(w.t || '').trim() }))
+    .filter((w) => w.t && /[\p{L}\p{N}\p{M}]/u.test(w.t) && (!junk(w) || /^\p{M}+$/u.test(w.t)));
+  if (!ws.length) return '';
+  let out = '';
+  let prev = null;
+  for (const w of ws) {
+    if (prev && /^\p{M}+$/u.test(w.t)) {
+      out += w.t;
+      continue;
+    }
+    if (prev) {
+      const wide = w.x0 < prev.x0 || (gaps || []).some(([a, b]) => b - a >= em * gap && a >= prev.x0 && b <= w.x1);
+      out += wide ? ' ' : '';
+    }
+    out += w.t;
+    prev = w;
+  }
+  if (process.env.TH_HS_DEBUG) console.error(`[hs] em ${em} gaps ${JSON.stringify((gaps || []).filter(([a, b]) => b - a >= em * gap * 0.5))} ${ws.map((w) => `${w.t}[${w.x0}-${w.x1}]`).join(' ')}`);
+  return out.trim();
+}
+
+// 작은 자막(480p 영상 등)은 Tesseract 에 너무 작다 — 띠 한 줄이 40 화소 아래면 48 이 되게(3배까지) 부드럽게 키운다.
+function hsUpscale(px, w, h, u) {
+  const W = Math.round(w * u);
+  const H = Math.round(h * u);
+  const out = Buffer.alloc(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const sy = Math.min(h - 1, Math.max(0, (y + 0.5) / u - 0.5));
+    const y0 = Math.floor(sy);
+    const y1 = Math.min(h - 1, y0 + 1);
+    const fy = sy - y0;
+    for (let x = 0; x < W; x++) {
+      const sx = Math.min(w - 1, Math.max(0, (x + 0.5) / u - 0.5));
+      const x0 = Math.floor(sx);
+      const x1 = Math.min(w - 1, x0 + 1);
+      const fx = sx - x0;
+      for (let c = 0; c < 4; c++) {
+        const a = px[(y0 * w + x0) * 4 + c] * (1 - fx) + px[(y0 * w + x1) * 4 + c] * fx;
+        const b = px[(y1 * w + x0) * 4 + c] * (1 - fx) + px[(y1 * w + x1) * 4 + c] * fx;
+        out[(y * W + x) * 4 + c] = Math.round(a * (1 - fy) + b * fy);
+      }
+    }
+  }
+  return { px: out, w: W, h: H };
+}
+
+// 한 언어로 읽기. 한자 자막은 1.32 그대로: 원래 크기, 띠만, 둘레 0.3줄로 잘라 psm 13 — 간체로 읽고 덜 확신하면(70 아래)
+// 번체로도, 번체는 간체보다 6 넘게 더 확신할 때만(간체 자막을 번체로 읽으면 엉뚱한 글자가 섞였다: 枪毙了我我也不干 →
+// 槍緒了…不千). 번체·광둥어로 고르면 번체 먼저. 다른 글자: 키운 그림(작으면) 전체 높이 + 흰 여백, psm 7(두 줄이면 6).
+async function hsReadAs(view, lang) {
+  const [model, kind] = HS_LANGS[lang];
+  const whole = kind === 'han' ? view.han() : view.wide(kind === 'ja' || kind === 'ko');
+  // 여러 줄이면 줄마다 따로 읽어 이 언어로 받아들일 만한 줄만 잇는다 — '태국어 두 줄 + 중국어 한 줄' 처럼 두 언어를 같이
+  // 박은 영화에서 태국어 모델이 중국어 줄을 부스러기('ร1แทาพเศแนแพ')로 읽어 붙였다(2026-11-19 ifiV89ROboY).
+  if (whole.bands.length > 1) {
+    const parts = [];
+    for (const r of whole.bands) {
+      const one = kind === 'han' ? view.han(r) : view.wide(false, r);
+      parts.push(await hsReadLine(one, model, kind, lang));
+    }
+    const good = parts.filter((p) => p.ok);
+    if (!good.length) {
+      const top = parts.sort((x, y) => y.conf - x.conf)[0];
+      return { ...top, ok: false, lines: whole.bands.length };
+    }
+    const n = good.reduce((t, p) => t + p.text.length, 0) || 1;
+    const conf = Math.round(good.reduce((t, p) => t + p.conf * p.text.length, 0) / n);
+    const join = kind === 'han' ? '，' : ' ';
+    return { text: good.map((p) => p.text).join(join), conf, lang: good[0].lang, ok: true, lines: good.length };
+  }
+  return { ...(await hsReadLine(whole, model, kind, lang)), lines: whole.lines };
+}
+
+// 한 줄 읽기. 한자: 간체로 읽고 덜 확신하면(70 아래) 번체로도 — 번체는 간체보다 6 넘게 더 확신할 때만. 크메르·라오·미얀마는
+// psm 13(통째로 한 줄)이 위아래 부호를 덜 버렸다(시험: 크메르 7 은 뒤범벅, 13 은 거의 맞음). 태국어·로마자 등은 psm 7.
+async function hsReadLine(v, model, kind, lang) {
+  if (kind === 'han') {
+    const order = model === 'chi_sim' ? ['chi_sim', 'chi_tra'] : ['chi_tra', 'chi_sim'];
+    let best = null;
+    for (const m of order) {
+      const r = await ocr(v.file, { langs: [m], psm: '13' });
+      const code = lang === 'yue' ? 'yue' : m === 'chi_sim' ? 'zh-CN' : 'zh-TW';
+      const got = { text: hsJoin(r.words, r.text), conf: Math.round(r.conf), lang: code };
+      if (!best || got.conf > best.conf + 6) best = got;
+      if (best.conf >= 70) break;
+    }
+    return { ...best, ok: hsOk(best.text, best.conf, kind) };
+  }
+  const raw = kind === 'khmr' || kind === 'laoo' || kind === 'mymr';
+  const r = await ocr(v.file, { langs: [model], psm: raw ? '13' : '7' });
+  // 빈칸: 태국·라오·크메르·미얀마 글자는 띠 높이의 0.33 넘는 틈, 일본어(띠 = 글자 높이)는 0.5
+  const text = hsTidy([HS_NOSPACE.has(kind) ? hsGapJoin(r.words, v.gaps, v.em, kind === 'ja' ? 0.5 : 0.33) : hsTidy((r.lines || []).map((l) => l.text))]);
+  const conf = Math.round(r.conf);
+  return { text, conf, lang, ok: hsOk(text, conf, kind) };
+}
+
+// text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], core?:[띠 위, 띠 아래], n?: 글줄 수,
+//              px: RGBA base64, langs?: [언어 후보…]}
+// langs = 확장이 영상(말 언어·제목 글자)으로 가늠한 언어 순서. 없으면(1.32.x 확장) 중국어만 — 예전과 같다.
+// 앞에서부터 읽어 그 언어 자막으로 받아들일 만하고 아주 또렷하면(88) 거기서 그만, 아니면 받아들일 만한 것 중 가장 확신하는 쪽
+// (첫 후보는 +8 — 영상이 그 언어라는 증거가 있다).
+// 답: {ocr: 1, text, conf, lang, ok, lines}
 async function hardsub(text) {
   const j = JSON.parse(text);
   const w = j.w | 0, h = j.h | 0;
   const px = Buffer.from(String(j.px || ''), 'base64');
   if (!(w > 0 && h > 0 && w * h <= 4e6 && px.length === w * h * 4)) throw new Error('자막 그림이 잘못되었습니다');
-  const rows = Array.isArray(j.rows) ? [Math.max(0, j.rows[0] | 0), Math.min(h, j.rows[1] | 0)] : [0, h];
-  const pgm = hsBinarize(px, w, h, rows, Number(j.vh) || h * 8);
-  if (process.env.TH_HS_DEBUG) fs.writeFileSync(path.join(require('os').tmpdir(), `hs-${Date.now()}.pgm`), pgm);
-  const file = `data:image/pgm;base64,${pgm.toString('base64')}`;
+  const vh = Number(j.vh) || h * 8;
+  const n = Math.max(1, j.n | 0);
+  const span = (r, u, H) => (Array.isArray(r) ? [Math.max(0, Math.floor(r[0] * u)), Math.min(H, Math.ceil(r[1] * u))] : null);
+  const rows1 = span(j.rows, 1, h) || [0, h];
+  const core1 = span(j.core, 1, h);
+  const band = core1 || rows1;
+  const lh1 = Math.max(1, (band[1] - band[0]) / n); // 띠 한 줄 높이
+  let native = null;
+  let big = null;
+  const view = {
+    // 한자: 원래 크기, 띠(없으면 줄)만, 둘레 0.3줄
+    han: (r) => {
+      native = native || hsBinarize(px, w, h, rows1, vh, core1);
+      return native(r || band, Math.max(2, Math.round(lh1 * 0.3)));
+    },
+    // 다른 글자: 띠 한 줄이 40 화소 아래면 키우고, 그림 전체(가나·한글은 띠만) + 흰 여백 0.4줄
+    wide: (coreOnly, r) => {
+      if (!big) {
+        const u = lh1 < 40 ? Math.min(3, 48 / lh1) : 1;
+        const up = u > 1 ? hsUpscale(px, w, h, u) : { px, w, h };
+        const core = span(j.core, u, up.h);
+        big = { u, H: up.h, core, bin: hsBinarize(up.px, up.w, up.h, span(j.rows, u, up.h) || [0, up.h], vh * u, core, lh1 * u * 0.4) };
+      }
+      const got = big.bin(r || (coreOnly && big.core ? big.core : [0, big.H]));
+      return { ...got, em: lh1 * big.u };
+    },
+  };
+  const langs = [...new Set((Array.isArray(j.langs) ? j.langs : []).map(String).filter((l) => HS_LANGS[l]))].slice(0, 4);
+  if (!langs.length) langs.push('zh-CN');
   let best = null;
-  for (const lang of ['chi_sim', 'chi_tra']) {
-    const r = await ocr(file, { langs: [lang], psm: '13' });
-    const got = { text: hsJoin(r.words, r.text), conf: Math.round(r.conf), lang: lang === 'chi_sim' ? 'zh-CN' : 'zh-TW' };
-    if (!best || got.conf > best.conf + 6) best = got;
-    if (best.conf >= 70) break;
+  let latin = null; // 받아들일 만한 로마자 읽기
+  const score = (g, i) => g.conf + (i === 0 ? 8 : 0);
+  for (let i = 0; i < langs.length; i++) {
+    const got = await hsReadAs(view, langs[i]);
+    got.i = i;
+    if (process.env.TH_HS_DEBUG) console.error(`[hs] ${langs[i]} L${got.lines} ${got.conf} ${got.ok ? 'ok' : '--'} ${got.text}`);
+    if (got.ok && HS_LANGS[langs[i]][1] === 'lat' && (!latin || got.conf > latin.conf)) latin = got;
+    if (!best || (got.ok && !best.ok) || (got.ok === best.ok && score(got, i) > score(best, best.i))) best = got;
+    if (best.ok && best.conf >= 88) break; // 아주 또렷할 때만 그만 — 태국어 모델이 영어 줄을 확신도 85 로 읽기도 했다
   }
-  return { out: JSON.stringify({ ocr: 1, ...best }), via: String(best.conf) };
+  // 로마자 자막을 다른 글자 모델(태국어 등)로 읽으면 뒤범벅인데도 확신도가 60~80 이다. 진짜 태국어 줄을 영어 모델로 읽으면
+  // 확신도가 낮거나 로마자 비율에서 걸린다. 그래서 로마자 읽기가 받아들일 만하고 12 안쪽으로 뒤지면 로마자를 고른다.
+  // 한자·가나·한글·키릴(로마자와 닮은 글자)은 빼고 — 그 모델들은 로마자 줄을 이렇게 읽지 않았고, 영어 모델이 그 줄을 읽은
+  // 뒤범벅이 오히려 받아들여질 수 있다.
+  const far = (l) => HS_LANGS[l] && !['lat', 'han', 'ja', 'ko', 'cyr'].includes(HS_LANGS[l][1]);
+  if (latin && best !== latin && best.ok && far(best.lang) && latin.conf >= best.conf - 12) best = latin;
+  const { i: _i, ...ans } = best;
+  return { out: JSON.stringify({ ocr: 1, ...ans }), via: String(best.conf) };
 }
 
 async function handle(req) {

@@ -1408,7 +1408,7 @@ static class App
                 if (k == "bothdefault") bothSet = true;
                 if (k == "korean") ShowKorean = v != "0";
                 if (k == "livecaption") LiveCaption.On = v != "0";
-                if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin" || v.StartsWith("win:"))) ScreenKorean.Lang = v;
+                if (k == "screenlang" && (v == "auto" || v == "th" || v == "latin" || v.StartsWith("win:") || System.Text.RegularExpressions.Regex.IsMatch(v, "^tess:[a-z]{2,3}(-[A-Z]{2})?$"))) ScreenKorean.Lang = v;
             }
         }
         catch { }
@@ -1536,7 +1536,7 @@ static class App
         // 화면 번역이 읽을 글자 — 기본은 알아서(영어·로마자·태국어 + 이 PC 에 깔린 윈도우 인식 언어), 손으로 고를 수도 있다.
         // 아래쪽은 이 PC 의 윈도우 글자 인식 언어(일본어·중국어 …) — 고르면 그 인식기 하나로만 읽는다(방법 A, 2026-11-05).
         ToolStripMenuItem slang = new ToolStripMenuItem(MyLang.T("화면 번역 글자"));
-        List<string[]> choices = new List<string[]> { new[] { "auto", MyLang.T("자동 (영어·태국어 + 이 PC 에 깔린 언어)") }, new[] { "th", MyLang.T("태국어") }, new[] { "latin", MyLang.T("영어·로마자만") } };
+        List<string[]> choices = new List<string[]> { new[] { "auto", MyLang.T("자동 (30개 언어 글자를 알아봄 + 이 PC 에 깔린 언어)") }, new[] { "th", MyLang.T("태국어") }, new[] { "latin", MyLang.T("영어·로마자만") } };
         foreach (string tag in ScreenKorean.WindowsLangs())
             choices.Add(new[] { "win:" + tag, ScreenKorean.LangLabel(tag) + " — " + MyLang.T("윈도우 글자 인식") });
         foreach (string[] l in choices)
@@ -1547,6 +1547,22 @@ static class App
             it.Click += delegate { ScreenKorean.SetLang(id); SaveSettings(); RefreshTray(); };
             slang.DropDownItems.Add(it);
         }
+        // 번역 도우미에 든 글자 인식기(Tesseract)로 그 언어를 먼저 읽기 — 30개 언어 모두(2026-11-19). 자동도 키릴·아랍·인도 글자·
+        // 크메르·미얀마 … 를 알아보지만, 라오어처럼 태국어와 닮은 글자는 여기서 고르는 쪽이 정확하다.
+        ToolStripMenuItem tess = new ToolStripMenuItem(MyLang.T("이 언어로 먼저 읽기 (번역 도우미의 글자 인식기)"));
+        foreach (string[] l in RemoteConfig.Languages())
+        {
+            string code = l[0] == "zh" ? "zh-CN" : l[0];
+            if (code == MyLang.Code || l[0] == MyLang.Code) continue; // 내 언어는 읽을 일이 없다
+            string id = "tess:" + code;
+            ToolStripMenuItem it = new ToolStripMenuItem(MyLang.T(l[2]));
+            it.Checked = ScreenKorean.Lang == id;
+            it.Click += delegate { ScreenKorean.SetLang(id); SaveSettings(); RefreshTray(); };
+            tess.DropDownItems.Add(it);
+            if (it.Checked) slang.Text = MyLang.T("화면 번역 글자") + " · " + MyLang.T(l[2]);
+        }
+        slang.DropDownItems.Add(new ToolStripSeparator());
+        slang.DropDownItems.Add(tess);
         // 다른 언어(태국어·베트남어 빼고 35개)는 윈도우 설정에서 언어를 더하면 생긴다.
         ToolStripMenuItem addLang = new ToolStripMenuItem(MyLang.T("다른 언어 더하기 (윈도우 설정)"));
         addLang.Click += delegate { try { Process.Start("ms-settings:regionlanguage"); } catch { } };

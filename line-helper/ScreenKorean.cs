@@ -999,6 +999,8 @@ static class ScreenKorean
             if (c != null) { c.Em = p.Em > 0 ? p.Em : p.LineH; c.Trusted = p.Trusted; chunks.Add(c); }
         }
         if (!menu) chunks = Paragraphs(chunks);
+        // 윈도우 인식기가 글줄로 찾지도 못한 줄(힌디어·벵골어) — 직접 고른 윈도우 인식 언어·영어만 고르기에서는 하지 않는다.
+        if (!menu && Lang != "latin" && !Lang.StartsWith("win:")) chunks.AddRange(Missed(chunks, px, w, h));
         foreach (TextChunk c in chunks)
         {
             Colors(px, w, h, c);
@@ -1006,6 +1008,78 @@ static class ScreenKorean
             c.Ref = Sample(c.Box, px, w, h);
         }
         return chunks;
+    }
+
+    // ---- 윈도우 인식기가 놓친 글줄 (2026-11-19, 사용자: 일반 프로그램도 30개 언어) ----
+    // 한국어 윈도우 OCR 은 힌디어·벵골어 줄(글자 위 가로줄이 이어진 글씨)을 몇 배로 키워도 글줄로 찾지 못했다. 찾은 글줄 칸 밖에서
+    // 가로로 글자 획(옆 화소와 밝기가 크게 다른 곳)이 몰린 띠를 글줄 후보로 잡아, 엔진이 글자 모델로 훑어 읽게 넘긴다(engine.js
+    // screenOther). 글자 이름은 없으니 그림 표본의 해시로 붙인다(MissedMark + 해시 — 그림이 바뀌면 새 줄). 사진·아이콘도 후보가
+    // 될 수 있어, 글줄 모양(높이 8~60, 폭이 높이의 1.6배 넘게, 획 밀도 4~45%)만, 한 번에 8개까지.
+    public const string MissedMark = "⁣";
+    static List<TextChunk> Missed(List<TextChunk> found, int[] px, int w, int h)
+    {
+        List<TextChunk> got = new List<TextChunk>();
+        if (w < 40 || h < 20) return got;
+        bool[] cover = new bool[w * h];
+        foreach (TextChunk c in found)
+        {
+            Rectangle r = Rectangle.Inflate(c.Box, 3, 3);
+            r.Intersect(new Rectangle(0, 0, w, h));
+            for (int y = r.Top; y < r.Bottom; y++)
+                for (int x = r.Left; x < r.Right; x++) cover[y * w + x] = true;
+        }
+        // 획: 왼쪽 화소와 밝기 차이 80 넘게, 찾은 글줄 칸 밖.
+        bool[] edge = new bool[w * h];
+        int[] rowN = new int[h];
+        for (int y = 0; y < h; y++)
+        {
+            int prev = Luma(px[y * w]);
+            for (int x = 1; x < w; x++)
+            {
+                int i = y * w + x, l = Luma(px[i]);
+                if (!cover[i] && Math.Abs(l - prev) > 80) { edge[i] = true; rowN[y]++; }
+                prev = l;
+            }
+        }
+        for (int y0 = 0; y0 < h && got.Count < 8; )
+        {
+            if (rowN[y0] < 4) { y0++; continue; }
+            int y1 = y0;
+            while (y1 + 1 < h && (rowN[y1 + 1] >= 4 || (y1 + 2 < h && rowN[y1 + 2] >= 4))) y1++;
+            int bh = y1 - y0 + 1;
+            int top = y0;
+            y0 = y1 + 1;
+            if (bh < 8 || bh > 60) continue;
+            // 띠 안에서 획이 있는 기둥을 가로로 묶는다(빈칸이 띠 높이의 1.5배 넘으면 끊는다).
+            int[] colN = new int[w];
+            for (int y = top; y <= y1; y++)
+                for (int x = 0; x < w; x++) if (edge[y * w + x]) colN[x]++;
+            for (int x = 0; x < w && got.Count < 8; )
+            {
+                if (colN[x] == 0) { x++; continue; }
+                int x0 = x, last = x, n = 0;
+                while (x < w && x - last <= bh * 3 / 2) { if (colN[x] > 0) { last = x; n += colN[x]; } x++; }
+                int bw = last - x0 + 1;
+                Rectangle box = new Rectangle(x0, top, bw, bh);
+                double dens = n / (double)(bw * bh);
+                if (bw * 5 < bh * 8 || dens < 0.04 || dens > 0.45) continue; // 폭이 높이의 1.6배 넘게(짧은 낱말 ဖိုင် 도)
+                // 찾은 글줄과 겹치거나 같은 줄에 바로 이어진 조각(태국어 줄 끝 'นะคะ' 만 따로 → '예.')은 두지 않는다.
+                bool hit = false;
+                foreach (TextChunk c in found)
+                {
+                    int vy = Math.Min(c.Box.Bottom, box.Bottom) - Math.Max(c.Box.Top, box.Top);
+                    int gap = Math.Max(c.Box.Left - box.Right, box.Left - c.Box.Right);
+                    if (c.Box.IntersectsWith(box) || (vy * 2 >= Math.Min(c.Box.Height, bh) && gap < bh * 3)) { hit = true; break; }
+                }
+                if (hit) continue;
+                int[] s = Sample(box, px, w, h);
+                if (s == null) continue;
+                uint hash = 2166136261;
+                foreach (int v in s) hash = (hash ^ (uint)(v >> 3)) * 16777619;
+                got.Add(new TextChunk { Box = box, Text = MissedMark + hash.ToString("x8"), LineH = bh, Em = bh * 0.72f });
+            }
+        }
+        return got;
     }
 
     // 한 인식기로 그림을 읽어 낱말 덩어리로. 한 줄 안에서 글줄 높이보다 넓게 떨어진 낱말은 다른 덩어리(메뉴 칸·버튼이 한 줄로

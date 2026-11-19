@@ -404,6 +404,260 @@ async function readCjk(it) {
   return best;
 }
 
+// ---- 화면 번역: 다른 글자(2026-11-19, 사용자: '일반 프로그램 번역도 30개국 언어로') ----
+// 한국어 윈도우 OCR 은 키릴·아랍·히브리·인도 글자·크메르·라오·미얀마를 뒤범벅으로 읽었고, 그 뒤범벅이 엉뚱한 한국어로
+// 덮였다(히브리어 '최근 파일 열기' → 'DI)ITIN 이'기p nn9' → 'Khao Kamphasawakorn 토론', 라오어 → '베통카나롱'). 화면 자막과 같은
+// Tesseract 모델(HS_LANGS)로 읽는다: 그 글자 모델들을 함께 띄운 인식기로 한 번 읽어(훑어보기) 어느 글자인지 보고, 그 언어
+// 모델로 다시 읽어 또렷하면 그것. 찾은 언어는 10분 동안 기억해 다음 줄부터 그것 먼저(훑어보기는 한 번 읽을 때 세 줄까지, 세 번
+// 헛걸음이면 2분 쉰다). 모델(합쳐 약 32MB)은 처음 훑어볼 때 뒤에서 받는다 — 받는 동안 그 줄은 덮지 않고, 번역 도우미가 15초
+// 뒤 다시 묻는다. 트레이에서 언어를 고르면(tess:<언어>) 그 모델로 먼저 읽는다(uiLine).
+const PROBE_KINDS = { cyr: ['ru', 'mn'], arab: ['ar', 'ur'], hebr: ['he'], deva: ['hi', 'mr'], beng: ['bn'], taml: ['ta'], telu: ['te'], khmr: ['km'], laoo: ['lo'], mymr: ['my'] };
+const PROBE_MODELS = ['rus', 'ara', 'heb', 'hin', 'ben', 'tam', 'tel', 'khm', 'lao', 'mya'];
+const SCREEN_HINT_MS = 10 * 60 * 1000;
+let screenHint = { lang: '', at: 0 };
+let probeUntil = 0; // 이번에 읽는 창 한 장에서 훑어보기를 할 수 있는 때까지(screenLines 가 정한다 — 한 번 읽기에 5초까지)
+let probeRan = false; // 방금 screenOther 가 실제로 훑어봤는지(missedLine)
+let probeMiss = 0;
+let probeQuietUntil = 0;
+let probeFetching = false;
+
+const probeKinds = () => (myKo() ? PROBE_KINDS : { ...PROBE_KINDS, ko: ['ko'] }); // 한국어가 아닌 사용자는 한국어 프로그램도
+const probeModels = () => (myKo() ? PROBE_MODELS : PROBE_MODELS.concat('kor'));
+const probeReady = () => probeModels().every((m) => fs.existsSync(path.join(DATA, `${m}.traineddata`)));
+const hintNow = () => (Date.now() - screenHint.at < SCREEN_HINT_MS ? screenHint.lang : '');
+function screenHintIs(lang) {
+  return hintNow() === lang;
+}
+function screenHintIsScript() {
+  const l = hintNow();
+  return !!l && !!HS_LANGS[l] && !['lat', 'han', 'ja', 'th'].includes(HS_LANGS[l][1]);
+}
+
+// 한 언어 모델로 읽기 → {t, conf, kind, lang}. 태국어·한자는 원래 길(readThai·readCjk).
+async function screenReadAs(it, lang) {
+  const [model, kind] = HS_LANGS[lang];
+  if (kind === 'th') {
+    const r = await readThai(it);
+    return { t: r.t, conf: Math.round(r.conf), kind, lang };
+  }
+  if (kind === 'han' || kind === 'ja') {
+    const r = await readCjk(it);
+    return r ? { t: r.t, conf: Math.round(r.conf), kind, lang } : null;
+  }
+  // 낱말 사이를 띄지 않는 글자는 Tesseract 가 끼운 빈칸을 지운다(태국어 readThai 와 같게).
+  const tidy = (text) => {
+    let t = hsTidy(String(text || '').split('\n'));
+    if (HS_NOSPACE.has(kind)) {
+      const ch = HS_SCRIPT[kind].source.replace(/^\[|\]$/g, '');
+      t = t.replace(new RegExp(`(?<=[${ch}\\p{M}]) (?=[${ch}\\p{M}])`, 'gu'), '');
+    }
+    return t;
+  };
+  if (COMPLEX_KINDS[kind]) return complexRead(it, model, kind, lang, tidy);
+  const r = await ocr(it.f, { langs: [model], psm: it.n > 1 ? '6' : '7' });
+  return { t: tidy(r.text), conf: Math.round(r.conf), kind, lang };
+}
+
+// 크메르·라오·미얀마: Tesseract 가 바르게 읽어도 확신도를 아주 낮게 준다(시험 창 '최근 파일 열기': 크메르 psm 13 은 글자 그대로인데
+// 7점, 라오 35, 미얀마 psm 7 은 90). 그래서 확신도 대신 두 방식(psm 7·13)으로 읽은 글이 서로 맞는지(글자 60% 넘게 겹침),
+// 숫자·기호 부스러기가 없는지로 본다 — 다른 글자를 이 모델로 읽은 뒤범벅은 숫자(៣៤១·၈၃၂)와 < > [ ] % 가 섞이고 두 읽기가 다르다.
+// 맞으면 clean, 겨룰 확신도는 70 으로 친다(태국어 모델이 크메르어 줄을 66 으로 '읽었다').
+const COMPLEX_KINDS = { khmr: '13', laoo: '7', mymr: '7' }; // 쓸 읽기(psm)
+function overlap(a, b) {
+  const bag = new Map();
+  for (const c of a) bag.set(c, (bag.get(c) || 0) + 1);
+  let same = 0;
+  for (const c of b) if (bag.get(c) > 0) (bag.set(c, bag.get(c) - 1), same++);
+  return same / Math.max(1, [...a].length, [...b].length);
+}
+async function complexRead(it, model, kind, lang, tidy) {
+  // 두 줄 넘게 묶인 칸(윈도우가 뒤범벅 줄을 문단으로 이었다)은 psm 6·4 — 한 줄 방식(7·13)은 두 줄을 'ရ' 한 글자로 읽었다.
+  const use = it.n > 1 ? '6' : COMPLEX_KINDS[kind];
+  const alt = it.n > 1 ? '4' : use === '13' ? '7' : '13';
+  const [a, b] = [await ocr(it.f, { langs: [model], psm: use }), await ocr(it.f, { langs: [model], psm: alt })];
+  // 크메르 반복 부호 ៗ 를 숫자 ១ 로 읽는다(ថ្មីៗ → ថ្មី១) — 낱말 끝 글자 바로 뒤의 ១ 는 ៗ 로.
+  const fixKm = (x) => (kind === 'khmr' ? x.replace(/(?<=[ក-៓])១(?=\s|$)/g, 'ៗ') : x);
+  const t = fixKm(tidy(a.text));
+  const other = fixKm(tidy(b.text));
+  const bare = (s) => s.replace(/\s+/g, '');
+  const mine = hsCount(t, HS_SCRIPT[kind]);
+  const letters = hsCount(t, /\p{L}/u);
+  const clean =
+    mine >= 5 &&
+    mine >= letters * 0.9 &&
+    !/[\p{N}<>[\]{}|%‹›=_~^*#@&$]/u.test(t) &&
+    hsJunkMarks(t, kind) === 0 &&
+    overlap(bare(t), bare(other)) >= 0.6 &&
+    (kind === 'khmr' || a.conf >= 20);
+  const conf = Math.round(a.conf);
+  return { t, conf: clean ? Math.max(conf, 70) : conf, kind, lang, clean };
+}
+
+// 그 언어로 읽은 줄로 받아들일 만한가. 화면 글은 자막보다 깨끗해 숫자·로마자가 조금 섞여도(버전 '2.0') 글자의 3/4 이면 된다.
+// strict(훑어보기로 처음 찾을 때): 확신도 15 더, 부스러기 표시 하나도 없게 — 아이콘을 크메르어로 읽고 덮지 않게.
+// picked(트레이에서 그 언어를 고름): 크메르·라오·미얀마도 그 글자가 대부분이고 숫자·기호 부스러기만 없으면 받는다(두 읽기가 달라도).
+function screenOk(r, strict, picked) {
+  if (!r || !r.t) return false;
+  const { t, conf, kind } = r;
+  const letters = hsCount(t, /\p{L}/u);
+  const mine = hsCount(t, HS_SCRIPT[kind]);
+  if (!letters || mine < letters * 0.75) return false;
+  if (kind === 'lat') return mine >= 3 && conf >= 60;
+  if (kind === 'han' || kind === 'ja') return mine >= 1 && conf >= 55;
+  if (COMPLEX_KINDS[kind]) return !!r.clean || (!!picked && mine >= 2 && !/[\p{N}<>[\]{}|%]/u.test(t));
+  if (hsJunkMarks(t, kind) >= (strict ? 1 : 2)) return false;
+  const base = { khmr: 25, mymr: 35, laoo: 30 }[kind] || 55;
+  return mine >= 3 && conf >= (strict ? base + 15 : base);
+}
+
+// 베트남어 성조 글자(프랑스어·포르투갈어와 겹치는 â ê ô à á è é ã õ 는 빼고 베트남어에만 있는 것).
+const VI_MARK = /[ăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịĩọỏốồổỗộớờởỡợụủũứừửữựỳỵỷỹ]/giu;
+async function readVi(it) {
+  const r = await ocr(it.f, { langs: ['vie'], psm: it.n > 1 ? '6' : '7' });
+  const t = hsTidy(String(r.text || '').split('\n'));
+  const marks = (t.match(VI_MARK) || []).length;
+  // 성조 글자 둘 넘게(여러 글자를 섞은 시험 창에서 몽골어 'Сүүлийн' 을 'CyynuắH' 로 읽고 베트남어로 받은 적이 있다 — 하나로는 모자란다).
+  // 베트남어 화면으로 보인 뒤에는 악센트 글자 하나(Thoát 의 á 처럼 다른 언어와 겹치는 것도)면 된다 — 단 또렷할 때(80).
+  const loose = screenHintIs('vi') && r.conf >= 80 && /[À-ɏḀ-ỿ]/.test(t);
+  if ((marks >= 2 || loose) && r.conf >= 65 && latinCount(t) + marks >= 3) {
+    screenHint = { lang: 'vi', at: Date.now() };
+    return t;
+  }
+  return '';
+}
+
+// 훑어보기: 글자 모델 열 개를 함께 띄운 인식기로 읽어 가장 많이 나온 글자를 고르고, 그 글자의 언어 모델로 다시 읽는다.
+async function probeLine(it, noLao) {
+  const got = await probeAll(it);
+  if (got) return got;
+  // 함께 읽기는 크메르·라오·미얀마 줄을 숫자 부스러기(1739, ৬৫০…)로 읽었다 — 그 셋은 하나씩 따로 본다. 태국어로 또렷이 읽힌 줄은
+  // 라오어로 보지 않는다(두 글자는 닮아서 태국어 줄도 라오어로 그럴듯하게 읽힌다).
+  let win = null;
+  for (const lang of noLao ? ['km', 'my'] : ['km', 'lo', 'my']) {
+    const r = await screenReadAs(it, lang).catch(() => null);
+    if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 따로 ${lang} ${r ? `${r.t}(${r.conf}) ${r.clean ? 'ok' : '--'}` : '실패'}`);
+    if (screenOk(r, true) && (!win || r.conf > win.conf)) win = r;
+  }
+  return win;
+}
+
+async function probeAll(it) {
+  const r = await ocr(it.f, { langs: probeModels(), psm: '6' });
+  const t = String(r.text || '');
+  const letters = hsCount(t, /\p{L}/u) || 1;
+  let best = null;
+  for (const kind of Object.keys(probeKinds())) {
+    const n = hsCount(t, HS_SCRIPT[kind]);
+    if (n >= 3 && n * 2 >= letters && (!best || n > best.n)) best = { kind, n };
+  }
+  const dbg = process.env.TH_SCREEN_DEBUG ? [] : null;
+  if (dbg) dbg.push(`함께 읽기 ${t.replace(/\s+/g, ' ').trim()}(${Math.round(r.conf)}) → ${best ? best.kind : '-'}`);
+  if (!best) return dbg && console.error(`[화면] ${dbg.join(' | ')}`), null;
+  let win = null;
+  for (const lang of probeKinds()[best.kind]) {
+    const got = await screenReadAs(it, lang).catch(() => null);
+    if (dbg) dbg.push(`${lang} ${got ? `${got.t}(${got.conf}) ${screenOk(got, true) ? 'ok' : '--'}` : '실패'}`);
+    if (screenOk(got, true) && (!win || got.conf > win.conf)) win = got;
+  }
+  if (dbg) console.error(`[화면] ${dbg.join(' | ')}`);
+  return win;
+}
+
+// 키릴 글자를 영어 인식기로 읽은 꼴: 낱말 안에서 소문자 다음 대문자(nocneAHb·COXpaHVITb·BblXOA)이고 ь·ы 를 읽은 b·bl 이 있다.
+// 영어 줄은 낱말 안 대문자(OneScript·iPhone)가 있어도 b 로 끝나는 꼴이 드물다.
+function cyrLike(t) {
+  return /[a-z][A-Z]/.test(t) && /bl|[A-Za-z]b\b/.test(t);
+}
+
+// 다른 글자를 윈도우 인식기가 뒤범벅으로 읽은 줄인가 — 훑어볼 만한가. 키릴 꼴이거나, 로마자가 글자의 3/4 아래(아랍어 '6」4-s寸| 口년-집',
+// 히브리어 'DI)ITIN 이'기p nn9' 69%). 로마자가 대부분인 줄('0이살nload Speed' 83%)은 한글 몇 자 섞인 영어 줄이다.
+function foreignLike(t) {
+  t = String(t || '');
+  const letters = letterCount(t);
+  // 한자·가나가 절반 넘는 줄은 한자 인식기(readCjk)가 맡는다.
+  return cyrLike(t) || (letters >= 3 && !cleanKorean(t) && latinCount(t) <= letters * 0.75 && cjkCount(t) * 2 < letters);
+}
+
+// 다른 글자(아랍·인도 글자·미얀마 …)를 태국어 모델로 읽은 뒤범벅: 태국 숫자가 글자 사이에(อา๒๒เก๒ทอ6), | [ ] { }, 글자에 붙은
+// 숫자 셋 넘게. 진짜 태국어 화면 글에는 거의 없다('ราคา199บาท' 은 둘).
+// 기호(@ # = < > …)나 글자에 붙은 태국 숫자도(몽골어 'файлуудыг' → '@ลหัภหหภู๒พ').
+function thaiJunk(t) {
+  return (
+    /[[\]{}|@#$%^&*=<>~]/.test(t) ||
+    (t.match(/[๐-๙]/g) || []).length >= 2 ||
+    /[๐-๙]\p{M}*[ก-ฮ]|[ก-ฮ]\p{M}*[๐-๙]/u.test(t) ||
+    hsJunkMarks(t, 'th') >= 3
+  );
+}
+
+// 윈도우 인식기가 글줄로 찾지 못해 번역 도우미가 잉크로 찾은 줄(ScreenKorean.Missed — 글은 없고 이름만 MISSED_MARK + 해시).
+// 고른 언어 → 태국어(또렷하면) → 다른 글자 훑어보기. 아무것도 아니면 덮지 않는다(사진·아이콘일 수 있다).
+const MISSED_MARK = '⁣';
+async function missedLine(it, mode) {
+  if (!it.f || mode === 'latin') return '';
+  if (mode.startsWith('tess:') && HS_LANGS[mode.slice(5)]) {
+    const r = await screenReadAs(it, mode.slice(5)).catch(() => null);
+    if (screenOk(r, false, true)) return r.t;
+  }
+  // 이 화면에서 찾은 다른 글자(러시아어 화면이면 러시아어)가 먼저.
+  if (screenHintIsScript()) {
+    const h = await screenOther(it, -1, false).catch(() => null);
+    if (h && h.t) return h.t;
+  }
+  const th = await readThai(it).catch(() => null);
+  const thaiOk = !!th && thaiCount(th.t) >= 3 && th.conf >= 60 && !thaiJunk(th.t);
+  // 윈도우 인식기가 놓친 줄은 태국어가 아닌 경우가 많다(태국어 줄은 뒤범벅으로라도 찾는다) — 태국어 모델은 힌디어 줄도 그럴듯한
+  // 태국어(ธโตจแทรูสิงตสิ)로 읽어서, 아주 또렷하거나(85) 훑어보기로 다른 글자가 아님을 본 뒤에만 태국어로.
+  if (thaiOk && th.conf >= 85) return th.t;
+  const o = await screenOther(it, thaiOk ? th.conf : -1, true, thaiOk).catch(() => null);
+  if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 놓친 줄 ${it.t.slice(1)} → ${o && o.t ? `${o.lang} ${o.t}` : thaiOk ? th.t : '없음'}`);
+  if (o && o.t) return o.t;
+  return thaiOk && probeRan && !(o && o.pending) ? th.t : '';
+}
+
+// 영어·태국어·한자로 못 읽은 줄(또는 덜 또렷한 줄 — minConf 는 다른 읽기의 확신도, 그보다 또렷해야 이긴다).
+// 답: {t, conf} = 읽은 글, null = 다른 글자 아님, {pending: true} = 모델을 받는 중(모른다).
+const PENDING = { pending: true };
+async function screenOther(it, minConf = -1, mayProbe = true, noLao = false) {
+  const hint = hintNow();
+  if (hint && HS_LANGS[hint] && !['lat', 'han', 'ja', 'th'].includes(HS_LANGS[hint][1])) {
+    const r = await screenReadAs(it, hint).catch(() => null);
+    if (screenOk(r, false) && r.conf > minConf) {
+      screenHint.at = Date.now();
+      return r;
+    }
+  }
+  probeRan = false;
+  // 다른 읽기가 아주 또렷하면(85 넘게) 훑어도 이길 수 없다(크메르·라오·미얀마는 70).
+  if (!mayProbe || minConf >= 85 || Date.now() < probeQuietUntil || Date.now() > probeUntil) return null;
+  probeRan = true;
+  if (!probeReady()) {
+    if (!probeFetching) {
+      probeFetching = true;
+      console.error('화면 번역: 다른 글자 모델을 받는 중…');
+      probeLine(it, noLao)
+        .then((got) => {
+          if (got) screenHint = { lang: got.lang, at: Date.now() };
+        })
+        .catch((e) => console.error('화면 번역: 글자 모델 받기 실패:', e.message))
+        .finally(() => (probeFetching = false));
+    }
+    return PENDING;
+  }
+  const got = await probeLine(it, noLao);
+  if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 훑어보기 ${it.t} → ${got ? `${got.lang} ${got.t}(${got.conf})` : '없음'} / 겨룰 확신도 ${minConf}`);
+  if (got && got.conf > minConf) {
+    screenHint = { lang: got.lang, at: Date.now() };
+    probeMiss = 0;
+    return got;
+  }
+  if (!got && ++probeMiss >= 4) {
+    probeQuietUntil = Date.now() + 2 * 60 * 1000;
+    probeMiss = 0;
+  }
+  return null;
+}
+
 // 모든 줄을 영어 OCR 로 한 번 더 읽는다. 헷갈린 표시가 없어도 윈도우 OCR 은 글자를 빠뜨리거나 바꾼다
 // (typing → vping, Spell → SpeII, Use → lJse — 표시만 보고 다시 읽던 때 그대로 번역됐다, 2026-10-24).
 // 글자만 같고 띄어쓰기만 다르면 윈도우 쪽을 쓴다(Setup later ↔ Set up later). 다르면 영어 OCR 이 충분히
@@ -416,8 +670,18 @@ async function readCjk(it) {
 async function uiLine(it, mode = 'auto') {
   // 그 언어의 윈도우 인식기가 읽은 줄(w) — 영어 손질(uiFix 는 영어 줄의 한자를 지운다)·다시 읽기 없이 그대로.
   if (it.w) return String(it.t || '').replace(/\s+/g, ' ').trim();
+  if (String(it.t || '').startsWith(MISSED_MARK)) return missedLine(it, mode);
   const win = uiFix(it.t);
   if (!it.f) return win;
+  // 트레이에서 고른 언어(tess:<언어>)로 먼저 읽는다. 그 언어로 안 읽히는 줄(영어 단추 등)은 아래 자동으로.
+  if (mode.startsWith('tess:')) {
+    const lang = mode.slice(5);
+    mode = 'auto';
+    if (HS_LANGS[lang] && !(cleanKorean(it.t) && lang !== 'ko')) {
+      const r = await screenReadAs(it, lang).catch(() => null);
+      if (screenOk(r, false, true)) return r.t;
+    }
+  }
   const lat = latinCount(it.t);
   const cjk = cjkCount(it.t);
   const letters = letterCount(it.t);
@@ -426,16 +690,36 @@ async function uiLine(it, mode = 'auto') {
   if (toks.length >= 2 && toks.every((w) => letterCount(w) <= 1)) return '';
   const cands = [];
   try {
+    // 베트남어: 윈도우 OCR 이 악센트 글자를 본 줄(또는 이 화면이 베트남어로 보인 뒤의 로마자 줄)은 베트남어 모델로 먼저 —
+    // 악센트가 빠진 'Md cåc tép gän dåy' 를 구글이 '간 새우' 로 옮겼다(2026-11-19).
+    const latX = (String(it.t).match(/[A-Za-zÀ-ɏḀ-ỿ]/g) || []).length; // 악센트 글자도 로마자로('Tép')
+    if (mode !== 'th' && latX >= 3 && latX * 2 >= letters && (/[À-ɏḀ-ỿ]/.test(it.t) || screenHintIs('vi'))) {
+      const v = await readVi(it);
+      if (v) return v;
+    }
     // 로마자가 하나도 없는 줄은 영어로 다시 읽지 않는다(한자 줄을 영어 OCR 로 읽으면 'BHATIA' 같은 부스러기).
     if (mode !== 'th' && (lat > 0 || mode === 'latin')) {
       const r = await ocr(it.f, { langs: ['eng'], psm: it.n > 1 ? '6' : '7' });
       const tess = uiFix(r.text.replace(/\s*\n\s*/g, ' '));
       const bare = (s) => s.toLowerCase().replace(/[^a-z]/g, '');
       const ascii = /^[\x20-\x7E]+$/.test(it.t);
+      // 키릴 글자 화면(찾은 언어가 러시아어·몽골어)에서는 영어처럼 보이는 짧은 낱말(нээх → 'H33X')도 그 언어 모델과 견준다 —
+      // 그 화면이라는 증거가 있어 키릴 읽기에 5 를 얹어 준다.
+      if (mode !== 'latin' && hintNow() && HS_LANGS[hintNow()] && HS_LANGS[hintNow()][1] === 'cyr' && letters >= 3) {
+        const o = await screenOther(it, r.conf - 5, false).catch(() => null);
+        if (o && o.t) return o.t;
+      }
       if (bare(tess) === bare(win) && (ascii || mode === 'latin')) return win;
       const engOk = r.conf >= (uiSuspect(it.t) ? 60 : 80) && latinCount(tess) >= latinCount(win) * 0.7;
       if (mode === 'latin') return engOk ? tess : win;
-      if (engOk && !cjk) return tess;
+      if (engOk && !cjk) {
+        // 키릴 글자는 영어로도 그럴듯하게 읽힌다(Открыть последние → 'OTKPblTb nocneAHb'). 아주 또렷한 깨끗한 영어 줄이 아니면
+        // 다른 글자(이 화면에서 찾은 언어, 또는 한 번 훑어보기)와 확신도로 겨룬다.
+        // 훑어보기(모든 글자 모델)는 윈도우 글이 수상할 때만(영어 밖 글자, 키릴을 영어로 읽은 꼴) — 깨끗한 영어 줄은 찾은 언어만 견준다.
+        if (r.conf >= 85 && ascii && !screenHintIsScript()) return tess;
+        const o = letters >= 3 ? await screenOther(it, r.conf, foreignLike(it.t)).catch(() => null) : null;
+        return o && o.t ? o.t : tess;
+      }
       if (engOk) cands.push({ t: tess, conf: r.conf }); // 한자가 섞였다 — 한자 인식기와 겨룬다
     }
     if (mode === 'latin') return win;
@@ -446,7 +730,8 @@ async function uiLine(it, mode = 'auto') {
       // 윈도우 OCR 이 깨끗한 로마자로 읽은 줄('EEAI' = 库库AI)은 태국어로 아주 또렷할 때만 — 'ธรม' 으로 읽고 '공정한' 이 덮였다.
       const n = thaiCount(th.t.replace(/[๐-๙]/g, ''));
       const ascii = /^[\x20-\x7E]+$/.test(it.t) && mode !== 'th';
-      const ok = ascii ? n >= 5 && th.conf >= 80 : n >= 3 && th.conf >= (mode === 'th' ? 45 : 60);
+      const junk = mode !== 'th' && thaiJunk(th.t);
+      const ok = !junk && (ascii ? n >= 5 && th.conf >= 80 : n >= 3 && th.conf >= (mode === 'th' ? 45 : 60));
       if (ok) cands.push(th);
       return ok ? th.conf : 0;
     };
@@ -462,7 +747,21 @@ async function uiLine(it, mode = 'auto') {
   } catch (e) {
     console.error('화면 글줄 다시 읽기 실패:', e.message);
   }
-  if (cands.length) return cands.sort((a, b) => b.conf - a.conf)[0].t;
+  const top = cands.sort((a, b) => b.conf - a.conf)[0];
+  if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] ${it.t} → 후보 ${cands.map((c) => `${c.t}(${Math.round(c.conf)})`).join(' / ') || '없음'}`);
+  // 영어·태국어·한자로 못 읽었거나 덜 또렷한 줄 — 키릴·아랍·히브리·인도 글자·크메르·라오·미얀마인지(screenOther). 라오어·히브리어를
+  // 태국어 모델로 읽어도 그럴듯한 태국어(확신도 60~75)가 나와서, 다른 글자 읽기와 확신도로 겨룬다.
+  if (mode !== 'latin' && mode !== 'th' && !cleanKorean(it.t) && letters >= 3 && (!top || top.conf < 85)) {
+    // 로마자가 대부분인 줄은 훑지 않는다(키릴 꼴만) — 덜 또렷한 영어 줄까지 훑으니 영어 120줄 창이 5초 → 10초.
+    const o = await screenOther(it, top ? top.conf : -1, foreignLike(it.t), !!top && thaiCount(top.t) >= 2).catch((e) => (console.error('화면 다른 글자 읽기 실패:', e.message), null));
+    if (o && o.t) return o.t;
+    // 그 글자 모델을 받는 중 — 다른 후보가 없으면 지금은 덮지 않는다(엉뚱한 한국어보다 낫다). 번역 도우미가 15초 뒤 다시 묻는다.
+    if (o && o.pending && !top) return '';
+  }
+  if (top) {
+    if (thaiCount(top.t) >= 2) it._thai = top.conf; // 태국어로 받아들인 줄 — 이 화면의 다른 글자를 찾으면 다시 견준다(screenLines)
+    return top.t;
+  }
   if (lat >= 2 && lat * 2 >= letters) return win; // 로마자 줄 — 예전처럼 윈도우 글로
   if (cjk && cjk === letters) return win; // 한자만 — 한국어 인식기가 한자로 읽은 그대로
   if (!cjk && hangulCount(it.t) * 10 >= letters * 7) return win; // 한국어 줄(부스러기 섞임)
@@ -546,6 +845,16 @@ async function revMap(line) {
   return r.map;
 }
 
+// 줄의 글자 갈래(uiTranslate 묶음용): 키릴·아랍·히브리·인도 글자·크메르·라오·미얀마(·한국어 — 한국어가 아닌 사용자), 베트남어.
+function otherKind(s) {
+  const letters = letterCount(s) || 1;
+  for (const kind of Object.keys(probeKinds())) {
+    const n = hsCount(s, HS_SCRIPT[kind]);
+    if (n >= 2 && n * 2 >= letters) return kind;
+  }
+  return (s.match(VI_MARK) || []).length >= 2 ? 'vi' : '';
+}
+
 // 줄 묶음 번역. 구글은 한 묶음의 말을 한 언어로 보고 옮겨서, 영어 줄과 섞인 필리핀어 줄은 그대로 돌아왔다
 // (2026-11-01). 태국어 줄은 따로 묶고(메신저 받는 쪽과 같은 손질), 그래도 그대로 돌아온 로마자 줄은 한 줄씩 다시 묻는다.
 async function uiTranslate(lines) {
@@ -553,13 +862,28 @@ async function uiTranslate(lines) {
   const thai = [];
   const latin = [];
   const cjk = []; // 한자·가나 줄은 따로 묶는다 — 한글 부스러기가 섞인 묶음은 구글이 한국어로 보고 한자를 한글 음으로만 바꿨다
+  // 다른 글자(키릴·아랍·인도 글자 …)와 베트남어 줄도 글자마다 따로 — 영어 줄과 한 묶음이면 구글이 한 언어로 보고 그대로 돌려줬다.
+  const other = new Map();
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i];
     // 메뉴 낱말은 그 언어 용어집에서 먼저(구글: 首页 → 첫 페이지, 同步 → 동기식, 我的分享 → 내 몫). 图片转Excel 처럼
     // 로마자가 섞인 낱말도.
     const hit = myKo() && cjkCount(s) ? await reverseGlossary(s).catch(() => '') : '';
+    const kind = hit ? '' : otherKind(s);
     if (hit) out[i] = hit;
-    else (thaiCount(s) >= 2 ? thai : cjkCount(s) && cjkCount(s) >= latinCount(s) ? cjk : latin).push(i);
+    else if (kind) {
+      if (!other.has(kind)) other.set(kind, []);
+      other.get(kind).push(i);
+    } else (thaiCount(s) >= 2 ? thai : cjkCount(s) && cjkCount(s) >= latinCount(s) ? cjk : latin).push(i);
+  }
+  for (const group of other.values()) {
+    const got = await T.translateToKorean(group.map((i) => lines[i]));
+    group.forEach((i, k) => (out[i] = String(got[k] || '')));
+    const same = (i) => (myKo() ? !T.HANGUL.test(out[i]) : out[i].trim() === lines[i].trim());
+    for (const i of group.filter(same).slice(0, 8)) {
+      const [one] = await T.translateToKorean([lines[i]]);
+      if (one) out[i] = one;
+    }
   }
   if (cjk.length) {
     const got = await T.translateToKorean(cjk.map((i) => lines[i]));
@@ -612,8 +936,58 @@ async function uiTranslate(lines) {
 
 // items: [{t: 윈도우 OCR 글자, f: 잘라 낸 그림(흰 바탕 검은 글자), n: 줄 수}] → [{s: 옮긴 원문, k: 한국어 또는 ''}]
 async function screenLines(items, mode) {
+  probeUntil = Date.now() + (Number(process.env.TH_SCREEN_PROBE_MS) || 6000);
+  // 먼저 이 화면의 글자를 정한다: 가장 외국 글자다운 줄(윈도우가 한글·한자·기호 뒤범벅으로 읽은 긴 줄, 놓친 줄) 셋까지 훑어본다.
+  // 줄 차례대로 훑으면 창 제목 같은 영어 줄에 시간을 쓰고(처음에는 모델을 띄우느라 몇 초) 정작 아랍어 줄은 시간이 다 됐다.
+  if (mode === 'auto' && !screenHintIsScript() && Date.now() >= probeQuietUntil) {
+    const junky = (it) => {
+      const t = String(it.t || '');
+      if (t.startsWith(MISSED_MARK)) return 40;
+      return foreignLike(t) ? letterCount(t) : 0;
+    };
+    const pick = items.filter((it) => it.f && !it.w && junky(it) >= 4).sort((a, b) => junky(b) - junky(a)).slice(0, 3);
+    let pending = false;
+    for (const it of pick) {
+      if (screenHintIsScript() || Date.now() > probeUntil) break;
+      // 태국어 줄(윈도우는 태국어도 뒤범벅으로 읽는다)은 훑지 않는다 — 라오어로 그럴듯하게 읽혀 화면 언어를 라오어로 잡을 수 있다.
+      if (!String(it.t).startsWith(MISSED_MARK)) {
+        const th = await readThai(it).catch(() => null);
+        if (th && thaiCount(th.t) >= 3 && th.conf >= 70 && !thaiJunk(th.t)) continue;
+      }
+      const o = await screenOther(it, -1, true).catch(() => null);
+      if (o && o.pending) (pending = true);
+      if (pending) break;
+    }
+    // 가장 수상한 줄들에서도 다른 글자가 없으면 이 화면은 영어·태국어·한자 화면이다 — 줄마다 훑지 않게 2분 쉰다(영어 120줄 창이
+    // '0이살nload Speed' 같은 줄마다 훑어 5초 → 10초 걸렸다).
+    if (pick.length && !pending && !screenHintIsScript() && !screenHintIs('vi')) probeQuietUntil = Date.now() + 2 * 60 * 1000;
+  }
   const src = [];
   for (const it of items) src.push(await uiLine(it, mode));
+  // 베트남어 화면으로 보이면(이번에 찾았으면) 앞에서 영어로 읽은 짧은 로마자 줄(Tệp → 'Tép' → 구글 '새우')도 베트남어 모델로 다시.
+  if (mode === 'auto' && screenHintIs('vi')) {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const t = String(it.t || '');
+      if (!it.f || it.w || t.startsWith(MISSED_MARK) || (src[i].match(VI_MARK) || []).length) continue;
+      if ((t.match(/[A-Za-zÀ-ɏḀ-ỿ]/g) || []).length < 3 || !/[À-ɏḀ-ỿ]/.test(t + src[i])) continue;
+      const v = await readVi(it).catch(() => '');
+      if (v) src[i] = v;
+    }
+  }
+  // 이번에 다른 글자(크메르어 …)를 찾았으면, 그 전에 태국어로 받아들였거나 못 읽은 줄을 그 글자로 한 번 더 — 첫 줄은 언어를 알기
+  // 전에 읽혀 크메르어 '최근 파일 열기' 가 태국어 뒤범벅('페차카나라티')으로 덮였다. 라오어는 태국어와 닮아 못 읽은 줄만.
+  const hint = hintNow();
+  if (mode === 'auto' && hint && HS_LANGS[hint] && !['lat', 'han', 'ja', 'th'].includes(HS_LANGS[hint][1])) {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it.f || it.w || (src[i] && (it._thai == null || hint === 'lo'))) continue;
+      // 크메르·미얀마 글자는 태국어와 생김새가 달라, 그 글자로 깨끗이 읽히면 태국어 읽기의 확신도와 상관없이 그쪽.
+      const far = ['khmr', 'mymr'].includes(HS_LANGS[hint][1]);
+      const o = await screenOther(it, it._thai == null || far ? -1 : it._thai, false).catch(() => null);
+      if (o && o.t) src[i] = o.t;
+    }
+  }
   const todo = src.map((s, i) => (uiSkip(s) ? -1 : i)).filter((i) => i >= 0);
   const got = todo.length ? await uiTranslate(todo.map((i) => src[i])) : [];
   const out = src.map((s) => ({ s, k: '' }));

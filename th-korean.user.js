@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.33.0
+// @version      1.34.0
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -467,6 +467,16 @@
       if (s.queryParam != null) shop.queryParam = rcStr(s.queryParam, undefined, /^[\w-]{1,30}$/);
       for (const k of ['spa', 'broadInputFallback']) if (typeof s[k] === 'boolean') shop[k] = s[k];
       if (s.langHint != null) shop.langHint = rcStr(s.langHint, undefined, RC_LANG);
+      // 그 쇼핑몰의 말(검색어를 이 말로 바꾸고 페이지 글을 이 말에서 옮긴다). 새 쇼핑몰만 — 쇼피·라자다는 markets 로 나라마다.
+      if (s.lang != null) shop.lang = rcStr(s.lang, undefined, RC_LANG);
+      // 쇼피·라자다 나라 더하기/말 바꾸기: { "shopee.pl": "pl" } — 주소 → 그 나라 쇼핑몰 말.
+      if (s.markets && typeof s.markets === 'object' && !Array.isArray(s.markets)) {
+        const m = {};
+        for (const [h, l] of Object.entries(s.markets)) {
+          if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(h) && typeof l === 'string' && RC_LANG.test(l)) m[h] = l;
+        }
+        if (Object.keys(m).length) shop.markets = m;
+      }
       if (typeof s.searchUrl === 'string' && s.searchUrl.includes('{q}')) {
         try {
           const u = new URL(s.searchUrl.replace('{q}', 'q'));
@@ -654,14 +664,69 @@
     },
   };
 
+  // 쇼피·라자다는 나라마다 주소와 파는 말이 다르다(2026-11-19 사용자: 전세계 쇼피몰에서도). 주소 → 그 나라 쇼핑몰 말.
+  // 검색어는 이 말로 바꾸고(태국만 태국어 용어집·AI, 다른 나라는 입력칸과 같은 길 — 그 언어 용어집 → 구글), 페이지 글은
+  // 이 말에서 내 언어로 옮긴다. 싱가포르·말레이시아·필리핀은 화면과 상품명이 거의 영어라 영어로 찾는다. 검색창 모양은 나라가
+  // 달라도 같다(같은 회사 같은 화면). 나라를 더하거나 말을 바꾸려면 config.json shops.shopee.markets 처럼 — 코드는 그대로.
+  const SHOP_MARKETS = {
+    shopee: {
+      'shopee.co.th': 'th', 'shopee.sg': 'en', 'shopee.com.my': 'en', 'shopee.co.id': 'id', 'shopee.vn': 'vi',
+      'shopee.ph': 'en', 'shopee.tw': 'zh-TW', 'shopee.com.br': 'pt', 'shopee.com.mx': 'es', 'shopee.com.co': 'es',
+      'shopee.cl': 'es',
+    },
+    lazada: {
+      'lazada.co.th': 'th', 'lazada.sg': 'en', 'lazada.com.my': 'en', 'lazada.co.id': 'id', 'lazada.vn': 'vi',
+      'lazada.com.ph': 'en',
+    },
+  };
+  const SHOP_COUNTRY = {
+    th: '태국', sg: '싱가포르', my: '말레이시아', id: '인도네시아', vn: '베트남', ph: '필리핀', tw: '대만',
+    br: '브라질', mx: '멕시코', co: '콜롬비아', cl: '칠레',
+  };
+  function shopMarket(key) {
+    const h = location.hostname;
+    const all = { ...SHOP_MARKETS[key], ...((RC.shops[key] && RC.shops[key].markets) || {}) };
+    // 긴 주소 먼저(shopee.com.my 가 my 로 끝나는 다른 주소보다 앞서게)
+    for (const host of Object.keys(all).sort((a, b) => b.length - a.length)) {
+      if (h === host || h.endsWith(`.${host}`)) return { host, lang: all[host] };
+    }
+    return null;
+  }
+  for (const key of Object.keys(SHOP_MARKETS)) {
+    const m = shopMarket(key);
+    const s = SITES[key];
+    s.lang = 'th';
+    if (!m) continue;
+    s.lang = m.lang;
+    if (s.langHint) s.langHint = m.lang;
+    if (m.host === s.host) continue; // 태국 — 예전 그대로
+    const cc = m.host.split('.').pop();
+    s.label = `${s.label} ${SHOP_COUNTRY[cc] || cc.toUpperCase()}`;
+    s.host = m.host;
+    s.match = new RegExp(`(^|\\.)${m.host.replace(/\./g, '\\.')}$`);
+    const base = key === 'lazada' ? `https://www.${m.host}/catalog/?q=` : `https://${m.host}/search?keyword=`;
+    s.searchUrl = (q) => base + encodeURIComponent(q);
+  }
+
   // 원격 설정(config.json 의 shops)으로 칸을 바꾸거나 새 쇼핑몰을 더한다 — 선택자가 바뀐 쇼핑몰을 웹스토어 심사 없이
   // 고치려고(rcShops 가 꼴을 맞춰 봤다). 새 쇼핑몰은 label·host·searchUrl·inputSelectors 가 다 있어야 한다.
-  for (const [key, s] of Object.entries(RC.shops)) {
+  for (const [key, cfgShop] of Object.entries(RC.shops)) {
     const base = SITES[key];
+    const { markets, ...s } = cfgShop; // markets 는 위 shopMarket 이 썼다
+    if (base && SHOP_MARKETS[key]) delete s.lang; // 쇼피·라자다의 말은 나라마다(markets)
     if (!base && !(s.label && s.host && s.searchUrl && s.inputSelectors && s.inputSelectors.length)) continue;
     const site = { spa: true, broadInputFallback: false, widgetSelector: '', buttonSelector: '', queryParam: 'q', ...base, ...s };
     if (s.host) site.match = new RegExp(`(^|\\.)${s.host.replace(/\./g, '\\.')}$`);
-    if (s.searchUrl) site.searchUrl = (q) => s.searchUrl.replace('{q}', encodeURIComponent(q));
+    // 쇼피·라자다의 검색 주소 고치기는 그 주소의 나라에만(태국 주소를 적었으면 베트남 쇼피는 베트남 주소 그대로).
+    if (s.searchUrl) {
+      let h = '';
+      try {
+        h = new URL(s.searchUrl.replace('{q}', 'q')).hostname;
+      } catch {
+        h = '';
+      }
+      if (h === site.host || h.endsWith(`.${site.host}`)) site.searchUrl = (q) => s.searchUrl.replace('{q}', encodeURIComponent(q));
+    }
     SITES[key] = site;
   }
 
@@ -686,6 +751,10 @@
   // 표에 없는 사이트(스크립트는 모든 사이트에서 뜬다). 대기만 하다가 태국어가 보이면
   // 입력칸의 한국어를 태국어로 바꾸는 기능만 켠다(genericInit). 페이지 번역은 크롬에 맡긴다.
   const GENERIC = SITE === UNKNOWN_SITE;
+  // 이 쇼핑몰의 말(검색어를 바꿀 말, 페이지 글의 말). 표에 없는 사이트는 예전처럼 태국어(태국어 페이지에서만 켜진다).
+  const SITE_LANG = SITE.lang || 'th';
+  const SITE_LANG2 = SITE_LANG.split('-')[0].toLowerCase();
+  const SITE_SCRIPT = SCRIPT_OF[SITE_LANG2] || null; // 로마자 언어(영어·베트남어 …)면 null
 
   // AI 공급자. 둘 다 OpenAI 호환이라 같은 코드로 호출한다.
   const PROVIDERS = {
@@ -1438,7 +1507,9 @@
   ].join('\n');
 
   const PAGE_SYSTEM = [
-    `당신은 ${SITE.label} 태국 쇼핑몰의 태국어/영어 텍스트를 한국어로 옮깁니다.`,
+    SITE_LANG2 === 'th'
+      ? `당신은 ${SITE.label} 태국 쇼핑몰의 태국어/영어 텍스트를 한국어로 옮깁니다.`
+      : `당신은 ${SITE.label} 쇼핑몰(${SITE.host})의 외국어 텍스트를 한국어로 옮깁니다.`,
     '입력은 {"in": ["...", "..."]} 형태의 JSON입니다.',
     '출력은 {"out": ["...", "..."]} 형태의 JSON이며, 길이와 순서가 입력과 같아야 합니다.',
     '규칙:',
@@ -1449,7 +1520,9 @@
   ].join('\n');
 
   const ONE_SYSTEM = [
-    `당신은 ${SITE.label} 태국 쇼핑몰의 태국어/영어 문구를 한국어로 옮깁니다.`,
+    SITE_LANG2 === 'th'
+      ? `당신은 ${SITE.label} 태국 쇼핑몰의 태국어/영어 문구를 한국어로 옮깁니다.`
+      : `당신은 ${SITE.label} 쇼핑몰(${SITE.host})의 외국어 문구를 한국어로 옮깁니다.`,
     '규칙:',
     '- 번역문만 출력합니다. 설명, 따옴표, 원문 재출력 금지.',
     '- 상품명입니다. 한국 쇼핑몰에서 쓰는 말투로 자연스럽게 옮기세요.',
@@ -1645,6 +1718,21 @@
     return { thai: out, via: '무료 API' };
   }
 
+  // 이 쇼핑몰 말(SITE_LANG)의 언어 항목 — 언어 목록(config.json languages)에 없는 말이면 구글 코드만으로.
+  function siteLangObj() {
+    return (
+      TYPE_LANGS.find((l) => l.id === SITE_LANG) ||
+      TYPE_LANGS.find((l) => l.mt === SITE_LANG) || { id: SITE_LANG, mt: SITE_LANG, name: SITE_LANG, label: SITE_LANG2, glossary: '' }
+    );
+  }
+
+  // 쇼핑몰 검색어 → 그 쇼핑몰의 말. 태국은 예전 그대로(용어집 조합·사전·AI). 다른 나라 쇼피·라자다는 입력칸 막대와 같은 길 —
+  // 그 언어 용어집(한국어=그 언어, 통째로 맞을 때) → 구글. 결과 칸 이름(thai)은 예전 그대로 둔다.
+  async function translateShopQuery(value) {
+    if (SITE_LANG2 === 'th') return translateSearchKeyword(value);
+    return koreanToLang(normKey(value), siteLangObj());
+  }
+
   // 용어집에 없는 조각만 무료 API 로 옮긴다. 여러 조각은 조각마다 따로 넣어 한 번에 보내고 같은 차례로 받는다
   // (freeAltMany — 줄바꿈으로 이어 보내면 짝이 밀린 채 캐시에 남을 수 있다). 그 주소가 막혔으면 하나씩 묻는다.
   // 실패한 조각은 비워 둔다 — 그러면 검색은 용어집에 걸린 말만으로 나간다.
@@ -1693,10 +1781,16 @@
     if (!raw) return false;
     const t = raw.trim();
     if (t.length < 2 || t.length > 300) return false;
-    if (isMyText(t)) return false;                    // 이미 한국어(내 언어)
-    if (!THAI.test(t) && !LATIN_WORD.test(t)) return false; // 숫자·기호·통화만
-    if (MY2 === 'en' && !THAI.test(t)) return false;  // 내 언어가 영어면 영어 글은 그대로
-    if (/^[\d\s.,%\-+/฿$()[\]:]+$/.test(t)) return false;   // 가격·수치
+    // 이미 한국어(내 언어). 일본어 사용자에게 대만 쇼피의 한자뿐인 글은 내 말이 아니다(가나가 없다).
+    if (isMyText(t) && !(MY2 === 'ja' && SITE_LANG2 === 'zh' && !/[぀-ヿ]/.test(t))) return false;
+    // 쇼핑몰 말의 글자(태국어, 대만 쇼피의 한자). 표에 없는 사이트·태국 쇼핑몰은 예전처럼 태국어.
+    const own = THAI.test(t) || !!(SITE_SCRIPT && SITE_SCRIPT.test(t));
+    if (!own && !LATIN_WORD.test(t)) return false; // 숫자·기호·통화만
+    // 내 언어가 로마자 언어일 때 로마자 글: 영어 사용자면 태국·대만 쇼핑몰의 영어 글은 그대로(예전 그대로), 쇼핑몰 말이 곧 내 말이면
+    // (멕시코 쇼피의 스페인어 사용자, 싱가포르 쇼피의 영어 사용자) 옮길 것이 없다.
+    if (!own && !MY_SCRIPT && ((MY2 === 'en' && SITE_SCRIPT) || SITE_LANG2 === MY2)) return false;
+    if (/^[\d\s.,%\-+/฿$₫₱€£¥()[\]:]+$/.test(t)) return false;   // 가격·수치
+    if (/^(?:Rp|RM|NT\$?|S\$|R\$|COP|CLP|MXN)\s?[\d\s.,\-~]+[kK]?$/.test(t)) return false; // 다른 나라 쇼핑몰 가격
 
     let el = node.parentElement;
     if (!el) return false;
@@ -2498,13 +2592,19 @@
 
   async function handleKoreanSearch(input, submitFn) {
     const value = input.value.trim();
-    if (!value || !isMine(value, 'th')) return false; // 한국어(내 말)가 아니면 그대로 통과
+    if (!value || !isMine(value, SITE_LANG)) return false; // 한국어(내 말)가 아니면 그대로 통과
 
     searchBusy = true;
     setBadge('검색어 번역 중…');
     try {
-      const { thai, via, note } = await translateSearchKeyword(value);
+      const { thai, via, note } = await translateShopQuery(value);
       if (!thai) throw new Error('번역 결과가 비어 있습니다');
+      // 로마자 언어 사용자가 이미 그 쇼핑몰 말로 쓴 검색어(영어 사용자가 베트남 쇼피에서 베트남어로)는 구글이 그대로
+      // 돌려준다 — 확인 Enter 없이 바로 찾는다.
+      if (!MY_KO && thai.trim() === value) {
+        submitFn();
+        return true;
+      }
 
       setInputValue(input, thai);
 
@@ -2602,7 +2702,7 @@
     const confirming = (input) => {
       if (!awaitingConfirm) return false;
       awaitingConfirm = false;
-      return !isMine(input.value, 'th');
+      return !isMine(input.value, SITE_LANG);
     };
 
     window.addEventListener(
@@ -2623,7 +2723,7 @@
           submitSearch(input);
           return;
         }
-        if (!isMine(input.value, 'th')) return;
+        if (!isMine(input.value, SITE_LANG)) return;
         intercept(e, input);
       },
       true
@@ -2644,7 +2744,7 @@
           submitSearch(input);
           return;
         }
-        if (!isMine(input.value, 'th')) return;
+        if (!isMine(input.value, SITE_LANG)) return;
         intercept(e, input);
       },
       true
@@ -2670,7 +2770,7 @@
           submitSearch(input);
           return;
         }
-        if (!isMine(input.value, 'th')) return;
+        if (!isMine(input.value, SITE_LANG)) return;
         intercept(e, input);
       },
       true
@@ -2682,7 +2782,8 @@
     const input = getSearchInput();
     if (!input || input.dataset.lzkHooked) return;
     input.dataset.lzkHooked = '1';
-    input.placeholder = '한국어로 검색하세요 (예: 무선 이어폰)';
+    // 다른 언어 사용자에게는 한국어 안내가 읽히지 않는다 — 쇼핑몰의 안내를 그대로 둔다.
+    if (MY_KO) input.placeholder = '한국어로 검색하세요 (예: 무선 이어폰)';
   }
 
   // ---------------------------------------------------------------------------
@@ -4179,7 +4280,8 @@
         pending = true;
         requestAnimationFrame(() => {
           pending = false;
-          if (!cfg.imageTranslate) return hideImageButton();
+          // 무료 사진 글자 읽기는 태국어(+영어 글자)뿐이다 — 대만 쇼피처럼 다른 글자 쇼핑몰에서는 Vision 키가 있을 때만.
+          if (!cfg.imageTranslate || (SITE_SCRIPT && SITE_LANG2 !== 'th' && !cfg.visionKey)) return hideImageButton();
           const img = imageUnder(lastX, lastY);
           if (img) showImageButton(img);
           else hideImageButton();
@@ -4686,7 +4788,7 @@
 
     if (!MY_KO) return; // 주소의 검색어 고치기는 한국어 용어집으로만 한다
     if (!HANGUL.test(q)) {
-      if (!THAI.test(q)) return;
+      if (!THAI.test(q) || SITE_LANG2 !== 'th') return; // 옛 오역 고치기는 태국어 용어집으로만
       const fix = await findStaleTranslation(q);
       if (!fix || alreadyRescued(fix.thai)) return;
       toast(
@@ -4704,9 +4806,9 @@
 
     setBadge('검색어 변환 중…');
     try {
-      const { thai, via, note } = await translateSearchKeyword(q);
+      const { thai, via, note } = await translateShopQuery(q);
       if (!thai || HANGUL.test(thai)) return;
-      const msg = `주소의 한국어를 태국어로 바꿔 다시 검색합니다.\n"${q}" → "${thai}"  (${via})` +
+      const msg = `주소의 한국어를 ${langName(siteLangObj())}로 바꿔 다시 검색합니다.\n"${q}" → "${thai}"  (${via})` +
         (note ? `\n${note}` : '');
       toast(msg, 4000);
       if (note) carryToast(msg, 8000);
@@ -4815,7 +4917,7 @@
   // (표에 없는 사이트는 태국어가 보여 켜질 때 받는다 — 모든 사이트에서 GitHub 을 부르지 않게)
   if (!GENERIC) {
     installSearchInterceptors();
-    ensureGlossary();
+    if (SITE_LANG2 === 'th') ensureGlossary(); // 다른 나라 쇼핑몰은 그 언어 용어집을 검색할 때 받는다
   }
 
   // 크롬에게 이 페이지가 무슨 언어인지 알려 준다. 크롬은 페이지를 다 읽은 시점에

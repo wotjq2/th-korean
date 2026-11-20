@@ -454,15 +454,22 @@ async function screenReadAs(it, lang) {
     return t;
   };
   if (COMPLEX_KINDS[kind]) return complexRead(it, model, kind, lang, tidy);
-  const r = await ocr(it.f, { langs: [model], psm: it.n > 1 ? '6' : '7' });
-  return { t: tidy(r.text), conf: Math.round(r.conf), kind, lang };
+  const psm = it.n > 1 ? '6' : '7';
+  // 키릴·아랍·히브리·인도 글자는 확신도가 믿을 만하다 — 원래 그림과 여백 둔 1.5배 그림(f2, 다른 글자로 보이는 줄에 같이 온다)을
+  // 둘 다 읽어 더 또렷한 쪽(히브리어 줄은 원래 그림이 86, 여백 그림이 더 낮았다).
+  let best = null;
+  for (const f of it.f2 ? [it.f, it.f2] : [it.f]) {
+    const r = await ocr(f, { langs: [model], psm });
+    if (!best || r.conf > best.conf) best = { t: tidy(r.text), conf: Math.round(r.conf), kind, lang };
+  }
+  return best;
 }
 
-// 크메르·라오·미얀마: Tesseract 가 바르게 읽어도 확신도를 아주 낮게 준다(시험 창 '최근 파일 열기': 크메르 psm 13 은 글자 그대로인데
-// 7점, 라오 35, 미얀마 psm 7 은 90). 그래서 확신도 대신 두 방식(psm 7·13)으로 읽은 글이 서로 맞는지(글자 60% 넘게 겹침),
+// 크메르·라오·미얀마: 여백 없는 그림에서는 Tesseract 가 바르게 읽어도 확신도를 아주 낮게 줬다(크메르 7점). 여백 둔 그림(2026-11-20)은
+// 대개 77~96 이지만 짧은 낱말·틀린 글자에서는 20~40 도 나온다. 그래서 두 그림(1.5배·3배)의 읽기가 서로 맞는지(글자 겹침)와
 // 숫자·기호 부스러기가 없는지로 본다 — 다른 글자를 이 모델로 읽은 뒤범벅은 숫자(៣៤១·၈၃၂)와 < > [ ] % 가 섞이고 두 읽기가 다르다.
-// 맞으면 clean, 겨룰 확신도는 70 으로 친다(태국어 모델이 크메르어 줄을 66 으로 '읽었다').
-const COMPLEX_KINDS = { khmr: '13', laoo: '7', mymr: '7' }; // 쓸 읽기(psm)
+// 맞으면 clean, 겨룰 확신도는 70 넘게 친다(태국어 모델이 크메르어 줄을 66 으로 '읽었다').
+const COMPLEX_KINDS = { khmr: '13', laoo: '13', mymr: '13' }; // 여백 그림이 없을 때 견줄 두 번째 읽기(psm)
 function overlap(a, b) {
   const bag = new Map();
   for (const c of a) bag.set(c, (bag.get(c) || 0) + 1);
@@ -471,26 +478,79 @@ function overlap(a, b) {
   return same / Math.max(1, [...a].length, [...b].length);
 }
 async function complexRead(it, model, kind, lang, tidy) {
-  // 두 줄 넘게 묶인 칸(윈도우가 뒤범벅 줄을 문단으로 이었다)은 psm 6·4 — 한 줄 방식(7·13)은 두 줄을 'ရ' 한 글자로 읽었다.
-  const use = it.n > 1 ? '6' : COMPLEX_KINDS[kind];
-  const alt = it.n > 1 ? '4' : use === '13' ? '7' : '13';
-  const [a, b] = [await ocr(it.f, { langs: [model], psm: use }), await ocr(it.f, { langs: [model], psm: alt })];
+  // 네 가지로 읽어(여백 둔 1.5배·3배 psm 7, 원래 그림 psm 13, 여백 둔 3배 psm 13) 다른 읽기들과 가장 비슷한 것(가운데)을 쓴다 —
+  // 줄마다 맞는 방식이 달랐다(크메르어는 원래 그림 psm 13, 라오어는 1.5배 psm 7). 세 글꼴 크기 47줄 시험(2026-11-20): 크메르어 글자
+  // 오류 40 → 29, 라오어 17 → 17, 미얀마어 24 → 24(1.5배 psm 7 하나만 쓸 때와 견줘). 두 줄 넘게 묶인 칸은 psm 6·4.
+  // 여백 그림이 없으면(옛 번역 도우미) 원래 그림을 psm 7·13 으로.
+  const multi = it.n > 1;
+  const jobs = it.f2
+    ? multi
+      ? [[it.f2, '6'], [it.f3 || it.f, '6'], [it.f, '6'], [it.f3 || it.f, '4']]
+      : [[it.f2, '7'], [it.f3 || it.f, '7'], [it.f, '13'], [it.f3 || it.f, '13']]
+    : [[it.f, multi ? '6' : '7'], [it.f, multi ? '4' : COMPLEX_KINDS[kind]]];
   // 크메르 반복 부호 ៗ 를 숫자 ១ 로 읽는다(ថ្មីៗ → ថ្មី១) — 낱말 끝 글자 바로 뒤의 ១ 는 ៗ 로.
   const fixKm = (x) => (kind === 'khmr' ? x.replace(/(?<=[ក-៓])១(?=\s|$)/g, 'ៗ') : x);
-  const t = fixKm(tidy(a.text));
-  const other = fixKm(tidy(b.text));
+  const reads = [];
+  for (const [f, p] of jobs) {
+    const r = await ocr(f, { langs: [model], psm: p });
+    reads.push({ t: fixKm(tidy(r.text)), conf: Math.round(r.conf) });
+  }
+  if (process.env.TH_SCREEN_EVAL && it.f2) {
+    // 시험용: 여러 읽기 방식을 다 적는다(어떤 고르기 규칙이 맞는지 밖에서 견준다).
+    const all = {};
+    for (const [name, f, p] of [['f2p7', it.f2, '7'], ['f3p7', it.f3, '7'], ['fp13', it.f, '13'], ['fp7', it.f, '7'], ['f2p13', it.f2, '13'], ['f3p13', it.f3, '13']]) {
+      const r = await ocr(f, { langs: [model], psm: p });
+      all[name] = { t: fixKm(tidy(r.text)), c: Math.round(r.conf) };
+    }
+    console.error('[평가] ' + JSON.stringify({ kind, all }));
+  }
   const bare = (s) => s.replace(/\s+/g, '');
+  let best;
+  let agree;
+  if (reads.length > 2) {
+    // 가운데: 다른 읽기들과의 글자 차이 합이 가장 작은 것(같으면 더 또렷한 쪽).
+    let min = Infinity;
+    for (const a of reads) {
+      const s = reads.reduce((n, b) => n + editDist(bare(a.t), bare(b.t)), 0);
+      if (s < min || (s === min && a.conf > best.conf)) (min = s), (best = a);
+    }
+    agree = Math.max(...reads.filter((r) => r !== best).map((r) => overlap(bare(best.t), bare(r.t))));
+  } else {
+    const [a, b] = reads[0].conf >= reads[1].conf ? reads : [reads[1], reads[0]];
+    best = a;
+    agree = overlap(bare(a.t), bare(b.t));
+  }
+  // 겨룰 확신도: 여백 둔 psm 7 읽기들 중 가장 또렷한 것(psm 13 은 맞게 읽어도 확신도가 낮다).
+  const top = Math.max(...reads.slice(0, 2).map((r) => r.conf), best.conf);
+  const t = best.t;
   const mine = hsCount(t, HS_SCRIPT[kind]);
   const letters = hsCount(t, /\p{L}/u);
+  // 짧은 낱말(ອອກ·ឯកសារ)은 아주 또렷할 때(80), 긴 줄은 덜 또렷해도 다른 읽기와 맞으면.
   const clean =
-    mine >= 5 &&
+    mine >= 2 &&
+    (mine >= 5 || top >= 80) &&
     mine >= letters * 0.9 &&
     !/[\p{N}<>[\]{}|%‹›=_~^*#@&$]/u.test(t) &&
     hsJunkMarks(t, kind) === 0 &&
-    overlap(bare(t), bare(other)) >= 0.6 &&
-    (kind === 'khmr' || a.conf >= 20);
-  const conf = Math.round(a.conf);
-  return { t, conf: clean ? Math.max(conf, 70) : conf, kind, lang, clean };
+    agree >= 0.5 &&
+    (top >= 60 || agree >= 0.75) &&
+    // 라오어는 태국어와 닮았다 — 여백 둔 그림에서 진짜 라오어는 66~93, 태국어 글을 라오어 모델로 읽으면 0~48 이었다(2026-11-20 측정).
+    // 그래서 라오어는 확신도 60 넘을 때만, 겨룰 때도 제 확신도(+5)로 — 태국어 화면을 라오어로 덮지 않게.
+    (kind !== 'laoo' || top >= 60);
+  const conf = !clean ? top : kind === 'laoo' ? top + 5 : Math.max(top, 70);
+  return { t, conf, kind, lang, clean };
+}
+
+function editDist(a, b) {
+  a = [...a];
+  b = [...b];
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
 }
 
 // 그 언어로 읽은 줄로 받아들일 만한가. 화면 글은 자막보다 깨끗해 숫자·로마자가 조금 섞여도(버전 '2.0') 글자의 3/4 이면 된다.
@@ -527,13 +587,13 @@ async function readVi(it) {
 }
 
 // 훑어보기: 글자 모델 열 개를 함께 띄운 인식기로 읽어 가장 많이 나온 글자를 고르고, 그 글자의 언어 모델로 다시 읽는다.
-async function probeLine(it, noLao) {
+async function probeLine(it) {
   const got = await probeAll(it);
   if (got) return got;
-  // 함께 읽기는 크메르·라오·미얀마 줄을 숫자 부스러기(1739, ৬৫০…)로 읽었다 — 그 셋은 하나씩 따로 본다. 태국어로 또렷이 읽힌 줄은
-  // 라오어로 보지 않는다(두 글자는 닮아서 태국어 줄도 라오어로 그럴듯하게 읽힌다).
+  // 함께 읽기는 크메르·라오·미얀마 줄을 숫자 부스러기(1739, ৬৫০…)로 읽었다 — 그 셋은 하나씩 따로 본다. 라오어는 확신도 60 넘게
+  // 읽혀야 하고(complexRead) 태국어 읽기보다 또렷해야 이긴다(screenOther 의 minConf) — 태국어 줄은 라오어 모델로 48 을 넘지 않았다.
   let win = null;
-  for (const lang of noLao ? ['km', 'my'] : ['km', 'lo', 'my']) {
+  for (const lang of ['km', 'lo', 'my']) {
     const r = await screenReadAs(it, lang).catch(() => null);
     if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 따로 ${lang} ${r ? `${r.t}(${r.conf}) ${r.clean ? 'ok' : '--'}` : '실패'}`);
     if (screenOk(r, true) && (!win || r.conf > win.conf)) win = r;
@@ -542,7 +602,7 @@ async function probeLine(it, noLao) {
 }
 
 async function probeAll(it) {
-  const r = await ocr(it.f, { langs: probeModels(), psm: '6' });
+  const r = await ocr(it.f2 || it.f, { langs: probeModels(), psm: it.f2 && !(it.n > 1) ? '7' : '6' }); // 여백 둔 1.5배 그림이 있으면 그것
   const t = String(r.text || '');
   const letters = hsCount(t, /\p{L}/u) || 1;
   let best = null;
@@ -609,7 +669,7 @@ async function missedLine(it, mode) {
   // 윈도우 인식기가 놓친 줄은 태국어가 아닌 경우가 많다(태국어 줄은 뒤범벅으로라도 찾는다) — 태국어 모델은 힌디어 줄도 그럴듯한
   // 태국어(ธโตจแทรูสิงตสิ)로 읽어서, 아주 또렷하거나(85) 훑어보기로 다른 글자가 아님을 본 뒤에만 태국어로.
   if (thaiOk && th.conf >= 85) return th.t;
-  const o = await screenOther(it, thaiOk ? th.conf : -1, true, thaiOk).catch(() => null);
+  const o = await screenOther(it, thaiOk ? th.conf : -1, true).catch(() => null);
   if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 놓친 줄 ${it.t.slice(1)} → ${o && o.t ? `${o.lang} ${o.t}` : thaiOk ? th.t : '없음'}`);
   if (o && o.t) return o.t;
   return thaiOk && probeRan && !(o && o.pending) ? th.t : '';
@@ -618,7 +678,7 @@ async function missedLine(it, mode) {
 // 영어·태국어·한자로 못 읽은 줄(또는 덜 또렷한 줄 — minConf 는 다른 읽기의 확신도, 그보다 또렷해야 이긴다).
 // 답: {t, conf} = 읽은 글, null = 다른 글자 아님, {pending: true} = 모델을 받는 중(모른다).
 const PENDING = { pending: true };
-async function screenOther(it, minConf = -1, mayProbe = true, noLao = false) {
+async function screenOther(it, minConf = -1, mayProbe = true) {
   const hint = hintNow();
   if (hint && HS_LANGS[hint] && !['lat', 'han', 'ja', 'th'].includes(HS_LANGS[hint][1])) {
     const r = await screenReadAs(it, hint).catch(() => null);
@@ -635,7 +695,7 @@ async function screenOther(it, minConf = -1, mayProbe = true, noLao = false) {
     if (!probeFetching) {
       probeFetching = true;
       console.error('화면 번역: 다른 글자 모델을 받는 중…');
-      probeLine(it, noLao)
+      probeLine(it)
         .then((got) => {
           if (got) screenHint = { lang: got.lang, at: Date.now() };
         })
@@ -644,7 +704,7 @@ async function screenOther(it, minConf = -1, mayProbe = true, noLao = false) {
     }
     return PENDING;
   }
-  const got = await probeLine(it, noLao);
+  const got = await probeLine(it);
   if (process.env.TH_SCREEN_DEBUG) console.error(`[화면] 훑어보기 ${it.t} → ${got ? `${got.lang} ${got.t}(${got.conf})` : '없음'} / 겨룰 확신도 ${minConf}`);
   if (got && got.conf > minConf) {
     screenHint = { lang: got.lang, at: Date.now() };
@@ -753,7 +813,12 @@ async function uiLine(it, mode = 'auto') {
   // 태국어 모델로 읽어도 그럴듯한 태국어(확신도 60~75)가 나와서, 다른 글자 읽기와 확신도로 겨룬다.
   if (mode !== 'latin' && mode !== 'th' && !cleanKorean(it.t) && letters >= 3 && (!top || top.conf < 85)) {
     // 로마자가 대부분인 줄은 훑지 않는다(키릴 꼴만) — 덜 또렷한 영어 줄까지 훑으니 영어 120줄 창이 5초 → 10초.
-    const o = await screenOther(it, top ? top.conf : -1, foreignLike(it.t), !!top && thaiCount(top.t) >= 2).catch((e) => (console.error('화면 다른 글자 읽기 실패:', e.message), null));
+    // 이 화면이 태국어와 생김새가 전혀 다른 글자(히브리·아랍·인도 글자 …)로 보였으면, 그 글자로 또렷이(70) 읽히는 줄은 태국어
+    // 부스러기(히브리어 줄을 태국어 모델로 71)보다 앞선다.
+    const h = hintNow();
+    const far = screenHintIsScript() && HS_LANGS[h][1] !== 'laoo' && top && thaiCount(top.t) >= 2;
+    const need = top ? (far ? Math.min(top.conf, 69) : top.conf) : -1;
+    const o = await screenOther(it, need, foreignLike(it.t)).catch((e) => (console.error('화면 다른 글자 읽기 실패:', e.message), null));
     if (o && o.t) return o.t;
     // 그 글자 모델을 받는 중 — 다른 후보가 없으면 지금은 덮지 않는다(엉뚱한 한국어보다 낫다). 번역 도우미가 15초 뒤 다시 묻는다.
     if (o && o.pending && !top) return '';
@@ -952,7 +1017,7 @@ async function screenLines(items, mode) {
       // 태국어 줄(윈도우는 태국어도 뒤범벅으로 읽는다)은 훑지 않는다 — 라오어로 그럴듯하게 읽혀 화면 언어를 라오어로 잡을 수 있다.
       if (!String(it.t).startsWith(MISSED_MARK)) {
         const th = await readThai(it).catch(() => null);
-        if (th && thaiCount(th.t) >= 3 && th.conf >= 70 && !thaiJunk(th.t)) continue;
+        if (th && thaiCount(th.t) >= 3 && th.conf >= 85 && !thaiJunk(th.t)) continue; // 아주 또렷한 태국어만 — 라오어 줄도 태국어로 72~84 쯤 읽힌다
       }
       const o = await screenOther(it, -1, true).catch(() => null);
       if (o && o.pending) (pending = true);
@@ -976,15 +1041,17 @@ async function screenLines(items, mode) {
     }
   }
   // 이번에 다른 글자(크메르어 …)를 찾았으면, 그 전에 태국어로 받아들였거나 못 읽은 줄을 그 글자로 한 번 더 — 첫 줄은 언어를 알기
-  // 전에 읽혀 크메르어 '최근 파일 열기' 가 태국어 뒤범벅('페차카나라티')으로 덮였다. 라오어는 태국어와 닮아 못 읽은 줄만.
+  // 전에 읽혀 크메르어 '최근 파일 열기' 가 태국어 뒤범벅('페차카나라티')으로 덮였다. 라오어는 제 확신도로 태국어 읽기와 겨룬다.
   const hint = hintNow();
   if (mode === 'auto' && hint && HS_LANGS[hint] && !['lat', 'han', 'ja', 'th'].includes(HS_LANGS[hint][1])) {
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      if (!it.f || it.w || (src[i] && (it._thai == null || hint === 'lo'))) continue;
-      // 크메르·미얀마 글자는 태국어와 생김새가 달라, 그 글자로 깨끗이 읽히면 태국어 읽기의 확신도와 상관없이 그쪽.
-      const far = ['khmr', 'mymr'].includes(HS_LANGS[hint][1]);
-      const o = await screenOther(it, it._thai == null || far ? -1 : it._thai, false).catch(() => null);
+      if (!it.f || it.w || (src[i] && it._thai == null)) continue;
+      // 크메르·미얀마 글자는 깨끗이 읽히면 태국어 읽기의 확신도와 상관없이 그쪽. 다른 글자(히브리·아랍 …)는 또렷하면(70) 그쪽,
+      // 라오어(태국어와 닮았다)는 태국어 읽기보다 또렷해야.
+      const k = HS_LANGS[hint][1];
+      const need = it._thai == null || k === 'khmr' || k === 'mymr' ? -1 : k === 'laoo' ? it._thai : Math.min(it._thai, 69);
+      const o = await screenOther(it, need, false).catch(() => null);
       if (o && o.t) src[i] = o.t;
     }
   }

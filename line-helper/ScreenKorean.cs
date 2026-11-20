@@ -1000,21 +1000,87 @@ static class ScreenKorean
         }
         if (!menu) chunks = Paragraphs(chunks);
         // 윈도우 인식기가 글줄로 찾지도 못한 줄(힌디어·벵골어) — 직접 고른 윈도우 인식 언어·영어만 고르기에서는 하지 않는다.
-        if (!menu && Lang != "latin" && !Lang.StartsWith("win:")) chunks.AddRange(Missed(chunks, px, w, h));
+        bool other = !menu && Lang != "latin" && !Lang.StartsWith("win:");
+        if (other) chunks.AddRange(Missed(chunks, px, w, h));
         foreach (TextChunk c in chunks)
         {
             Colors(px, w, h, c);
+            // 다른 글자로 보이는 줄은 윈도우 칸이 글줄의 일부만 잡았을 수 있다(아랍어 'فتح الملفات الأخيرة' 에서 'فتح' 가 잘렸다) —
+            // 잉크를 따라 좌우·위아래(점·위아래 부호)로 넓힌다.
+            if (other && Foreign(c) && Grow(c, chunks, px, w, h)) Colors(px, w, h, c);
             c.Right = RoomRight(px, w, h, c);
             c.Ref = Sample(c.Box, px, w, h);
         }
         return chunks;
     }
 
+    // 다른 글자를 윈도우 인식기가 뒤범벅으로 읽은 줄(또는 놓친 줄) — 로마자가 글자의 3/4 아래. 엔진 foreignLike 와 같은 셈.
+    // 이런 줄은 문단으로 잇지 않고(서로 다른 메뉴 줄 '저장'·'설정' 이 한 줄로 옮겨졌다), 칸을 잉크로 넓히고, 여백 둔 그림을 더 보낸다.
+    static readonly Regex LatinLetter = new Regex("[A-Za-z]");
+    static bool Foreign(TextChunk c)
+    {
+        if (c.Trusted) return false;
+        string t = c.Text;
+        if (t.StartsWith(MissedMark)) return true;
+        if (HasHangul.IsMatch(t) && CleanKorean.IsMatch(t)) return false;
+        int letters = Letter.Matches(t).Count, latin = LatinLetter.Matches(t).Count;
+        return letters >= 3 && latin * 4 <= letters * 3;
+    }
+
+    // 칸을 잉크(바탕과 크게 다른 화소)를 따라 넓힌다: 좌우는 빈틈이 줄 높이의 1.5배 넘기 전까지(다른 글줄 칸은 넘지 않는다),
+    // 위아래는 줄 높이의 0.6배까지(두 줄 넘는 빈 줄에서 멈춤 — 아랫줄을 먹지 않게). 넓혔으면 true.
+    static bool Grow(TextChunk c, List<TextChunk> all, int[] px, int w, int h)
+    {
+        int bg = c.Bg.ToArgb(), fg = c.Fg.ToArgb(), lh = Math.Max(6, c.LineH);
+        Rectangle b = Rectangle.Intersect(c.Box, new Rectangle(0, 0, w, h));
+        if (b.Width < 2 || b.Height < 2 || Chat.Dist(bg, fg) < 80) return false;
+        int top = b.Top, bot = b.Bottom, gapMax = lh * 3 / 2;
+        // 글자 = 글자색에 가깝고 바탕과 먼 화소. 글자 기둥에는 바탕색 화소도 섞여 있다 — 어두운 칸의 흰 글자 옆 밝은 창 바탕은 글자색만
+        // 있고 바탕색이 없어 글자가 아니다(태국어 시험 창: 칸이 창 끝까지 넓어져 'ป ขอบคุณ… ป').
+        Func<int, bool> isInk = delegate (int p) { int db = Chat.Dist(p, bg); return db > 100 && Chat.Dist(p, fg) < db; };
+        Func<int, bool> isBg = delegate (int p) { return Chat.Dist(p, bg) < 40; };
+        Func<int, bool> col = delegate (int x)
+        {
+            bool ink = false, back = false;
+            for (int y = top; y < bot && !(ink && back); y++) { int p = px[y * w + x]; ink |= isInk(p); back |= isBg(p); }
+            return ink && back;
+        };
+        Func<int, bool> blocked = delegate (int x)
+        {
+            foreach (TextChunk o in all)
+                if (o != c && x >= o.Box.Left && x < o.Box.Right && o.Box.Bottom > top && o.Box.Top < bot) return true;
+            return false;
+        };
+        int last = b.Right - 1, first = b.Left;
+        for (int x = b.Right; x < w && x - last <= gapMax; x++) { if (blocked(x)) break; if (col(x)) last = x; }
+        for (int x = b.Left - 1; x >= 0 && first - x <= gapMax; x--) { if (blocked(x)) break; if (col(x)) first = x; }
+        Func<int, bool> row = delegate (int y)
+        {
+            int n = 0, back = 0;
+            for (int x = first; x <= last; x++) { int p = px[y * w + x]; if (isInk(p)) n++; else if (isBg(p)) back++; }
+            return n >= 2 && back * 2 >= last - first + 1;
+        };
+        int grow = lh * 6 / 10, nt = top, nb = bot;
+        for (int y = top - 1, ink = top; y >= 0 && top - y <= grow && ink - y <= 2; y--) if (row(y)) { nt = y; ink = y; }
+        for (int y = bot, ink = bot - 1; y < h && y - bot < grow && y - ink <= 2; y++) if (row(y)) { nb = y + 1; ink = y; }
+        // 위아래 이웃 글줄 칸은 넘지 않는다.
+        foreach (TextChunk o in all)
+        {
+            if (o == c || o.Box.Right <= first || o.Box.Left > last) continue;
+            if (o.Box.Bottom <= top && o.Box.Bottom > nt) nt = o.Box.Bottom;
+            if (o.Box.Top >= bot && o.Box.Top < nb) nb = o.Box.Top;
+        }
+        Rectangle n2 = Rectangle.FromLTRB(first, nt, last + 1, nb);
+        if (n2 == c.Box) return false;
+        c.Box = n2;
+        return true;
+    }
+
     // ---- 윈도우 인식기가 놓친 글줄 (2026-11-19, 사용자: 일반 프로그램도 30개 언어) ----
     // 한국어 윈도우 OCR 은 힌디어·벵골어 줄(글자 위 가로줄이 이어진 글씨)을 몇 배로 키워도 글줄로 찾지 못했다. 찾은 글줄 칸 밖에서
     // 가로로 글자 획(옆 화소와 밝기가 크게 다른 곳)이 몰린 띠를 글줄 후보로 잡아, 엔진이 글자 모델로 훑어 읽게 넘긴다(engine.js
     // screenOther). 글자 이름은 없으니 그림 표본의 해시로 붙인다(MissedMark + 해시 — 그림이 바뀌면 새 줄). 사진·아이콘도 후보가
-    // 될 수 있어, 글줄 모양(높이 8~60, 폭이 높이의 1.6배 넘게, 획 밀도 4~45%)만, 한 번에 8개까지.
+    // 될 수 있어, 글줄 모양(높이 8~60, 폭이 높이의 1.3배 넘게, 획 밀도 4~45%)만, 한 번에 8개까지.
     public const string MissedMark = "⁣";
     static List<TextChunk> Missed(List<TextChunk> found, int[] px, int w, int h)
     {
@@ -1054,6 +1120,15 @@ static class ScreenKorean
             int[] colN = new int[w];
             for (int y = top; y <= y1; y++)
                 for (int x = 0; x < w; x++) if (edge[y * w + x]) colN[x]++;
+            // 띠 높이 내내 이어진 가는 세로줄(창 테두리·구분선)은 글자가 아니다 — 미얀마어 '파일' 줄이 창 테두리와 묶여 못 읽혔다.
+            for (int x = 0; x < w; x++)
+            {
+                if (colN[x] < bh - 1) continue;
+                int x2 = x;
+                while (x2 + 1 < w && colN[x2 + 1] >= bh - 1) x2++;
+                if (x2 - x < 3) for (int k = x; k <= x2; k++) colN[k] = 0;
+                x = x2;
+            }
             for (int x = 0; x < w && got.Count < 8; )
             {
                 if (colN[x] == 0) { x++; continue; }
@@ -1062,7 +1137,7 @@ static class ScreenKorean
                 int bw = last - x0 + 1;
                 Rectangle box = new Rectangle(x0, top, bw, bh);
                 double dens = n / (double)(bw * bh);
-                if (bw * 5 < bh * 8 || dens < 0.04 || dens > 0.45) continue; // 폭이 높이의 1.6배 넘게(짧은 낱말 ဖိုင် 도)
+                if (bw * 10 < bh * 13 || dens < 0.04 || dens > 0.45) continue; // 폭이 높이의 1.3배 넘게(짧은 낱말 ဖိုင် 도 — 위아래 부호로 키가 크다)
                 // 찾은 글줄과 겹치거나 같은 줄에 바로 이어진 조각(태국어 줄 끝 'นะคะ' 만 따로 → '예.')은 두지 않는다.
                 bool hit = false;
                 foreach (TextChunk c in found)
@@ -1347,6 +1422,8 @@ static class ScreenKorean
                 if (gap < -2 || gap > Math.Max(4, a.LineH * 0.8)) continue;
                 if (Math.Abs(c.Box.Left - a.Box.Left) > Math.Max(6, a.LineH)) continue;
                 if (c.LineH * 4 < a.LineH * 3 || c.LineH * 3 > a.LineH * 4) continue;
+                // 뒤범벅으로 읽힌 다른 글자 줄은 '소문자로 시작' 같은 영어 문단 규칙이 맞지 않는다(미얀마어 '저장'·'설정' 줄이 이어졌다).
+                if (Foreign(a) || Foreign(c)) continue;
                 if (Continues(a.Text, c.Text)) k = j;
             }
             if (k < 0) { merged.Add(c); lastLine.Add(c.Box); continue; }
@@ -1444,7 +1521,14 @@ static class ScreenKorean
                 Dictionary<string, object> it = new Dictionary<string, object>();
                 it["t"] = c.Text;
                 if (c.Trusted) it["w"] = true; // 그대로 옮긴다(영어·태국어 인식기로 다시 읽으면 한자·가나가 깨진다)
-                else it["f"] = SaveCrop(px, w, h, c);
+                else
+                {
+                    // 다른 글자로 보이는 줄은 흰 여백(30)을 두른 1.5배·3배 그림도 — 크메르·라오·미얀마어는 여백 둔 1.5배가 가장 정확했다
+                    // (6줄 시험: 라오어 글자 오류 7 → 3, 확신도 30~70 → 77~96). 엔진이 그 언어로 읽을 때 쓴다.
+                    List<string> pads = Foreign(c) ? new List<string>() : null;
+                    it["f"] = SaveCrop(px, w, h, c, pads);
+                    if (pads != null && pads.Count == 2) { it["f2"] = pads[0]; it["f3"] = pads[1]; }
+                }
                 it["n"] = c.Lines;
                 items.Add(it);
             }
@@ -1482,7 +1566,9 @@ static class ScreenKorean
     }
 
     // 밝기를 늘여 바탕 → 흰색, 글자 → 검은색(어두운 테마도 같게). 밝기가 비슷하면 바탕과의 색 차이로.
-    static string SaveCrop(int[] px, int w, int h, TextChunk c)
+    // padded: 주면 흰 여백(30)을 두른 그림 둘을 더 만들어 넣는다 — 세 배 그림을 반으로 줄인 것(1.5배)과 세 배 그대로. 오프라인 시험과
+    // 같은 만드는 법이다(화면에서 바로 1.5배로 키우면 크메르어 '저장' 이 두 글자 틀렸다).
+    static string SaveCrop(int[] px, int w, int h, TextChunk c, List<string> padded = null)
     {
         // 태국어일 수 있는 줄은 위아래를 넉넉히 — 윈도우 OCR 의 칸이 글자 위아래의 점·꼬리(ั ี ุ ู ่ ้)를 잘랐다.
         int padY = Lang == "latin" || AsciiOnly.IsMatch(c.Text) ? 4 : 4 + c.LineH * 35 / 100;
@@ -1517,6 +1603,25 @@ static class ScreenKorean
                     gr.DrawImage(small, 0, 0, big.Width, big.Height);
                 }
                 big.Save(file, ImageFormat.Png);
+                if (padded != null)
+                    foreach (int pct in new[] { 50, 100 })
+                    {
+                        const int margin = 30;
+                        int bw = Math.Max(1, big.Width * pct / 100), bh = Math.Max(1, big.Height * pct / 100);
+                        using (Bitmap pad = new Bitmap(bw + 2 * margin, bh + 2 * margin, PixelFormat.Format32bppArgb))
+                        {
+                            using (Graphics gr = Graphics.FromImage(pad))
+                            {
+                                gr.Clear(Color.White);
+                                gr.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                gr.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                                gr.DrawImage(big, margin, margin, bw, bh);
+                            }
+                            string pf = Path.Combine(dir, "screen-" + (cropNo++ % 200) + ".png");
+                            pad.Save(pf, ImageFormat.Png);
+                            padded.Add(pf);
+                        }
+                    }
             }
         }
         return file;

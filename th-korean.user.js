@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.34.0
+// @version      1.34.1
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -390,6 +390,11 @@
       hsEveryMs: 250,
       hsTop: 0.55,
       hsMinPeak: 8,
+      // 옮긴 말은 띄운 뒤 적어도 hsShowMs + 글자 수 × hsShowCharMs(hsShowMaxMs 까지) 둔다 — 자막 줄이 먼저 사라져도.
+      // 새 줄의 번역이 오면 바로 바뀐다. 0 이면 줄이 사라질 때 같이 내린다(1.34.0 까지).
+      hsShowMs: 1200,
+      hsShowCharMs: 60,
+      hsShowMaxMs: 3000,
     },
     // 화면 자막 언어를 영상(제목·자동 자막)으로 못 가늠할 때 읽어 볼 언어(구글 코드, 4개까지).
     hardsub: { fallback: ['zh-CN', 'en'] },
@@ -503,6 +508,9 @@
     hsEveryMs: [100, 3000],
     hsTop: [0.2, 0.9],
     hsMinPeak: [3, 60],
+    hsShowMs: [0, 5000],
+    hsShowCharMs: [0, 300],
+    hsShowMaxMs: [0, 8000],
   };
 
   function rcBuild(text) {
@@ -6632,7 +6640,7 @@
     const hsHere = (!mine || dub.failed || dub.asr) && hsOwns(dubPanel.lzkVideo);
     if (!on && !liveHere && !hsHere)
       st.textContent = YOUTUBE ? '꺼짐 — 자막을 미리 받아 한국어로 옮겨 보여 줍니다' : '꺼짐 — 켜 두면 다음 영상으로 넘겨도 계속 한국어 자막';
-    else if (hsHere) st.textContent = `화면에 박힌 ${hsLangName(hs.lang || hs.last)} 자막을 읽어 옮기는 중 · ${hs.lines}줄 (번역 도우미)`.replace('  ', ' ');
+    else if (hsHere) st.textContent = `화면에 박힌 ${hsLangName(hs.last)} 자막을 읽어 옮기는 중 · ${hs.lines}줄 (번역 도우미)`.replace('  ', ' ');
     else if (!mine || dub.failed) st.textContent = `${mine ? `${dub.status} ` : liveHere ? '자막 파일이 없는 영상 · ' : '켜짐 · '}${liveNote()}`;
     else if (!dub.sentences.length) st.textContent = dub.status;
     else {
@@ -7200,26 +7208,49 @@
     }
     if (!lines.length) return null;
     const score = ([a, b]) => rows.slice(a, b).reduce((x, y) => x + y, 0);
+    const sc = lines.map(score);
     let bi = 0;
-    lines.forEach((l, i) => score(l) > score(lines[bi]) && (bi = i));
+    lines.forEach((l, i) => sc[i] > sc[bi] && (bi = i));
+    const used = new Set();
+    const main = hsLineBox(w, h, lum, ok, ink, lines, bi, used);
+    if (!main) return null;
+    // 위·아래에 따로 선 다른 자막 줄(중국 드라마의 '중국어 줄 + 아래 영어 줄' — 두 줄은 따로 나왔다 따로 사라진다). 어느 줄을
+    // 읽을지는 hsTick 이 고른다: 획이 가장 많은 줄만 보면 두 줄이 장면마다 번갈아 뽑혀 같은 줄을 두 번 보지 못했다
+    // (사용자 2026-11-20 M_rR7v-_wNc — 60초에 번역이 4초만 보였다).
+    main.alts = [];
+    for (const i of lines.map((_, i) => i).sort((p, q) => sc[q] - sc[p])) {
+      if (used.has(i) || main.alts.length >= 2) continue;
+      const lh = lines[i][1] - lines[i][0];
+      if (Math.min(Math.abs(lines[i][0] - main.cb), Math.abs(main.ct - lines[i][1])) > 2.5 * Math.max(lh, main.lc)) continue;
+      const g = hsLineBox(w, h, lum, ok, ink, lines, i, used);
+      if (g) main.alts.push(g);
+    }
+    return main;
+  }
+
+  // 띠 줄 lines[seed] 에서 시작한 자막 줄 상자 { x, y, w, h, n, ct, cb, ch, lc, sig } 또는 null. used 에 쓴 띠 줄을 적는다.
+  function hsLineBox(w, h, lum, ok, ink, lines, seed, used) {
     // 두 줄 자막: 띠(획이 몰린 줄) 높이가 비슷하고(0.55~1.8배) 띠 높이의 2배 안에 있는 위·아래 줄. 로마자는 띠가 x 높이(글자
     // 크기의 절반쯤)뿐이라 두 줄의 띠 사이가 띠 높이의 1.6배쯤 된다 — 전처럼 0.8배로는 영어·스페인어·러시아어·태국어 두 줄
     // 자막이 모두 윗줄만 잡혔다(2026-11-19 30개 언어 시험). 중국 드라마의 '중국어 줄 + 아래 영어 줄' 은 띠 높이가 절반쯤이라
     // 따로 둔다(묶으면 간체 인식기가 영어 줄까지 읽어 뒤범벅이 된다).
-    const cores = [lines[bi]];
-    const hb = lines[bi][1] - lines[bi][0];
+    const cores = [lines[seed]];
+    used.add(seed);
+    const hb = lines[seed][1] - lines[seed][0];
     // 0.55~1.8 — 태국어 줄의 띠(몸통)는 같은 크기 한자 줄 띠의 0.6 쯤이라 0.7 로는 '태국어 + 중국어' 두 언어 자막이 장면마다
     // 묶였다 떨어졌다 해서(상자가 흔들려) 번역을 거의 띄우지 못했다. 중국어 줄 아래 영어 줄(x 높이)은 0.4 아래라 그대로 따로.
-    const like = (k) => (lines[k][1] - lines[k][0]) / hb >= 0.55 && (lines[k][1] - lines[k][0]) / hb <= 1.8;
-    let ctop = lines[bi][0];
-    let cbot = lines[bi][1];
-    for (let k = bi - 1; k >= 0 && ctop - lines[k][1] <= hb * 2 && like(k); k--) {
+    const like = (k) => !used.has(k) && (lines[k][1] - lines[k][0]) / hb >= 0.55 && (lines[k][1] - lines[k][0]) / hb <= 1.8;
+    let ctop = lines[seed][0];
+    let cbot = lines[seed][1];
+    for (let k = seed - 1; k >= 0 && ctop - lines[k][1] <= hb * 2 && like(k); k--) {
       ctop = lines[k][0];
       cores.push(lines[k]);
+      used.add(k);
     }
-    for (let k = bi + 1; k < lines.length && lines[k][0] - cbot <= hb * 2 && like(k); k++) {
+    for (let k = seed + 1; k < lines.length && lines[k][0] - cbot <= hb * 2 && like(k); k++) {
       cbot = lines[k][1];
       cores.push(lines[k]);
+      used.add(k);
     }
     const nl = cores.length; // 글줄 수
     const lhc = Math.max(...cores.map(([a, b]) => b - a)); // 띠 한 줄 높이
@@ -7302,7 +7333,7 @@
         sig[gy * HS_GW + gx] = m / ((yb - ya) * (xb - xa)) > 0.15 ? 1 : 0;
       }
     }
-    return { x: best.a, y: top, w: bw, h: lh, n: nl, ct: ctop, cb: cbot, ch, sig };
+    return { x: best.a, y: top, w: bw, h: lh, n: nl, ct: ctop, cb: cbot, ch, lc: lhc, sig };
   }
 
   // 같은 자막 줄인가(자리가 거의 같고 모양 지문이 85% 넘게 같다). 시험(2026-11-18): 같은 줄끼리 0~32칸(짧은 '定有文章'
@@ -7336,7 +7367,9 @@
     }
     hsG.drawImage(v, 0, top, vw, vh - top, 0, 0, w, h);
     const f = hsFind(hsG.getImageData(0, 0, w, h).data, w, h);
-    return f && { ...f, k, top, vw, vh, above: (top + f.y / k) / vh };
+    if (!f) return null;
+    const put = (g) => ({ ...g, k, top, vw, vh, above: (top + g.y / k) / vh });
+    return { ...put(f), alts: (f.alts || []).map(put) };
   }
 
   // 찾은 줄을 원본 크기로 잘라(줄 높이 72화소 안쪽으로 줄여 — 읽기 시험이 이 크기였다) RGBA 그대로 보낸다.
@@ -7451,6 +7484,38 @@
     return job;
   }
 
+  // 자막 자리 — 줄 아래 끝 높이와 띠(글자 몸통) 높이로 가른다. 중국어 줄과 그 아래 영어 줄은 다른 자리라 읽을 언어를
+  // 자리마다 정한다: 영상 하나에 하나로 정하면 영어로 굳은 뒤 중국어 줄을 영어 모델로 읽어 버렸다('TREAT', 빈 글 —
+  // 사용자 2026-11-20 M_rR7v-_wNc).
+  function hsSlot(st, f, make = true) {
+    const lc = f.lc || f.ch / (f.n || 1);
+    let s = st.slots.find((x) => Math.abs(x.cb - f.cb) <= Math.max(5, lc * 0.6) && lc < x.lc * 1.5 && x.lc < lc * 1.5);
+    if (!s && make) {
+      s = { cb: f.cb, lc, lang: '', votes: {}, bad: 0, n: 0, ok: 0, conf: 0 };
+      st.slots.push(s);
+      if (st.slots.length > 4) st.slots.shift();
+    }
+    return s;
+  }
+
+  // 자리의 읽기 성적(읽어 낸 비율 × 평균 확신도). 두 번 넘게 읽어 본 자리만 — 모르는 자리는 60 으로 쳐서 한 번은 읽어 본다.
+  function hsSlotScore(st, f) {
+    const s = hsSlot(st, f, false);
+    return s && s.n >= 2 ? (s.ok ? s.conf / s.ok : 0) * (s.ok / s.n) : 60;
+  }
+
+  // 화면 자막 한 줄 옮기기. 한 줄이라 설정(translate.order)의 차례대로 gtx 주소부터 묻는다 — 처음 보는 문장을 옮기는 데
+  // gtx 는 0.4~0.6초, translateToKorean 이 먼저 쓰는 dict-chrome-ex(여러 줄 묶음용)는 0.9~1.5초였다(2026-11-20 잰 값).
+  // 드라마 자막은 1~2초면 바뀌어, 그 1초 때문에 번역이 줄이 사라진 뒤에 와서 아예 못 보이는 일이 많았다.
+  async function hsTranslate(text, from) {
+    if (MY_KO && usesAI(cfg.pageEngine) && aiKey()) return (await translateToKorean([text], from))[0] || '';
+    const hit = cacheGet(text, MY);
+    if (hit) return hit;
+    const out = (await freeRaw(text, from, MY, 5000)).trim();
+    if (out && out !== text) cacheSet(text, MY, out);
+    return out;
+  }
+
   async function hsRead(st, f) {
     let crop;
     try {
@@ -7459,14 +7524,18 @@
       return;
     }
     st.busy = true;
+    st.readAt = Date.now();
     const failed = () => {
       st.busy = false;
       hsFails++;
       hsNext = Date.now() + Math.min(30000, 2000 * hsFails);
     };
-    // 언어가 정해졌으면 그 언어만, 아니면 영상으로 가늠한 후보(처음 한 번 — 제목 언어를 구글에 묻느라 조금 걸린다)
-    if (!st.lang && !st.cands) st.cands = await hsGuessLangs(st.key).catch(() => [...RC.hardsub.fallback]);
-    crop.langs = st.lang ? [st.lang] : st.cands;
+    const sl = hsSlot(st, f);
+    // 그 자리의 언어가 정해졌으면 그 언어만, 아니면 영상으로 가늠한 후보(처음 한 번 — 제목 언어를 구글에 묻느라 조금
+    // 걸린다). 다른 자리가 정한 언어는 뒤로 — 중국어 줄이 중국어로 정해졌으면 아래 줄은 다른 후보부터 읽어 본다.
+    if (!st.cands) st.cands = await hsGuessLangs(st.key).catch(() => [...RC.hardsub.fallback]);
+    const taken = st.slots.filter((x) => x !== sl && x.lang).map((x) => x.lang);
+    crop.langs = sl.lang ? [sl.lang] : [...st.cands.filter((c) => !taken.includes(c)), ...st.cands.filter((c) => taken.includes(c))];
     GM_xmlhttpRequest({
       method: 'POST',
       url: HS_URL,
@@ -7483,12 +7552,17 @@
         if (!j || !j.ocr) return failed();
         hsFails = 0;
         let good = hsAccept(j);
+        sl.n++;
+        if (good) {
+          sl.ok++;
+          sl.conf += +j.conf || 0;
+        }
         let ko = '';
         if (good) {
           // 언어 정하기: 같은 언어로 두 번 읽히면 그 언어만 읽는다. 로마자 언어는 구글이 알아본 언어를 믿는다 — 제목이 영어인
           // 스페인어 영상을 영어 모델로 읽어도(악센트 빠짐) 다음 줄부터 스페인어 모델로 읽는다. 옛 도우미는 j.lang 이 zh-*.
           let from = hsNorm(j.lang) || 'zh-CN';
-          if (!st.lang && HS_LATIN.has(from) && st.detects < 3) {
+          if (!sl.lang && HS_LATIN.has(from) && st.detects < 3) {
             st.detects++;
             const [d] = await detectLangs([j.text]).catch(() => ['']);
             const dn = hsNorm(d);
@@ -7499,15 +7573,15 @@
           }
           // 두 번 넘게, 그리고 다른 언어 표의 두 배 넘게 — 한 줄을 엉뚱한 언어로 읽은 것만으로 굳지 않게
           const fam = /^(zh|yue)/.test(from) ? 'zh' : from;
-          st.votes[fam] = (st.votes[fam] || 0) + 1;
-          st.bad = 0;
-          const rival = Math.max(0, ...Object.entries(st.votes).filter(([k]) => k !== fam).map(([, n]) => n));
-          if (!st.lang && st.votes[fam] >= 2 && st.votes[fam] >= rival * 2) st.lang = from;
+          sl.votes[fam] = (sl.votes[fam] || 0) + 1;
+          sl.bad = 0;
+          const rival = Math.max(0, ...Object.entries(sl.votes).filter(([k]) => k !== fam).map(([, n]) => n));
+          if (!sl.lang && sl.votes[fam] >= 2 && sl.votes[fam] >= rival * 2) sl.lang = from;
           st.last = from;
           if (hsMine(from)) {
             // 내 언어 자막 — 옮길 것이 없다. 두 번이면 이 영상은 더 읽지 않는다.
             good = false;
-            if (st.lang) st.mine = true;
+            if (sl.lang) st.mine = true;
           } else {
             st.hits++;
             st.lines++;
@@ -7518,41 +7592,55 @@
             }
             try {
               // 로마자 언어는 원문 언어를 알려 준다 — 짧은 줄은 구글이 다른 로마자 언어로 잘못 알아보기도 한다
-              ko = (await translateToKorean([j.text], HS_LATIN.has(from) ? from : 'auto'))[0] || '';
+              ko = await hsTranslate(j.text, HS_LATIN.has(from) ? from : 'auto');
             } catch {
               ko = '';
             }
           }
         }
         // 정한 언어로 네 번 이어 못 읽으면(언어를 잘못 정했거나 자막 언어가 바뀌었다) 다시 후보 언어들로 읽는다
-        if (!hsAccept(j) && st.lang && ++st.bad >= 4) {
-          st.lang = '';
-          st.votes = {};
-          st.bad = 0;
+        if (!hsAccept(j) && sl.lang && ++sl.bad >= 4) {
+          sl.lang = '';
+          sl.votes = {};
+          sl.bad = 0;
         }
         st.read = { ...f, text: j.text, ko, good };
         st.busy = false;
-        if (hs === st) hsRender();
+        if (hs !== st) return;
+        // 줄이 번역보다 먼저 사라졌어도(1~2초짜리 자막) 방금까지 보이던 줄이면 띄운다 — hsRender 가 잠깐 더 둔다.
+        // 예전에는 늦게 온 번역을 버려서, 짧은 대사가 이어지는 장면은 읽어 놓고도 한 줄도 못 보였다.
+        if (good && ko && st.on && !(st.seen && hsSame(st.seen, f)) && Date.now() - st.readAt < 2500) hsShow(st, st.read);
+        hsRender();
       },
       onerror: failed,
       ontimeout: failed,
     });
   }
 
-  // 지금 화면의 줄이 읽어 옮긴 줄과 같으면 그 번역을, 아니면(바뀌었거나 사라졌으면) 아무것도.
+  // 지금 화면의 줄이 읽어 옮긴 줄과 같으면 그 번역을. 줄이 바뀌었거나 사라졌으면 내리되, 띄운 지 얼마 안 된 번역은
+  // 조금 더 둔다 — 짧은 자막은 번역이 0.4~1초 늦게 떠서 읽기도 전에 사라졌다(사용자 2026-11-20). 새 번역은 바로 바뀐다.
   function hsRender() {
     const st = hs;
     if (!st) return;
     const r = st.read;
-    const text = st.on && st.seen && r && r.good && r.ko && hsSame(st.seen, r) ? r.ko : '';
-    if (text) {
-      dubShowSub(text);
-      dubPlaceSub(st.v, r.above);
-      st.showing = true;
-    } else if (st.showing) {
+    const now = Date.now();
+    if (st.on && st.seen && r && r.good && r.ko && hsSame(st.seen, r)) hsShow(st, r);
+    else if (st.showing) {
+      const s = st.shown;
+      const V = RC.video;
+      if (s && st.on && now - st.shownAt < Math.min(V.hsShowMaxMs, V.hsShowMs + V.hsShowCharMs * s.ko.length)) return;
       dubShowSub('');
       st.showing = false;
+      st.shown = null;
     }
+  }
+
+  function hsShow(st, r) {
+    if (st.shown !== r) st.shownAt = Date.now();
+    st.shown = r;
+    dubShowSub(r.ko);
+    dubPlaceSub(st.v, r.above);
+    st.showing = true;
   }
 
   function hsStop() {
@@ -7576,7 +7664,7 @@
     if (!hs || hs.v !== v || hs.key !== key) {
       hsStop();
       hs = { v, key, on: false, hits: 0, lines: 0, ticks: 0, miss: 0, seen: null, cand: null, same: 0, read: null, busy: false, showing: false,
-        lang: '', cands: null, votes: {}, detects: 0, last: '', mine: false, bad: 0 };
+        shown: null, shownAt: 0, slots: [], cands: null, detects: 0, last: '', mine: false };
     }
     const st = hs;
     if (st.tainted || st.mine || v.paused || v.seeking) return hsRender();
@@ -7599,6 +7687,20 @@
       return hsRender();
     }
     st.miss = 0;
+    if (f.alts.length) {
+      // 따로 선 줄이 둘 넘으면(중국어 줄 + 아래 영어 줄) 하나를 꾸준히 따라간다: 번역을 띄운 줄 → 지켜보던 줄 → 새 줄이면
+      // 읽기 성적이 좋은 자리의 줄, 같으면 글자 몸통이 작은 줄(로마자 — 영어 인식이 한자보다 훨씬 정확했다: 이 드라마의 가는
+      // 한자 글꼴은 '在你哈马的时候' 처럼 자주 틀렸고 영어 줄은 확신도 90~95 로 거의 그대로). 못 읽은 줄은 다른 줄이 있으면 넘긴다.
+      const all = [f, ...f.alts];
+      const r = st.read;
+      const pool = r && !r.good ? all.filter((g) => !hsSame(g, r)) : all;
+      const from = pool.length ? pool : all;
+      const pick = (a, b) => {
+        const d = hsSlotScore(st, b) - hsSlotScore(st, a);
+        return d > 5 || (d >= -5 && b.lc < a.lc * 0.8) ? b : a;
+      };
+      f = (r && r.good && from.find((g) => hsSame(g, r))) || from.find((g) => hsSame(g, st.cand)) || from.reduce(pick);
+    }
     st.seen = f;
     if (hsSame(f, st.cand)) st.same++;
     else {

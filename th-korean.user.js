@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.5
+// @version      1.35.6
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -8330,6 +8330,9 @@
   const HS_CJK = /[㐀-鿿豈-﫿]/g;
 
   // 띠(px, w×h — 영상 높이 360 기준)에서 자막 줄 상자 { x, y, w, h, sig } 또는 null.
+  // 노란 자막(예능·중국 드라마·동남아 영상에 흔하다): 빨강·초록이 높고 파랑이 낮으며 초록이 빨강의 70% 넘게(주황·피부색은 아님).
+  // 흰 자막처럼 밝은 글자로 본다(1.35.6 — 전에는 흰색·회색만 글자라 노란 자막 94줄 중 5줄만 찾았다). 번역 도우미 엔진도 같은 꼴.
+  const hsYellow = (r, g, b) => r >= 170 && g >= 140 && b <= g - 50 && g >= r * 0.7;
   function hsFind(px, w, h) {
     const n = w * h;
     const lum = new Uint8Array(n);
@@ -8340,7 +8343,7 @@
       const b = px[p + 2];
       const l = (r * 299 + g * 587 + b * 114) / 1000;
       lum[i] = l;
-      ok[i] = l >= 170 && Math.max(r, g, b) - Math.min(r, g, b) <= 70 ? 1 : 0;
+      ok[i] = l >= 170 && (Math.max(r, g, b) - Math.min(r, g, b) <= 70 || hsYellow(r, g, b)) ? 1 : 0;
     }
     // 가로로만 본다(줄 찾기에는 충분하고 절반 빠르다). 획 두께 한계 10(영상 높이의 2.8%), 테두리 3화소 안.
     const ink = new Uint8Array(n);

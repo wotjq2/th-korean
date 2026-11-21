@@ -45,3 +45,13 @@ test('그래도 줄 끝·앞의 부스러기(기호)는 지운다', () => {
   assert.equal(ctx.hsClean('我们走吧 2 '), '我们走吧 2');
   assert.equal(ctx.hsTidy(['|| Let us go now ]]']), 'Let us go now');
 });
+
+test('노란 자막 화소는 흰색으로, 주황·피부색·흰색·배경은 그대로(hsDeyellow)', () => {
+  const c2 = vm.createContext({ Buffer });
+  vm.runInContext(`${cut('hsDeyellow')}\nthis.hsDeyellow = hsDeyellow;`, c2);
+  const px = (rgb) => Buffer.from(rgb.flatMap((c) => [...c, 255]));
+  const out = c2.hsDeyellow(px([[255, 238, 0], [255, 198, 26], [255, 140, 0], [240, 200, 170], [255, 255, 255], [40, 40, 40], [200, 150, 80]]));
+  const got = [];
+  for (let i = 0; i < out.length; i += 4) got.push([out[i], out[i + 1], out[i + 2]]);
+  assert.deepEqual(got, [[255, 255, 255], [255, 255, 255], [255, 140, 0], [240, 200, 170], [255, 255, 255], [40, 40, 40], [200, 150, 80]]);
+});

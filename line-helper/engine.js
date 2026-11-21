@@ -1115,6 +1115,20 @@ function hsInk(px, w, h, o) {
 // 시험에서 고른 값: 획 두께 한계 = 영상 높이 × 0.045, 테두리 거리 = 영상 높이 × 0.004(최소 2).
 // rows = 글줄(위아래 부호까지), core = 획이 몰린 띠(1.33 확장부터). 흰색 기준은 띠에서 잰다. 답: 그 줄 범위만 남긴 흑백
 // 그림을 만드는 함수 — 한자·가나·한글은 띠만(1.32 와 같은 범위), 다른 글자는 글줄 전체.
+// 노란 자막: 노란 화소를 흰색으로 바꿔 둔다 — 그 뒤(흰 글자 찾기·흑백 바꾸기)는 흰 자막과 똑같다(2026-11-22).
+// 같은 밝기의 회색(노랑 ≈ 220)으로 바꿨더니 줄의 글자 기준 밝기가 낮아져 낱말 사이로 비친 밝은 배경까지 글자가 됐다
+// ('janganipergi') — 흰색이면 흰 자막과 같은 기준이다. 31개 언어 94줄: 노랑 정확 74(흰 70), 호박색 72.
+// 노란색 = 빨강·초록이 높고 파랑이 아주 낮으며 초록이 빨강의 70% 넘게(주황·피부색·나무색은 아님). 확장 hsYellow 와 비슷한 꼴.
+function hsDeyellow(px) {
+  for (let p = 0; p < px.length; p += 4) {
+    const r = px[p], g = px[p + 1], b = px[p + 2];
+    // 파랑은 초록의 35% 아래 — 노란 글자는 검은 테두리와 섞인 가장자리도 파랑이 거의 0 이고, 따뜻한 조명의 나무색(200,150,80)은
+    // 초록의 절반이다(그것까지 흰 글자가 됐다 — 시험 tests/engine-text). 밝기로 가르면 글자 가장자리도 빠져 덜 읽혔다(정확 74 → 71).
+    if (r >= 170 && g >= 140 && b <= g * 0.35 && g >= r * 0.7) px[p] = px[p + 1] = px[p + 2] = 255;
+  }
+  return px;
+}
+
 function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
   const hist = new Array(256).fill(0);
   let n = 0;
@@ -1445,6 +1459,7 @@ async function hardsub(text) {
   const w = j.w | 0, h = j.h | 0;
   const px = Buffer.from(String(j.px || ''), 'base64');
   if (!(w > 0 && h > 0 && w * h <= 4e6 && px.length === w * h * 4)) throw new Error('자막 그림이 잘못되었습니다');
+  hsDeyellow(px);
   const vh = Number(j.vh) || h * 8;
   const n = Math.max(1, j.n | 0);
   const span = (r, u, H) => (Array.isArray(r) ? [Math.max(0, Math.floor(r[0] * u)), Math.min(H, Math.ceil(r[1] * u))] : null);

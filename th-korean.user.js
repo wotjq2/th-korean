@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.34.1
+// @version      1.34.2
 // @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -288,7 +288,7 @@
     const fab = document.getElementById('lzk-fab');
     if (fab) {
       fab.textContent = MY_KO ? '한' : MY2.toUpperCase();
-      fab.title = `${APP_NAME} 설정 (${SITE.label})`;
+      fab.title = `${APP_NAME} 설정 (${SITE.label}) — 끌어서 옮길 수 있습니다`;
     }
     if (document.getElementById('lzk-langbar')) {
       document.getElementById('lzk-langbar').remove();
@@ -2808,6 +2808,8 @@
     }
     #lzk-fab:hover { background: #1a22a0; }
     #lzk-fab[data-high] { bottom: 96px; }
+    /* 끌어서 옮기는 단추 — 끄는 동안 페이지 글이 같이 선택되지 않게 */
+    #lzk-fab, #lzk-langbar .lzk-lang-toggle { user-select: none; -webkit-user-select: none; }
     #lzk-langbar {
       position: fixed; right: 72px; bottom: 26px; z-index: 2147483000; display: flex; gap: 4px; align-items: flex-end;
     }
@@ -2984,6 +2986,210 @@
     return el;
   }
 
+  // '한'·'번역' 단추 자리 (2026-11-21 사용자: 고정이라 불편 — 자유롭게 옮기게). 둘 중 하나를 끌면 둘이 같이 움직이고,
+  // 놓은 자리를 이 사이트와 '기본'(아직 옮긴 적 없는 사이트가 따른다)으로 기억한다. 메신저는 오른쪽 아래에 보내기 단추가
+  // 있어 기본을 따르지 않고 메신저에서 옮긴 자리만 쓴다. '한' 이 화면 왼쪽 절반이면 '번역' 은 그 오른쪽에, 위쪽 절반이면
+  // 언어 줄·설정 창·알림이 아래로 펼쳐진다. 옮긴 적이 없으면 CSS 그대로(오른쪽 아래) — 예전 모습과 같다.
+  // 자리 = { h: 'l'|'r', x: 그 쪽 가장자리에서 '한' 까지, v: 't'|'b', y: 위·아래 가장자리에서 } (px). 창 크기가 바뀌어도
+  // 가까운 모서리에서의 거리를 지켜 화면 안에 남는다.
+  const FAB_POS_KEY = 'fabPos';
+  const FAB_SIZE = 46;
+  let fabDragPos = null; // 끄는 중의 자리(놓을 때 저장)
+  let fabLock = null; // '번역' 을 끄는 동안은 좌우·위아래를 바꾸지 않는다(단추가 손가락 밑에서 반대편으로 튀지 않게)
+  let fabNoClick = 0; // 끌고 놓은 직후의 click 은 누른 것이 아니다
+  let fabHooked = false;
+
+  function fabSaved() {
+    const all = GM_getValue(FAB_POS_KEY, null);
+    if (!all || typeof all !== 'object') return null;
+    const p = all[location.hostname] || (MESSENGER ? null : all['*']);
+    return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  }
+
+  function fabSave(p) {
+    let all = GM_getValue(FAB_POS_KEY, null);
+    if (!all || typeof all !== 'object') all = {};
+    delete all[location.hostname]; // 맨 뒤로 — 오래 안 쓴 사이트부터 지운다
+    all[location.hostname] = p;
+    if (!MESSENGER) all['*'] = p;
+    const hosts = Object.keys(all).filter((k) => k !== '*');
+    for (const k of hosts.slice(0, Math.max(0, hosts.length - 300))) delete all[k];
+    GM_setValue(FAB_POS_KEY, all);
+  }
+
+  function fabReset() {
+    GM_setValue(FAB_POS_KEY, {});
+    fabDragPos = null;
+    fabLock = null;
+    placeLzk();
+  }
+
+  function fabView() {
+    const de = document.documentElement;
+    return { w: Math.min(innerWidth, de.clientWidth || innerWidth), h: Math.min(innerHeight, de.clientHeight || innerHeight) };
+  }
+
+  // 저장한 자리 → 이 화면에서 '한' 의 왼쪽·위 (화면 밖으로 나가지 않게).
+  function fabXY(p, vw, vh) {
+    const S = FAB_SIZE;
+    const m = 4;
+    const l = p.h === 'l' ? p.x : vw - p.x - S;
+    const t = p.v === 't' ? p.y : vh - p.y - S;
+    return { l: Math.max(m, Math.min(vw - S - m, l)), t: Math.max(m, Math.min(vh - S - m, t)) };
+  }
+
+  function fabPosFrom(l, t, vw, vh) {
+    const S = FAB_SIZE;
+    const h = l + S / 2 < vw / 2 ? 'l' : 'r';
+    const v = t + S / 2 < vh / 2 ? 't' : 'b';
+    return { h, x: Math.round(h === 'l' ? l : vw - l - S), v, y: Math.round(v === 't' ? t : vh - t - S) };
+  }
+
+  // 지금 '한' 이 있는 자리(옮긴 적이 없으면 화면에서 잰다; '한' 이 없으면 '번역' 막대에서 거꾸로 셈한다).
+  function fabNowXY(vw, vh) {
+    const p = fabDragPos || fabSaved();
+    if (p) return fabXY(p, vw, vh);
+    const fab = document.getElementById('lzk-fab');
+    if (fab) {
+      const r = fab.getBoundingClientRect();
+      return { l: r.left, t: r.top };
+    }
+    const bar = document.getElementById('lzk-langbar');
+    const r = bar ? bar.getBoundingClientRect() : { right: vw - 18, bottom: vh - 26 };
+    return { l: r.right - FAB_SIZE, t: r.bottom + 8 - FAB_SIZE };
+  }
+
+  // '한'·'번역' 막대·설정 창·알림·작은 상태 표시·선택 번역 창을 '한' 자리에 맞춰 둔다.
+  function placeLzk() {
+    const get = (id) => document.getElementById(id);
+    const fab = get('lzk-fab');
+    const bar = get('lzk-langbar');
+    const langs = bar && bar.querySelector('.lzk-langs');
+    // 옮긴 자리에서는 쓰지 않는 쪽을 auto 로 — CSS 의 right·bottom 이 남으면 막대·알림이 양쪽으로 늘어난다.
+    // 처음 자리로 돌릴 때(none)는 모두 비워 CSS 그대로.
+    const set = (el, o, none) => {
+      if (!el) return;
+      for (const k of ['left', 'right', 'top', 'bottom']) el.style[k] = o[k] || (none ? '' : 'auto');
+      for (const k of ['maxHeight', 'flexDirection', 'alignItems']) el.style[k] = o[k] || '';
+    };
+    const p = fabDragPos || fabSaved();
+    if (!p) {
+      for (const id of ['lzk-fab', 'lzk-langbar', 'lzk-panel', 'lzk-toast', 'lzk-badge', 'lzk-selpop']) set(get(id), {}, true);
+      if (langs) langs.style.justifyContent = langs.style.maxWidth = '';
+      return;
+    }
+    const S = FAB_SIZE;
+    const { w: vw, h: vh } = fabView();
+    const { l, t } = fabXY(p, vw, vh);
+    const side = fabLock || fabPosFrom(l, t, vw, vh);
+    const L = side.h === 'l';
+    const T = side.v === 't';
+    const r = vw - l - S;
+    const b = vh - t - S;
+    const hx = (off) => (L ? { left: `${l + off}px` } : { right: `${r + off}px` });
+    const vy = (off) => (T ? { top: `${t + off}px` } : { bottom: `${b + off}px` });
+    set(fab, { ...hx(0), ...vy(0) });
+    if (bar) {
+      const off = fab ? S + 8 : 0;
+      set(bar, { ...hx(off), ...vy(8), flexDirection: L ? 'row-reverse' : '', alignItems: T ? 'flex-start' : '' });
+      if (langs) {
+        const tg = bar.querySelector('.lzk-lang-toggle');
+        const room = (L ? vw - l - off : l + S - off) - ((tg && tg.offsetWidth) || 80) - 12;
+        langs.style.justifyContent = L ? 'flex-start' : '';
+        langs.style.maxWidth = `${Math.max(120, Math.min(404, room))}px`;
+      }
+    }
+    set(get('lzk-badge'), { ...hx(S + 10), ...vy(bar ? 46 : 8) });
+    // 넓은 창(설정 340px 등)은 '한' 과 같은 쪽 가장자리에 맞추되 화면 밖으로 나가지 않게.
+    for (const [id, frac] of [['lzk-panel', 0.76], ['lzk-toast', 0], ['lzk-selpop', 0.6]]) {
+      const el = get(id);
+      if (!el) continue;
+      const room = vw - (el.offsetWidth || 340) - 8;
+      const edge = Math.max(8, Math.min(L ? l : r, room));
+      const gap = (T ? t : b) + S + 12;
+      set(el, {
+        ...(L ? { left: `${edge}px` } : { right: `${edge}px` }),
+        ...(T ? { top: `${gap}px` } : { bottom: `${gap}px` }),
+        // max-height 는 안쪽 높이 — 위아래 여백·테두리(약 34px)를 빼야 화면 끝에 닿지 않는다.
+        maxHeight: frac ? `${Math.max(120, Math.min(vh * frac, vh - gap - 8 - 40))}px` : '',
+      });
+    }
+  }
+
+  // 누르고 5px 넘게 움직이면 끌기 — 놓으면 그 자리를 기억하고, 그 뒤의 click(설정 열기·언어 펼치기)은 삼킨다.
+  function fabDraggable(el, lock) {
+    if (!el || el.dataset.lzkDrag) return;
+    el.dataset.lzkDrag = '1';
+    el.style.touchAction = 'none'; // 손가락으로 끌 때 페이지가 대신 밀리지 않게
+    if (!fabHooked) {
+      fabHooked = true;
+      window.addEventListener(
+        'click',
+        (e) => {
+          if (Date.now() > fabNoClick) return;
+          const t = e.target;
+          if (!t || !t.closest || !t.closest('#lzk-fab, #lzk-langbar .lzk-lang-toggle')) return;
+          fabNoClick = 0;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        },
+        true
+      );
+      // 창 크기가 바뀌거나, 다른 탭에서 옮기고 돌아오면 다시 맞춘다.
+      window.addEventListener('resize', () => fabSaved() && placeLzk());
+      window.addEventListener('focus', () => placeLzk());
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && placeLzk());
+    }
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || fabDragPos) return;
+      const v0 = fabView();
+      const start = fabNowXY(v0.w, v0.h);
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      let moving = false;
+      const move = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        const dx = ev.clientX - x0;
+        const dy = ev.clientY - y0;
+        if (!moving) {
+          if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+          moving = true;
+          try {
+            el.setPointerCapture(e.pointerId);
+          } catch {
+            /* 이미 손을 뗐다 */
+          }
+          document.getElementById('lzk-langbar')?.removeAttribute('data-open');
+          if (lock) fabLock = fabPosFrom(start.l, start.t, v0.w, v0.h);
+        }
+        ev.preventDefault();
+        const v = fabView();
+        fabDragPos = fabPosFrom(start.l + dx, start.t + dy, v.w, v.h);
+        placeLzk();
+      };
+      const up = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', up, true);
+        if (!moving) return;
+        fabNoClick = Date.now() + 600;
+        const p = fabDragPos;
+        fabDragPos = null;
+        fabLock = null;
+        if (p) {
+          const v = fabView();
+          const { l, t } = fabXY(p, v.w, v.h); // 화면 안으로 당긴 자리를 저장한다
+          fabSave(fabPosFrom(l, t, v.w, v.h));
+        }
+        placeLzk();
+      };
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', up, true);
+    });
+  }
+
   let badgeEl = null;
   function setBadge(text) {
     if (!text) {
@@ -2996,6 +3202,7 @@
       badgeEl.id = 'lzk-badge';
       markNoTranslate(badgeEl);
       document.body.appendChild(badgeEl);
+      placeLzk();
     }
     badgeEl.textContent = text;
   }
@@ -3010,6 +3217,7 @@
       document.body.appendChild(el);
     }
     el.textContent = msg;
+    placeLzk(); // 글 길이로 너비가 바뀐다 — 화면 안에 들게 다시 맞춘다
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.remove(), ms);
   }
@@ -3061,6 +3269,7 @@
     pop.querySelector('.lzk-via').textContent = `번역: ${via}`;
     pop.querySelector('.lzk-close').addEventListener('click', () => pop.remove());
     document.body.appendChild(pop);
+    placeLzk();
   }
 
   async function runSelectionTranslate(src) {
@@ -4447,8 +4656,13 @@
         <button class="lzk-ghost" id="lzk-show-original" type="button">원문 보기</button>
         <button class="lzk-ghost" id="lzk-clear-cache" type="button">캐시 비우기</button>
       </div>
+      <div class="lzk-actions" style="margin-top:8px">
+        <button class="lzk-ghost" id="lzk-fab-reset" type="button">단추 처음 자리로</button>
+      </div>
+      <div class="lzk-hint">이 단추와 번역 단추는 끌어서 화면 아무 데나 옮길 수 있습니다. 놓은 자리를 기억합니다.</div>
     `;
     document.body.appendChild(panel);
+    placeLzk();
 
     const $ = (id) => panel.querySelector(id);
     // 사이트 이름은 원격 설정(config.json shops.label)에서 올 수 있다 — 글자로만 넣는다(HTML 로 읽히지 않게).
@@ -4711,6 +4925,10 @@
       GM_setValue(CACHE_KEY, cache);
       toast('번역 캐시를 비웠습니다.');
     });
+    $('#lzk-fab-reset').addEventListener('click', () => {
+      fabReset();
+      toast('단추를 처음 자리(오른쪽 아래)로 돌렸습니다. 모든 사이트에 같이 적용됩니다.');
+    });
   }
 
   const SCRIPT_VERSION =
@@ -4742,10 +4960,12 @@
     fab.type = 'button';
     // 한국어가 아니면 '한' 대신 내 언어 코드(EN·TH …) — '한' 을 옮기면 엉뚱한 글자가 된다.
     fab.textContent = MY_KO ? '한' : MY2.toUpperCase();
-    fab.title = `${APP_NAME} 설정 (${SITE.label})`;
+    fab.title = `${APP_NAME} 설정 (${SITE.label}) — 끌어서 옮길 수 있습니다`;
     if (MESSENGER) fab.toggleAttribute('data-high', true); // 메신저는 오른쪽 아래에 보내기 단추가 있다
     fab.addEventListener('click', togglePanel);
+    fabDraggable(fab, false);
     document.body.appendChild(fab);
+    placeLzk();
     refreshLangBar(); // 태·미·중 막대를 '한' 왼쪽으로
   }
 
@@ -5564,9 +5784,10 @@
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'lzk-lang-toggle';
-    toggle.title = `입력 언어 고르기 — 고르면 어느 사이트든 입력칸에 ${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter 를 누르면 그 언어로 바꿉니다`;
+    toggle.title = `입력 언어 고르기 — 고르면 어느 사이트든 입력칸에 ${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter 를 누르면 그 언어로 바꿉니다. 끌어서 옮길 수 있습니다`;
     toggle.addEventListener('mousedown', (e) => e.preventDefault());
     toggle.addEventListener('click', () => bar.toggleAttribute('data-open'));
+    fabDraggable(toggle, true);
     bar.append(langs, toggle);
     // 막대 밖을 누르면 접는다.
     document.addEventListener('mousedown', (e) => {
@@ -5590,6 +5811,7 @@
     const word = MY_KO ? '번역' : '🌐 번역';
     toggle.textContent = on ? `${word}·${langLabel(on)}` : word;
     toggle.toggleAttribute('data-on', !!on);
+    placeLzk(); // 단추 글이 길어지면 언어 줄 너비가 바뀐다
   }
 
   function setTypeLang(id) {

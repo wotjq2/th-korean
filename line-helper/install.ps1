@@ -77,10 +77,14 @@
             $programs = [Environment]::GetFolderPath('Programs')
             if (-not $programs) { $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
             if (-not (Test-Path $programs)) { New-Item -ItemType Directory -Force $programs | Out-Null }
-            $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs '번역 도우미.lnk'))
+            # WScript.Shell 은 시스템 언어 코드(영어·태국어 윈도우 등)로 못 쓰는 글자가 든 .lnk 이름을 거부한다('Value does not
+            # fall within the expected range' — 한국어 윈도우에서만 됐다). 영어 이름으로 만든 뒤 한글 이름으로 바꾼다.
+            $tmpLnk = Join-Path $programs 'th-korean-helper.lnk'
+            $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($tmpLnk)
             $lnk.TargetPath = $exe
             $lnk.WorkingDirectory = $dir
             $lnk.Save()
+            Move-Item -LiteralPath $tmpLnk -Destination (Join-Path $programs '번역 도우미.lnk') -Force
         }
         catch { Write-Host "   (시작 메뉴 바로가기는 만들지 못했습니다 — 도우미는 그대로 켭니다: $($_.Exception.Message))" -ForegroundColor Yellow }
         Start-Process $exe

@@ -83,7 +83,13 @@ jobs:
           if ($env:NODE_CASE -eq 'no') { Check (Test-Path (Join-Path $dir 'node\node.exe')) '휴대용 Node 받음' }
           $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).'th-korean-line-helper'
           Check ($run -and $run.Contains($env:EXE_NAME)) '윈도우 켤 때 같이 켜기'
-          Check (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) $env:LNK_NAME)) '시작 메뉴 바로가기'
+          # 바로가기가 있고, 정말 번역도우미.exe 를 가리키는지(가상 PC 는 영어 윈도우 — 한글 이름·대상이 깨지지 않았나)
+          $programs = [Environment]::GetFolderPath('Programs')
+          $target = $null
+          try { $target = (New-Object -ComObject Shell.Application).Namespace($programs).ParseName($env:LNK_NAME).GetLink.Path } catch { }
+          Write-Host "바로가기 대상: $target"
+          Check ($target -and $target -eq (Join-Path $dir $env:EXE_NAME)) '시작 메뉴 바로가기(번역도우미.exe 를 가리킴)'
+          Check (-not (Test-Path (Join-Path $programs 'th-korean-helper.lnk'))) '임시 영어 이름 바로가기는 남지 않음'
 
           # 도우미가 켜져 이 PC 안의 통로(127.0.0.1:38291)에 답하는지
           $up = $null

@@ -38,6 +38,7 @@ function load(opt = {}) {
   const store = { myLang: opt.myLang || 'ko', ...(opt.store || {}) };
   if (opt.config) store.remoteConfig = { text: typeof opt.config === 'string' ? opt.config : JSON.stringify(opt.config), at: Date.now() };
   const requests = [];
+  const calls = []; // { method, url, headers, data } — 가짜 서버 시험이 요청 꼴을 본다
   const glossaryText = opt.glossary || '';
 
   const timers = [];
@@ -85,18 +86,27 @@ function load(opt = {}) {
     GM_addStyle: noop, GM_registerMenuCommand: noop, GM_openInTab: noop,
     GM_xmlhttpRequest: (o) => {
       requests.push(o.url);
+      calls.push({ method: o.method || 'GET', url: o.url, headers: o.headers || {}, data: o.data });
       let text;
       let status = 200;
+      let delay = 0; // { delay: ms } — 이 답만 늦게(받는 중에 다른 일이 끼는 경우를 만든다)
+      // opt.http(url, 요청) 이 먼저 — 글(200) 또는 { status, text } 를 돌려주면 그 답, undefined 면 아래 기본 길.
+      const own = opt.http ? opt.http(o.url, o) : undefined;
+      if (own !== undefined) {
+        if (own === null) text = null;
+        else if (typeof own === 'object') ({ status = 200, text, delay = 0 } = own);
+        else text = own;
+      }
       // opt.glossaryFiles = { 'glossary-vi.txt': 글, … } 이면 파일 이름으로 고른다(없으면 glossary 글)
-      if (/th-korean-glossary/.test(o.url)) {
+      else if (/th-korean-glossary/.test(o.url)) {
         const file = decodeURIComponent((o.url.split('?')[0].match(/\/([^/]+\.txt)$/) || [])[1] || '');
         text = opt.glossaryFiles && file in opt.glossaryFiles ? opt.glossaryFiles[file] : glossaryText;
       }
       else if (/translate\.googleapis\.com/.test(o.url)) {
         const r = mtReply(o.url);
         if (r) ({ status, text } = r);
-      } else if (opt.http) text = opt.http(o.url);
-      queueMicrotask(() => {
+      }
+      (delay ? (fn) => setTimeout(fn, delay) : queueMicrotask)(() => { // 늦춘 답은 시험이 기다리는 동안 살아 있게(unref 아님)
         if (text == null) o.onerror && o.onerror({ status: 0, error: 'test: 네트워크 없음' });
         else o.onload && o.onload({ status, responseText: text, responseHeaders: '', finalUrl: o.url });
       });
@@ -116,6 +126,10 @@ function load(opt = {}) {
     sessionStorage: { getItem: () => null, setItem: noop, removeItem: noop },
     localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
     requestAnimationFrame: noop,
+    atob: (s) => Buffer.from(String(s), 'base64').toString('latin1'),
+    btoa: (s) => Buffer.from(String(s), 'latin1').toString('base64'),
+    // 창의 fetch(Vision 이 쓴다): opt.fetch(url, init) → { ok, status, json } 흉내. 없으면 네트워크 없음.
+    fetch: async (url, init = {}) => { calls.push({ method: init.method || 'GET', url: String(url), headers: init.headers || {}, data: init.body, via: 'fetch' }); if (!opt.fetch) throw new TypeError('test: 네트워크 없음'); return opt.fetch(String(url), init); },
   };
   // 확장처럼(extension/src/gm.js) 큰 값은 미리 안 읽고 GM_lazyGet 으로 읽는 판. 무엇을 읽었는지 lazyReads 에 남는다.
   const lazyReads = [];
@@ -146,7 +160,7 @@ function load(opt = {}) {
   vm.createContext(sb);
   script().runInContext(sb);
   if (typeof sb.__peek !== 'function') throw new Error('스크립트를 불러오지 못함(__peek 없음)');
-  return { peek: sb.__peek, store, requests, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb };
+  return { peek: sb.__peek, store, requests, calls, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb };
 }
 
 module.exports = { load, ROOT, SCRIPT };

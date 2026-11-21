@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.6
+// @version      1.35.7
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1064,6 +1064,7 @@
   // 받기에 실패하면 1분은 오래된 사본으로 그냥 쓴다. 쇼츠를 넘길 때마다·번역 묶음마다 다시 받으려 해서 실패가
   // 수십 줄 쌓였다(2026-11-01). 사본이 아예 없을 때(처음 설치)와 설정 창의 '새로 받기' 는 그대로 받는다.
   let glossaryFailedAt = 0;
+  let glossarySaveSeq = 0; // 이 PC 에서 GitHub 에 저장할 때마다 오른다(refreshGlossary 가 저장 전 판으로 덮어쓰지 않게)
   const GLOSSARY_RETRY_MS = 60 * 1000;
 
   function parsedGlossary() {
@@ -1084,12 +1085,18 @@
     if (glossaryLoading) return glossaryLoading;
     glossaryLoading = (async () => {
       await glossaryStoreLoad(); // 가진 판(ETag)을 알아야 304 로 받는다
+      // 받는 사이에 이 PC 에서 단어를 저장했으면(saveGlossaryToGitHub — glossarySaveSeq 가 오른다) 받은 것은 저장 전 판이다 —
+      // 덮어쓰지 않는다. 2026-11-22 시험: 쇼핑몰을 열자마자 저장하면 페이지가 시작한 새로 받기가 늦게 끝나 방금 저장한 단어를 지웠다.
+      // (시각으로 가르면 같은 밀리초에 일어난 저장을 놓쳤다 — 번호로 가른다.)
+      const seqAtStart = glossarySaveSeq;
+      const savedMeanwhile = () => glossarySaveSeq !== seqAtStart;
       for (const src of GLOSSARY_SOURCES) {
         try {
           const headers = { ...(src.headers || {}) };
           const conditional = src === GLOSSARY_SOURCES[0] && glossaryStore && glossaryStore.etag;
           if (conditional) headers['If-None-Match'] = glossaryStore.etag;
           const res = await requestFull({ method: 'GET', url: src.url, headers, timeout: 8000 });
+          if (savedMeanwhile()) return true;
           if (res.status === 304 && conditional) {
             glossaryStore = { ...glossaryStore, at: Date.now(), ver: SCRIPT_VERSION }; // 그대로다
             GM_setValue(GLOSSARY_STORE, glossaryStore);
@@ -1326,10 +1333,12 @@
       }
       if (file !== GLOSSARY_FILE) {
         // 다른 언어 용어집 — 이 PC 의 받아 둔 사본을 바로 바꾼다(다음 입력·메시지부터 쓴다).
+        langSaveSeq.set(file, (langSaveSeq.get(file) || 0) + 1);
         GM_setValue(`langGlossary:${file}`, { text: merged.text, at: Date.now() });
         langGlossaryMaps.delete(file);
         return merged;
       }
+      glossarySaveSeq++;
       glossaryStore = { text: merged.text, at: Date.now(), ver: SCRIPT_VERSION, etag: null };
       GM_setValue(GLOSSARY_STORE, glossaryStore);
       glossaryParsed = parseGlossary(merged.text);
@@ -6209,6 +6218,7 @@
   // 파일 하나와 config.json 한 줄이면 된다(코드는 그대로).
   const LANG_GLOSSARY_TTL = 60 * 60 * 1000;
   const langGlossaryMaps = new Map(); // 파일 → Map(squash(한국어) → 그 언어)
+  const langSaveSeq = new Map(); // 파일 → 이 PC 에서 저장한 횟수(loadLangGlossary 가 저장 전 판으로 덮어쓰지 않게)
 
   // 메신저는 줄 여러 개를 한꺼번에 찾는다 — 같은 파일을 동시에 여러 번 받지 않게 받는 중인 것을 나눠 쓴다.
   const langGlossaryLoading = new Map();
@@ -6223,15 +6233,20 @@
     const key = `langGlossary:${file}`;
     let store = await gmLazyGet(key, null); // 확장은 탭마다 미리 읽지 않는다(glossaryStoreLoad 위 설명)
     if (!store || Date.now() - store.at > LANG_GLOSSARY_TTL) {
+      const seqAtStart = langSaveSeq.get(file) || 0;
       try {
         const text = await request({
           method: 'GET',
           url: `https://raw.githubusercontent.com/${GLOSSARY_REPO}/main/${file}`,
           timeout: 8000,
         });
-        store = { text: String(text || ''), at: Date.now() };
-        GM_setValue(key, store);
-        langGlossaryMaps.delete(file);
+        // 받는 사이에 이 PC 에서 이 파일에 저장했으면 받은 것은 저장 전 판 — 저장한 사본을 쓴다(refreshGlossary 와 같은 까닭)
+        if ((langSaveSeq.get(file) || 0) !== seqAtStart) store = GM_getValue(key, store);
+        else {
+          store = { text: String(text || ''), at: Date.now() };
+          GM_setValue(key, store);
+          langGlossaryMaps.delete(file);
+        }
       } catch {
         if (!store) return null; // 처음인데 못 받았다 — 이번엔 구글 번역만
       }

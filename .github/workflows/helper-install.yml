@@ -4,6 +4,10 @@
 # Node.js 가 있는 PC 와 없는 PC(휴대용 Node 를 받는 길) 둘 다. 설치 뒤 확인: 파일·exe·시작 프로그램·시작 메뉴·크롬 연결·
 # 링크(th-korean-helper://) 등록, 도우미가 켜져 127.0.0.1:38291 에 답하는지, 화면 자막 그림 한 장을 실제로 읽는지.
 # 백신(알약 등)이 직접 만든 exe 를 의심하는 것은 여기서 볼 수 없다 — 스토어 올리기 전 손 확인표에.
+#
+# 주의: 설치 단계는 사용자처럼 윈도우 PowerShell 5.1(shell: powershell)로 돈다. 5.1 은 GitHub 이 BOM 없이 쓴 스크립트 파일의
+# 한글을 깨뜨려 읽고, 깨진 글자 일부를 따옴표로 보아 문법 오류가 났다(2026-11-22 첫 실행) — 그 단계 코드에는 한글을 쓰지 않는다
+# (한글 이름은 환경 변수로). 확인 단계는 PowerShell 7(shell: pwsh)이라 한글을 바르게 읽는다.
 name: 번역 도우미 새 PC 설치 시험
 
 on:
@@ -35,7 +39,7 @@ jobs:
       - name: 저장소 받기 (시험용 자막 그림)
         uses: actions/checkout@v4
 
-      - name: 사용자처럼 한 줄 설치
+      - name: 사용자처럼 한 줄 설치 (윈도우 PowerShell 5.1)
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,32 +47,31 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:NODE_CASE -eq 'no') {
-            # Node 가 없는 PC 흉내 — node.exe 가 든 폴더를 PATH 에서 뺀다(설치가 휴대용 Node 를 받아야 한다)
+            # A PC without Node.js: drop every PATH folder that holds node.exe (install must fetch portable Node)
             $env:Path = ($env:Path -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'node.exe')) }) -join ';'
-            if (Get-Command node.exe -ErrorAction SilentlyContinue) { throw 'node.exe 를 숨기지 못함' }
-            Write-Host 'Node 숨김'
+            if (Get-Command node.exe -ErrorAction SilentlyContinue) { throw 'could not hide node.exe' }
+            Write-Host 'node.exe hidden'
           }
-          # 가상 PC 들이 IP 를 나눠 써서 토큰 없는 GitHub API(시간당 60번)가 모자랄 수 있다 — GitHub API 부르기에만 토큰을 붙인다.
-          # 설치 스크립트는 그대로 쓴다(함수가 같은 이름의 명령보다 먼저 불린다).
+          # Runners share IPs, so the anonymous GitHub API limit (60/h) can run out. Add the token to api.github.com calls only.
+          # The install script itself is used as is (a function wins over the cmdlet of the same name).
           function Invoke-RestMethod {
             param([Parameter(Position = 0)][string]$Uri, [hashtable]$Headers = @{})
             $h = @{} + $Headers
             if ($Uri -like 'https://api.github.com/*') { $h['Authorization'] = "Bearer $env:GH_TOKEN" }
             Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $Uri -Headers $h -UseBasicParsing
           }
-          # 이 커밋의 설치 스크립트(raw main 은 올린 뒤 몇 분 옛것을 줄 수 있다). 내용은 main 과 같다.
+          # install.ps1 of this commit (raw main can be a few minutes stale right after a push); same content as main
           $src = Microsoft.PowerShell.Utility\Invoke-RestMethod "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/line-helper/install.ps1" -UseBasicParsing
           Invoke-Expression $src
 
       - name: 설치 확인
-        shell: powershell
+        shell: pwsh
         env:
           NODE_CASE: ${{ matrix.node }}
           EXE_NAME: 번역도우미.exe
           PROC_NAME: 번역도우미
           LNK_NAME: 번역 도우미.lnk
         run: |
-          [Console]::OutputEncoding = [Text.Encoding]::UTF8
           $dir = Join-Path $env:LOCALAPPDATA 'th-korean-helper'
           $script:fail = @()
           function Check($ok, $what) {
@@ -85,20 +88,20 @@ jobs:
           # 도우미가 켜져 이 PC 안의 통로(127.0.0.1:38291)에 답하는지
           $up = $null
           for ($i = 0; $i -lt 45 -and -not $up; $i++) {
-            try { $up = Invoke-RestMethod 'http://127.0.0.1:38291/caption' -TimeoutSec 3 -UseBasicParsing } catch { Start-Sleep -Seconds 2 }
+            try { $up = Invoke-RestMethod 'http://127.0.0.1:38291/caption' -TimeoutSec 3 } catch { Start-Sleep -Seconds 2 }
           }
           Check ($up -and $up.ocr -eq 1) '도우미가 켜져 답함(127.0.0.1:38291)'
           Check ($null -ne (Get-Process -Name $env:PROC_NAME -ErrorAction SilentlyContinue)) '도우미 프로세스'
           Check (Test-Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.th_korean.helper') '크롬 연결 등록(네이티브 메시징)'
           Check (Test-Path 'HKCU:\Software\Classes\th-korean-helper') 'th-korean-helper:// 링크 등록'
 
-          # 화면 자막 그림 한 장 읽기 — 엔진 + Tesseract + 영어 모델(처음엔 내려받아 오래 걸린다)
-          # 파일 그대로 보낸다(엔진은 모르는 칸 truth 를 본 체 안 한다). 내용은 확장이 보내는 꼴: w·h·vh·rows·core·n·px·langs
+          # 화면 자막 그림 한 장 읽기 — 엔진 + Tesseract + 영어 모델(처음엔 내려받아 오래 걸린다).
+          # 파일 그대로 보낸다(엔진은 모르는 칸 truth 를 보지 않는다). 확장이 보내는 꼴: w·h·vh·rows·core·n·px·langs
           $body = [IO.File]::ReadAllBytes((Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\hardsub-en-white.json'))
           $ans = $null
           for ($i = 0; $i -lt 12; $i++) {
             try {
-              $ans = Invoke-RestMethod 'http://127.0.0.1:38291/ocr' -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 30 -UseBasicParsing
+              $ans = Invoke-RestMethod 'http://127.0.0.1:38291/ocr' -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 30
               if ($ans.ocr -eq 1) { break }
               Write-Host "아직: $($ans | ConvertTo-Json -Compress)"
             } catch { Write-Host "아직: $($_.Exception.Message)" }
@@ -112,7 +115,7 @@ jobs:
 
       - name: 실패하면 도우미 기록 모으기
         if: failure()
-        shell: powershell
+        shell: pwsh
         run: |
           $out = Join-Path $env:GITHUB_WORKSPACE 'helper-logs'
           New-Item -ItemType Directory -Force $out | Out-Null

@@ -66,8 +66,14 @@
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw '번역도우미.exe 를 만들지 못했습니다' }
 
         Write-Host '5/5 윈도우 켤 때 같이 켜기 · 시작 메뉴 바로가기…'
-        Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'th-korean-line-helper' -Value "`"$exe`""
-        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) '번역 도우미.lnk'))
+        # 막 만든 윈도우 사용자에게는 Run 키가 아직 없다 — 없을 때만 만든다(있는 키에 New-Item -Force 를 하면 다른 프로그램의
+        # 시작 등록까지 지워질 수 있다). 2026-11-22 깨끗한 윈도우 설치 시험(GitHub Actions)에서 여기서 멈춰 도우미가 안 켜졌다.
+        $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        if (-not (Test-Path $runKey)) { New-Item -Path $runKey | Out-Null }
+        Set-ItemProperty $runKey -Name 'th-korean-line-helper' -Value "`"$exe`""
+        $programs = [Environment]::GetFolderPath('Programs')
+        if (-not (Test-Path $programs)) { New-Item -ItemType Directory -Force $programs | Out-Null }
+        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs '번역 도우미.lnk'))
         $lnk.TargetPath = $exe
         $lnk.WorkingDirectory = $dir
         $lnk.Save()

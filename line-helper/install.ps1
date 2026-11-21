@@ -71,12 +71,18 @@
         $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
         if (-not (Test-Path $runKey)) { New-Item -Path $runKey | Out-Null }
         Set-ItemProperty $runKey -Name 'th-korean-line-helper' -Value "`"$exe`""
-        $programs = [Environment]::GetFolderPath('Programs')
-        if (-not (Test-Path $programs)) { New-Item -ItemType Directory -Force $programs | Out-Null }
-        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs '번역 도우미.lnk'))
-        $lnk.TargetPath = $exe
-        $lnk.WorkingDirectory = $dir
-        $lnk.Save()
+        # 시작 메뉴 바로가기는 없어도 도우미는 돈다 — 만들지 못해도 알리기만 하고 도우미는 켠다(전에는 여기서 설치가 멈춰
+        # 도우미가 켜지지 않았다 — 2026-11-22 깨끗한 윈도우 시험: 'Value does not fall within the expected range').
+        try {
+            $programs = [Environment]::GetFolderPath('Programs')
+            if (-not $programs) { $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
+            if (-not (Test-Path $programs)) { New-Item -ItemType Directory -Force $programs | Out-Null }
+            $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs '번역 도우미.lnk'))
+            $lnk.TargetPath = $exe
+            $lnk.WorkingDirectory = $dir
+            $lnk.Save()
+        }
+        catch { Write-Host "   (시작 메뉴 바로가기는 만들지 못했습니다 — 도우미는 그대로 켭니다: $($_.Exception.Message))" -ForegroundColor Yellow }
         Start-Process $exe
 
         Write-Host ''
@@ -87,5 +93,7 @@
     }
     catch {
         Write-Host "설치 실패: $($_.Exception.Message)" -ForegroundColor Red
+        # 어느 줄에서 멈췄는지 — 사용자가 이 화면을 보내 주면 원인을 바로 안다
+        Write-Host ($_.InvocationInfo.PositionMessage) -ForegroundColor DarkGray
     }
 }

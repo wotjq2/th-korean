@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.0
+// @version      1.35.1
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -418,6 +418,34 @@
     shops: {}, // 검색 가로채기 사이트(라자다·쇼피 칸 고치기, 새 쇼핑몰 더하기) — SITES 참고
   };
 
+  // 자막(영상 자막 파일·화면에 박힌 자막)을 구글에 넘기기 전에 바꿔 둘 말 — 언어(구글 코드 앞부분)마다 [찾을 말(정규식), 바꿀 말].
+  // 사용자(2026-11-21, 대만 틱톡 @kobebelabronnron/7699146548193627413 '번역이 매우 이상해'): 대만말 욕·속어를 구글이 글자
+  // 그대로 옮겼다(比我懶覺還小欸 → '내가 게을러지면 그 사람은 나보다 어려' — 懶覺 은 대만말로 남자 성기, 표준어 老二 로 바꾸면
+  // '내 거시기보다 작네'), 맥도날드 麥香魚(필레오피시)는 '물고기'(麥香魚堡 → '피시버거'), 화면 글자 인식은 麥 을 膺 으로 읽었다.
+  // 바꿀 말은 모두 구글에 넣어 보고 고른 것. config.json 의 subPrep 으로 더할 수 있다(스토어 심사 없이) — 이 표 뒤에 붙는다.
+  const SUB_PREP_DEFAULT = {
+    zh: [
+      // 글자 인식 실수(번체 모델): 麥 → 膺
+      ['膺(?=香魚|香雞|香鱼|香鸡|當勞|当劳|克)', '麥'],
+      // 상표·메뉴
+      // 麥香魚 홀로는 '물고기', 麥香魚堡 홀로는 '물고기 요새' — 漢堡 를 붙이면 '맥피시 버거'
+      ['麥香魚(?:堡|漢堡)?', '麥香魚漢堡'], ['麦香鱼(?:堡|汉堡)?', '麦香鱼汉堡'], ['麥香雞(?:堡|漢堡)?', '麥香雞漢堡'], ['麦香鸡(?:堡|汉堡)?', '麦香鸡汉堡'],
+      ['大麥克', '巨無霸'], ['麥當當', '麥當勞'], ['麦当当', '麦当劳'],
+      // 대만말(민남어) 욕·속어
+      // 睡懶覺(늦잠)은 그대로 — 懶覺 앞에 睡 가 있으면 늦잠이다.
+      ['(?<!睡)(?:懶|卵|懒)(?:覺|叫|鳥|觉|鸟)', '老二'], ['(?:懶|卵|懒)(?:趴|葩|脬)', '睪丸'],
+      ['(?:幹|姦|擊|干)你(?:娘|老師|老木|老母)的?', '他媽的'], ['看你娘的?', '他媽的'], ['幹(?=[，,!！？? ]|$)', '他媽的'],
+      // 홑 '你娘'(욕) — 뒤에 這·啦 같은 말이나 문장 끝이 올 때만(你娘在家嗎 '너희 엄마 집에 계셔?' 는 그대로)
+      ['(?<![他她我妳的])你娘(?=[這这啦咧嘞喔哦，,！!？? ]|$)', '他媽的'],
+      ['(?:靠|哭)(?:北|杯|夭|么|腰|邀)', '靠'], ['三小', '什麼鬼'], ['北七|北爛|北七仔', '白痴'],
+      ['(很|超|有夠|真)(?:機掰|雞掰|機歪|機八)', '$1討厭'], ['機掰|雞掰|機歪|機八', '王八蛋'],
+      ['母湯', '不行'], ['歹勢', '不好意思'], ['(?:甲|呷|吃)賽', '吃屎'], ['哩賀|哩厚', '你好'], ['醬子', '這樣子'],
+      // 중국 인터넷 속어
+      ['草泥馬|草泥马|操你媽|操你妈|艹你妈', '他妈的'], ['(?:yyds|YYDS)', '最棒的'], ['绝绝子|絕絕子', '太绝了'],
+      ['(?<![0-9])666+(?![0-9])', '太厉害了'], ['老六', '阴险的家伙'], ['芭比[Qq]了', '完蛋了'], ['栓[Qq]', '谢谢你，无语了'],
+    ],
+  };
+
   const rcNum = (v, d, min, max) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d);
   const rcStr = (v, d, re) => (typeof v === 'string' && v.length <= 300 && (!re || re.test(v)) ? v : d);
   // 선택자는 문법이 맞는지만 본다(페이지 쪽 엔진에는 document 가 없다 — 그때는 글자만 본다).
@@ -557,7 +585,37 @@
       },
       ocr: { lang: rcStr(j.ocr && j.ocr.lang, D.ocr.lang, /^[a-z_]{3,10}(\+[a-z_]{3,10}){0,3}$/) },
       shops: rcShops(j.shops),
+      subPrep: rcSubPrep(j.subPrep),
     };
+  }
+
+  // 자막 바꿀 말: 기본 표 + config.json subPrep { 'zh': [['찾을 말', '바꿀 말'], …] }(뒤에 붙는다). 틀린 정규식·너무 긴 것은 버린다.
+  function rcSubPrep(extra) {
+    const out = {};
+    const add = (lang, list) => {
+      if (!/^[a-z]{2,3}$/.test(lang) || !Array.isArray(list)) return;
+      for (const e of list.slice(0, 300)) {
+        if (!Array.isArray(e) || typeof e[0] !== 'string' || typeof e[1] !== 'string' || !e[0] || e[0].length > 120 || e[1].length > 120) continue;
+        try {
+          (out[lang] = out[lang] || []).push([new RegExp(e[0], 'gu'), e[1]]);
+        } catch {
+          /* 이 브라우저가 모르는 정규식 — 버린다 */
+        }
+      }
+    };
+    for (const [lang, list] of Object.entries(SUB_PREP_DEFAULT)) add(lang, list);
+    if (extra && typeof extra === 'object' && !Array.isArray(extra)) for (const [lang, list] of Object.entries(extra)) add(lang, list);
+    return out;
+  }
+
+  // 자막 한 줄을 그 언어의 표로 바꾼다. 광둥어(yue)·번체(zh-TW)도 중국어(zh) 표를 쓴다.
+  function subPrep(text, lang) {
+    const base = String(lang || '').split('-')[0].toLowerCase();
+    const rules = RC.subPrep[base === 'yue' ? 'zh' : base];
+    if (!rules || !text) return text;
+    let t = String(text);
+    for (const [re, to] of rules) t = t.replace(re, to);
+    return t;
   }
 
   let rcStore = GM_getValue(RC_STORE, null);
@@ -6354,6 +6412,11 @@
     const ask = [];
     for (const s of batch) {
       s.tried = true;
+      // 태국어 밖의 자막: 속어·욕·상표를 구글이 아는 말로(SUB_PREP — 태국어는 아래 chatPrepThai 가 맡는다).
+      if (d.lang !== 'th') {
+        const p = subPrep(s.src, d.from || d.lang);
+        if (p !== s.src) s.prep = p;
+      }
       // 이미 내 언어인 자막은 옮기지 않는다(히브리어 iw·필리핀어 fil 처럼 유튜브 코드가 다른 언어도 — YT_MY_RE).
       if (d.lang && YT_MY_RE.test(d.lang)) {
         s.ko = s.src;
@@ -6935,7 +6998,7 @@
       const lang = ttLang(cap);
       // 번역은 저장해 두는 번역(cache)에 남는다 — 그 영상을 틀면 dubTranslate 가 바로 꺼내 쓴다. 태국어는 다듬기를 거쳐
       // 다른 글로 묻기 때문에 미리 옮기지 않는다(용어집이라 빠르다).
-      if (cues.length && !ttMine(lang) && !(MY_KO && lang === 'th')) await translateToKorean(ttSentences(cues).map((s) => s.src), lang);
+      if (cues.length && !ttMine(lang) && !(MY_KO && lang === 'th')) await translateToKorean(ttSentences(cues).map((s) => subPrep(s.src, lang)), lang);
     } catch {
       /* 그 영상을 틀 때 다시 받는다 */
     } finally {
@@ -8309,7 +8372,8 @@
   // 화면 자막 한 줄 옮기기. 한 줄이라 설정(translate.order)의 차례대로 gtx 주소부터 묻는다 — 처음 보는 문장을 옮기는 데
   // gtx 는 0.4~0.6초, translateToKorean 이 먼저 쓰는 dict-chrome-ex(여러 줄 묶음용)는 0.9~1.5초였다(2026-11-20 잰 값).
   // 드라마 자막은 1~2초면 바뀌어, 그 1초 때문에 번역이 줄이 사라진 뒤에 와서 아예 못 보이는 일이 많았다.
-  async function hsTranslate(text, from) {
+  async function hsTranslate(text, from, lang = from) {
+    text = subPrep(text, lang); // 속어·욕·상표·글자 인식 실수를 구글이 아는 말로(아래 SUB_PREP)
     if (MY_KO && usesAI(cfg.pageEngine) && aiKey()) return (await translateToKorean([text], from))[0] || '';
     const hit = cacheGet(text, MY);
     if (hit) return hit;
@@ -8394,7 +8458,7 @@
             }
             try {
               // 로마자 언어는 원문 언어를 알려 준다 — 짧은 줄은 구글이 다른 로마자 언어로 잘못 알아보기도 한다
-              ko = await hsTranslate(j.text, HS_LATIN.has(from) ? from : 'auto');
+              ko = await hsTranslate(j.text, HS_LATIN.has(from) ? from : 'auto', from);
             } catch {
               ko = '';
             }

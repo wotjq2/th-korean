@@ -63,6 +63,15 @@ node --test "tests/browser/*.test.js"
 망가뜨린 사본으로도 본다: `$env:TEST_SCRIPT = "사본.js"; node --test "tests/browser/*.test.js"` (시험용 빌드가 그 사본으로 만든다).
 2026-11-21: 베트남 쇼피 빼기 → 베트남 2개 실패, 단추 자리 저장 빼기 → 단추 시험 실패. 원본은 두 번 다 통과.
 
+## 번역 도우미 새 PC 설치 시험 (GitHub Actions)
+
+`.github/workflows/helper-install.yml` — 매번 새로 만들어지는 깨끗한 윈도우 가상 PC 에서 사용자가 쓰는 한 줄 설치
+(`irm …/line-helper/install.ps1 | iex`)를 그대로 돌린다. Node.js 가 있는 PC·없는 PC(휴대용 Node 받기) 둘 다.
+확인: 파일·글자 읽기 모듈·exe·시작 프로그램·시작 메뉴·크롬 연결·`th-korean-helper://` 등록, 도우미가 켜져 127.0.0.1:38291 에
+답하는지, `tests/fixtures/hardsub-en-white.json`(직접 만든 배경의 영어 자막 그림)을 실제로 읽는지.
+`line-helper/` 를 고쳐 main 에 올리면 저절로 돌고, GitHub 의 Actions 탭에서 손으로도 돌린다(공개 저장소라 무료, 비공개 사본에서는 쉰다).
+백신(알약 등) 경고는 여기서 볼 수 없다.
+
 ## 앞으로
 
 - 2단계 더하기: 메신저(가짜 편집기가 바깥 코드를 받지 않게 만들어야 함), 유튜브·틱톡 흉내 페이지. 재료는 이 PC 의 `.dev-tools/harness-archive/`.

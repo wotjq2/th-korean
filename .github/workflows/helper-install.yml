@@ -1,0 +1,128 @@
+# 번역 도우미 — 새 PC 설치 시험.
+# 매번 새로 만들어지는 깨끗한 윈도우(GitHub 의 가상 PC)에서 사용자가 쓰는 한 줄 설치를 그대로 돌린다:
+#   irm https://raw.githubusercontent.com/wotjq2/th-korean/main/line-helper/install.ps1 | iex
+# Node.js 가 있는 PC 와 없는 PC(휴대용 Node 를 받는 길) 둘 다. 설치 뒤 확인: 파일·exe·시작 프로그램·시작 메뉴·크롬 연결·
+# 링크(th-korean-helper://) 등록, 도우미가 켜져 127.0.0.1:38291 에 답하는지, 화면 자막 그림 한 장을 실제로 읽는지.
+# 백신(알약 등)이 직접 만든 exe 를 의심하는 것은 여기서 볼 수 없다 — 스토어 올리기 전 손 확인표에.
+name: 번역 도우미 새 PC 설치 시험
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'line-helper/**'
+      - '.github/workflows/helper-install.yml'
+      - 'tests/fixtures/hardsub-en-white.json'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    # 비공개 사본 저장소(같은 커밋을 받는다)에서는 돌리지 않는다 — 공개 저장소의 Actions 는 무료다.
+    if: github.repository == 'wotjq2/th-korean'
+    name: 깨끗한 윈도우 (Node ${{ matrix.label }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { node: 'yes', label: '있음' }
+          - { node: 'no', label: '없음' }
+    steps:
+      - name: 저장소 받기 (시험용 자막 그림)
+        uses: actions/checkout@v4
+
+      - name: 사용자처럼 한 줄 설치
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_CASE: ${{ matrix.node }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:NODE_CASE -eq 'no') {
+            # Node 가 없는 PC 흉내 — node.exe 가 든 폴더를 PATH 에서 뺀다(설치가 휴대용 Node 를 받아야 한다)
+            $env:Path = ($env:Path -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'node.exe')) }) -join ';'
+            if (Get-Command node.exe -ErrorAction SilentlyContinue) { throw 'node.exe 를 숨기지 못함' }
+            Write-Host 'Node 숨김'
+          }
+          # 가상 PC 들이 IP 를 나눠 써서 토큰 없는 GitHub API(시간당 60번)가 모자랄 수 있다 — GitHub API 부르기에만 토큰을 붙인다.
+          # 설치 스크립트는 그대로 쓴다(함수가 같은 이름의 명령보다 먼저 불린다).
+          function Invoke-RestMethod {
+            param([Parameter(Position = 0)][string]$Uri, [hashtable]$Headers = @{})
+            $h = @{} + $Headers
+            if ($Uri -like 'https://api.github.com/*') { $h['Authorization'] = "Bearer $env:GH_TOKEN" }
+            Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $Uri -Headers $h -UseBasicParsing
+          }
+          # 이 커밋의 설치 스크립트(raw main 은 올린 뒤 몇 분 옛것을 줄 수 있다). 내용은 main 과 같다.
+          $src = Microsoft.PowerShell.Utility\Invoke-RestMethod "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/line-helper/install.ps1" -UseBasicParsing
+          Invoke-Expression $src
+
+      - name: 설치 확인
+        shell: powershell
+        env:
+          NODE_CASE: ${{ matrix.node }}
+          EXE_NAME: 번역도우미.exe
+          PROC_NAME: 번역도우미
+          LNK_NAME: 번역 도우미.lnk
+        run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $dir = Join-Path $env:LOCALAPPDATA 'th-korean-helper'
+          $script:fail = @()
+          function Check($ok, $what) {
+            if ($ok) { Write-Host "OK   $what" -ForegroundColor Green } else { Write-Host "FAIL $what" -ForegroundColor Red; $script:fail += $what }
+          }
+          Check (Test-Path (Join-Path $dir 'engine.js')) '프로그램 파일(engine.js)'
+          Check (Test-Path (Join-Path $dir 'node_modules\tesseract.js')) '글자 읽기 모듈(tesseract.js)'
+          Check (Test-Path (Join-Path $dir $env:EXE_NAME)) 'exe 만들어짐'
+          if ($env:NODE_CASE -eq 'no') { Check (Test-Path (Join-Path $dir 'node\node.exe')) '휴대용 Node 받음' }
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).'th-korean-line-helper'
+          Check ($run -and $run.Contains($env:EXE_NAME)) '윈도우 켤 때 같이 켜기'
+          Check (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) $env:LNK_NAME)) '시작 메뉴 바로가기'
+
+          # 도우미가 켜져 이 PC 안의 통로(127.0.0.1:38291)에 답하는지
+          $up = $null
+          for ($i = 0; $i -lt 45 -and -not $up; $i++) {
+            try { $up = Invoke-RestMethod 'http://127.0.0.1:38291/caption' -TimeoutSec 3 -UseBasicParsing } catch { Start-Sleep -Seconds 2 }
+          }
+          Check ($up -and $up.ocr -eq 1) '도우미가 켜져 답함(127.0.0.1:38291)'
+          Check ($null -ne (Get-Process -Name $env:PROC_NAME -ErrorAction SilentlyContinue)) '도우미 프로세스'
+          Check (Test-Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.th_korean.helper') '크롬 연결 등록(네이티브 메시징)'
+          Check (Test-Path 'HKCU:\Software\Classes\th-korean-helper') 'th-korean-helper:// 링크 등록'
+
+          # 화면 자막 그림 한 장 읽기 — 엔진 + Tesseract + 영어 모델(처음엔 내려받아 오래 걸린다)
+          # 파일 그대로 보낸다(엔진은 모르는 칸 truth 를 본 체 안 한다). 내용은 확장이 보내는 꼴: w·h·vh·rows·core·n·px·langs
+          $body = [IO.File]::ReadAllBytes((Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\hardsub-en-white.json'))
+          $ans = $null
+          for ($i = 0; $i -lt 12; $i++) {
+            try {
+              $ans = Invoke-RestMethod 'http://127.0.0.1:38291/ocr' -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 30 -UseBasicParsing
+              if ($ans.ocr -eq 1) { break }
+              Write-Host "아직: $($ans | ConvertTo-Json -Compress)"
+            } catch { Write-Host "아직: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 10
+          }
+          Write-Host "읽은 글: $($ans.text) (확신도 $($ans.conf))"
+          Check ($ans -and $ans.ocr -eq 1 -and $ans.text -match 'get out of here') '화면 자막 그림 읽기(영어)'
+
+          if ($script:fail.Count) { throw "실패 $($script:fail.Count)개: $($script:fail -join ', ')" }
+          Write-Host '모두 통과' -ForegroundColor Green
+
+      - name: 실패하면 도우미 기록 모으기
+        if: failure()
+        shell: powershell
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE 'helper-logs'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $dir = Join-Path $env:LOCALAPPDATA 'th-korean-helper'
+          if (Test-Path $dir) { Get-ChildItem $dir -Recurse -Include *.log, *.txt -ErrorAction SilentlyContinue | Where-Object { $_.Length -lt 5MB } | Copy-Item -Destination $out -ErrorAction SilentlyContinue }
+          Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length | Out-String | Set-Content (Join-Path $out 'files.txt')
+
+      - name: 기록 올리기
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helper-logs-node-${{ matrix.node }}
+          path: helper-logs

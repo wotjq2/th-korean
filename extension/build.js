@@ -152,7 +152,7 @@ async function main() {
     else fs.copyFileSync(file, to);
   }
 
-  for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
+  for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js', 'tt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
   const icons = {};
   for (const s of [16, 32, 48, 128]) {
     fs.copyFileSync(path.join(ICONS, `icon${s}.png`), path.join(OUT, `icon${s}.png`));
@@ -187,6 +187,13 @@ async function main() {
         // 쇼츠 플레이어의 자막(CC) 켜기 — 플레이어 기능은 페이지 쪽에만 있다(src/yt-main.js).
         matches: ['https://www.youtube.com/*', 'https://m.youtube.com/*'],
         js: ['yt-main.js'],
+        run_at: 'document_start',
+        world: 'MAIN',
+      },
+      {
+        // 틱톡이 영상마다 가진 자동 자막(WebVTT) 주소 — 영상 정보 답은 페이지 쪽에서만 보인다(src/tt-main.js).
+        matches: ['https://www.tiktok.com/*'],
+        js: ['tt-main.js'],
         run_at: 'document_start',
         world: 'MAIN',
       },

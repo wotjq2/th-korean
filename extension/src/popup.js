@@ -198,7 +198,7 @@ async function localize() {
   }
 })();
 
-// 검색 Enter 한 번/두 번 — 스크립트 설정 창의 '검색 전 번역된 태국어 확인' 과 같은 값(gm:confirmSearch, 기본 켬).
+// 검색 Enter 한 번/두 번 — 스크립트 설정 창의 '검색 전 바뀐 검색어 확인' 과 같은 값(gm:confirmSearch, 기본 켬).
 // 스크립트가 Enter 때마다 다시 읽어 열린 페이지에도 바로 적용된다.
 chrome.storage.local.get(GM_PREFIX + 'confirmSearch').then((v) => {
   const on = v[GM_PREFIX + 'confirmSearch'];

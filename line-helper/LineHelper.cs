@@ -1521,7 +1521,7 @@ static class App
         kor.Checked = ShowKorean;
         kor.Click += delegate { ShowKorean = !ShowKorean; SaveSettings(); RefreshTray(); };
         menu.Items.Add(kor);
-        ToolStripMenuItem recv = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "LINE 에서 복사한 태국어를 한국어로 보기" : "LINE 에서 복사한 태국어 번역 보기"));
+        ToolStripMenuItem recv = new ToolStripMenuItem(MyLang.T(MyLang.Ko ? "LINE 에서 복사한 외국어를 한국어로 보기" : "LINE 에서 복사한 외국어 번역 보기"));
         recv.Checked = Receive;
         recv.Click += delegate { Receive = !Receive; SaveSettings(); RefreshTray(); };
         menu.Items.Add(recv);

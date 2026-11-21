@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.34.2
-// @description  태국 사이트를 한국어로 검색하고 읽습니다. 상품 사진 속 태국어도 한국어로 바꿔 봅니다. 지원: 라자다, 쇼피, 페이스북 메신저(태국어 메시지 ↔ 한국어), 유튜브·웹 영상 한국어 자막(외국어 영상은 자동) + 목소리 더빙(선택) (다른 태국 사이트에서도 입력칸의 한국어를 태국어로)
+// @version      1.35.0
+// @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
 // @match        https://lazada.co.th/*
@@ -47,7 +47,9 @@
   // 상수
   // ---------------------------------------------------------------------------
 
-  const APP_NAME = '태국 사이트 한국어';
+  // 보이는 이름. 2026-11-21 사용자: 이제 태국어 중심이 아니라 30개 언어 모두가 기준 — 확장 이름(통합 번역)과 같게.
+  // 몽키의 @name 은 업데이트 고리라 그대로 둔다(위 ★).
+  const APP_NAME = '통합 번역';
 
   const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
   const THAI = /[฀-๿]/;
@@ -799,9 +801,12 @@
     searchEngine: 'free',    // 'free' | 'ai'
     autoTranslatePage: true,
     confirmSearch: true,
-    // 메신저에서 한국어 존댓말(~요·~니다)을 태국어로 보낼 때 끝에 붙이는 말. '' 이면 안 붙인다.
+    // 외국어 페이지(30개 언어)에서 입력칸에 쓴 내 말을 그 페이지 언어로 바꾼다. 1.34.2 까지는 태국어 페이지만 그랬다
+    // (2026-11-21 사용자: 태국어에만 되던 것을 모든 언어에). 번역 단추에서 고른 언어가 있으면 그쪽이 먼저.
+    pageLangAuto: true,
+    // 메신저에서 한국어 존댓말(~요·~니다)을 태국어로 보낼 때 끝에 붙이는 말 = 내 성별. '' 이면 안 붙인다.
     chatParticle: 'ครับ',
-    // 메신저의 태국어 말풍선 밑에 한국어. 페이지 번역(pageEngine)을 꺼 두고 크롬 번역을 써도
+    // 메신저의 외국어 말풍선 밑에 한국어(내 언어). 페이지 번역(pageEngine)을 꺼 두고 크롬 번역을 써도
     // 메신저는 따로 켠다 — 크롬 번역은 화면이 한국어인 메신저에선 잘 안 뜬다.
     chatTranslate: true,
     selectionTranslate: true,  // 드래그한 글자만 골라 번역
@@ -976,12 +981,11 @@
   // 토큰은 이 PC 의 Tampermonkey 저장소에만 있고 api.github.com 에만 보낸다.
   // ---------------------------------------------------------------------------
 
-  const GITHUB_API_FILE = `https://api.github.com/repos/${GLOSSARY_REPO}/contents/${GLOSSARY_FILE}`;
   // 새 토큰 화면. 이름·대상·권한을 미리 채워 달라고 주소에 적는다(GitHub 가 모르는 값은 무시한다).
   const GITHUB_TOKEN_URL =
     'https://github.com/settings/personal-access-tokens/new' +
     `?name=${encodeURIComponent('th-korean 용어집')}` +
-    `&description=${encodeURIComponent('태국 사이트 한국어 - 설정 패널에서 용어집 저장')}` +
+    `&description=${encodeURIComponent('통합 번역 - 설정 패널에서 용어집 저장')}` +
     `&target_name=${GLOSSARY_REPO.split('/')[0]}&contents=write`;
 
   // 번역 도우미(line-helper/, 윈도우 프로그램 — LINE PC·아무 창 Ctrl+Alt+K 화면 번역). 크롬은 PC 에 프로그램을
@@ -1090,31 +1094,56 @@
     };
   }
 
+  // 언어마다 용어집 파일 하나. 태국어는 사람이 고른 glossary.txt(config 의 glossary-th-krdict.txt 는 사전이라 거기엔
+  // 넣지 않는다), 다른 언어는 config.json 의 glossary-xx.txt. 설정 창 '용어집' 이 고른 언어의 파일에 저장한다.
+  function glossaryFileOf(lang) {
+    return !lang || lang.id === 'th' ? GLOSSARY_FILE : lang.glossary;
+  }
+  const GLOSSARY_EXAMPLE = {
+    th: 'สำนักงาน', en: 'office', zh: '办公室', 'zh-TW': '辦公室', yue: '辦公室', ja: '事務所', vi: 'văn phòng', id: 'kantor',
+    ms: 'pejabat', tl: 'opisina', es: 'oficina', pt: 'escritório', fr: 'bureau', de: 'Büro', it: 'ufficio', pl: 'biuro',
+    tr: 'ofis', ru: 'офис', mn: 'оффис', ar: 'مكتب', he: 'משרד', hi: 'कार्यालय', km: 'ការិយាល័យ', lo: 'ຫ້ອງການ', my: 'ရုံး',
+  };
+  // 설정 창을 열 때 고를 언어: 메신저면 이 대화방 상대 언어, 쇼핑몰이면 그 나라 말, 외국어 페이지면 그 페이지 언어,
+  // 아니면 번역 단추에서 고른 언어 → 지난번에 고른 언어 → 태국어.
+  function glossaryDefaultLang(list) {
+    const want = [];
+    if (MESSENGER) want.push(chatTarget()?.id);
+    want.push(GENERIC ? genericPageLang : SITE_LANG, typeLang, GM_getValue('glLang', ''), 'th');
+    for (const w of want) {
+      if (!w) continue;
+      const hit = list.find((l) => l.id === w || l.mt === w) || list.find((l) => l.id === String(w).split('-')[0].toLowerCase());
+      if (hit) return hit.id;
+    }
+    return list[0] ? list[0].id : 'th';
+  }
+
   // GitHub 에서 지금 파일을 받아 합친 뒤 커밋한다. 이 PC 에는 바로 반영된다.
-  async function saveGlossaryToGitHub(entries) {
+  async function saveGlossaryToGitHub(entries, file = GLOSSARY_FILE) {
     const token = (cfg.githubToken || '').trim();
     if (!token) throw new Error('GitHub 연결이 필요합니다');
     const headers = githubHeaders(token);
+    const apiFile = `https://api.github.com/repos/${GLOSSARY_REPO}/contents/${file}`;
     for (let attempt = 0; ; attempt++) {
-      const cur = JSON.parse(await request({ method: 'GET', url: `${GITHUB_API_FILE}?ref=main`, headers }));
+      const cur = JSON.parse(await request({ method: 'GET', url: `${apiFile}?ref=main`, headers }));
       // 1MB 가 넘는 파일은 JSON 에 내용이 빠지고 sha 만 온다. 그때는 원문을 따로 받는다.
       const text =
         cur.encoding === 'base64' && cur.content
           ? b64ToUtf8(cur.content)
           : await request({
               method: 'GET',
-              url: `${GITHUB_API_FILE}?ref=main`,
+              url: `${apiFile}?ref=main`,
               headers: { ...headers, Accept: 'application/vnd.github.raw' },
             });
       const merged = mergeIntoGlossary(text, entries);
       if (merged.added.length || merged.changed.length) {
         const names = [...merged.added, ...merged.changed];
         const message =
-          `용어집: ${names.slice(0, 5).join(', ')}` + (names.length > 5 ? ` 외 ${names.length - 5}개` : '');
+          `용어집${file === GLOSSARY_FILE ? '' : ` (${file})`}: ${names.slice(0, 5).join(', ')}` + (names.length > 5 ? ` 외 ${names.length - 5}개` : '');
         try {
           await request({
             method: 'PUT',
-            url: GITHUB_API_FILE,
+            url: apiFile,
             headers: { ...headers, 'Content-Type': 'application/json' },
             data: JSON.stringify({ message, content: utf8ToB64(merged.text), sha: cur.sha, branch: 'main' }),
           });
@@ -1123,6 +1152,12 @@
           if (attempt === 0 && /HTTP 409/.test(e.message)) continue;
           throw e;
         }
+      }
+      if (file !== GLOSSARY_FILE) {
+        // 다른 언어 용어집 — 이 PC 의 받아 둔 사본을 바로 바꾼다(다음 입력·메시지부터 쓴다).
+        GM_setValue(`langGlossary:${file}`, { text: merged.text, at: Date.now() });
+        langGlossaryMaps.delete(file);
+        return merged;
       }
       glossaryStore = { text: merged.text, at: Date.now(), ver: SCRIPT_VERSION, etag: null };
       GM_setValue(GLOSSARY_STORE, glossaryStore);
@@ -3364,11 +3399,98 @@
   let ocrPoolP = null;
   let ocrIdleTimer = null;
 
+  // 사진 글자의 언어 = 이 쇼핑몰(나라)의 말. 1.34.2 까지는 태국어 모델뿐이라 베트남·인도네시아·대만·브라질… 쇼피·라자다의
+  // 상품 사진은 글자를 하나도 못 읽었다(태국어처럼 생긴 줄만 남겼다). 2026-11-21 사용자: 태국어에만 되던 것을 모든 언어에.
+  // 구글 코드 → Tesseract 모델. 여기 없는 언어는 Vision 키가 있을 때만 읽는다.
+  const OCR_TESS = {
+    th: 'tha', en: 'eng', id: 'ind', vi: 'vie', ms: 'msa', tl: 'fil', 'zh-TW': 'chi_tra', yue: 'chi_tra', zh: 'chi_sim',
+    'zh-CN': 'chi_sim', ja: 'jpn', ko: 'kor', pt: 'por', es: 'spa', fr: 'fra', de: 'deu', it: 'ita', pl: 'pol', tr: 'tur',
+    ru: 'rus', uk: 'ukr', mn: 'mon', ar: 'ara', ur: 'urd', he: 'heb', hi: 'hin', mr: 'mar', bn: 'ben', ta: 'tam', te: 'tel',
+    km: 'khm', lo: 'lao', my: 'mya',
+  };
+  const ocrGoogle = () => (OCR_TESS[SITE_LANG] ? SITE_LANG : SITE_LANG2);
+  const ocrModel = () => OCR_TESS[SITE_LANG] || OCR_TESS[SITE_LANG2] || '';
+  const OCR_THAI = () => ocrModel() === 'tha';
+  // 그 언어의 글자(줄을 남길지 볼 때). 로마자 언어는 로마자.
+  const OCR_LATIN = /[A-Za-zÀ-ɏḀ-ỿ]/;
+  const ocrScript = () => (OCR_THAI() ? THAI : SCRIPT_OF[SITE_LANG2] || OCR_LATIN);
+  // 태국어 밖의 모델: 확장은 Tesseract 공식 모델(tessdata_fast, GitHub — 코드가 아닌 자료)을 받아 넘긴다(받은 것은 브라우저가
+  // 보관한다). 몽키판은 CDN 기본 주소.
+  const OCR_DATA_URL = 'https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/';
+  let ocrDataP = null;
+  function ocrModelData(code) {
+    if (!ocrDataP) {
+      ocrDataP = new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: `${OCR_DATA_URL}${code}.traineddata`,
+          responseType: 'arraybuffer',
+          timeout: 60000,
+          onload: (r) => (r.status === 200 && r.response && r.response.byteLength > 100000 ? resolve(new Uint8Array(r.response)) : reject(new Error(`사진 글자 자료(${code})를 받지 못했습니다 (HTTP ${r.status})`))),
+          onerror: () => reject(new Error(`사진 글자 자료(${code})를 받지 못했습니다`)),
+          ontimeout: () => reject(new Error(`사진 글자 자료(${code}) 받기가 너무 오래 걸립니다`)),
+        });
+      }).catch((e) => {
+        ocrDataP = null;
+        throw e;
+      });
+    }
+    return ocrDataP;
+  }
+
+  // 인식기는 모델을 먼저 자기 보관함(이 사이트의 IndexedDB 'keyval-store' › 'keyval', 이름 './<모델>.traineddata')에서
+  // 찾는다. 모델 자료를 직접 넘기는 길(createWorker([{ code, data }]))은 tesseract.js 5.1.1 에서 고장이다(초기화에 이름 대신
+  // 자료를 넘겨 'initialization failed' — 2026-11-21 시험). 그래서 받은 모델을 그 보관함에 먼저 넣어 두고 이름으로 부른다.
+  // 한 번 넣으면 이 사이트에서는 다시 받지 않는다.
+  let ocrPrimeP = null;
+  function ocrIdb(mode, fn) {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('keyval-store');
+      req.onupgradeneeded = () => req.result.createObjectStore('keyval');
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('keyval')) {
+          db.close();
+          return reject(new Error('사진 글자 보관함이 없습니다'));
+        }
+        const tx = db.transaction('keyval', mode);
+        const out = fn(tx.objectStore('keyval'));
+        tx.oncomplete = () => {
+          db.close();
+          resolve(out && 'result' in out ? out.result : undefined);
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error);
+        };
+      };
+    });
+  }
+  function ocrPrime(code) {
+    if (!ocrPrimeP) {
+      const key = `./${code}.traineddata`;
+      ocrPrimeP = (async () => {
+        const have = await ocrIdb('readonly', (st) => st.count(key)).catch(() => 0);
+        if (have) return;
+        const data = await ocrModelData(code);
+        await ocrIdb('readwrite', (st) => st.put(data, key));
+      })().catch((e) => {
+        ocrPrimeP = null;
+        throw e;
+      });
+    }
+    return ocrPrimeP;
+  }
+
   async function makeOcrWorker() {
     // 확장(통합 번역)은 엔진과 태국어 자료를 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다.
-    // 그래서 확장은 넣어 둔 tha 만 읽는다(config.json 의 ocr.lang 은 몽키판에만 듣는다). 몽키판은 CDN.
+    // 그래서 확장은 넣어 둔 tha 를 읽고, 다른 언어는 모델 자료만 받아 넘긴다(config.json 의 ocr.lang 은 몽키판 태국어에만). 몽키판은 CDN.
     const local = typeof GM_extensionURL === 'function';
-    const w = await Tesseract.createWorker(local ? 'tha' : RC.ocr.lang, 1, local ? {
+    const code = ocrModel();
+    const lang = code === 'tha' && !local ? RC.ocr.lang : code;
+    if (local && code !== 'tha') await ocrPrime(code);
+    const w = await Tesseract.createWorker(lang, 1, local ? {
       workerPath: GM_extensionURL('tesseract/worker.min.js'),
       corePath: GM_extensionURL('tesseract'),
       langPath: GM_extensionURL('tesseract'),
@@ -3401,7 +3523,7 @@
   function warmOcr() {
     if (typeof Tesseract === 'undefined') return;
     ocrPool().then(releaseOcrLater, () => {});
-    loadThaiWords();
+    if (OCR_THAI()) loadThaiWords();
   }
 
   function releaseOcrLater() {
@@ -3660,8 +3782,79 @@
       .replace(/ํา/g, 'ำ');
   }
 
+  // 태국어 밖의 언어: 확신 낮은 조각에서 줄을 끊고, 그 언어 글자가 충분하고 엉터리(같은 글자 넷, 모음 없는 로마자 …)가
+  // 아닌 토막만 남긴다. 한자·가나는 붙여 쓰고, 다른 글자는 띄어 쓴다. 이미 내 언어인 줄은 그대로 둔다.
+  const OCR_CJK = /[぀-ヿ㐀-鿿豈-﫿]/;
+  const OCR_VOWELS = /[aeiouyàáâãäåèéêëìíîïòóôõöùúûüýăắằẳẵặấầẩẫậếềểễệốồổỗộơớờởỡợưứừửữự]/gi;
+  function ocrPlausible(text) {
+    const script = ocrScript();
+    const t = text.replace(/\s+/g, '');
+    const mine = [...t].filter((c) => script.test(c)).length;
+    if (mine < (OCR_CJK.test(t) ? 2 : 3) || mine / t.length < 0.5) return false;
+    if (/(.)\1\1\1/u.test(t) || isMyText(text)) return false;
+    if (script === OCR_LATIN) {
+      const words = text.match(/[A-Za-zÀ-ɏḀ-ỿ]+/g) || [];
+      if (!words.some((w) => w.length >= 3)) return false;
+      const letters = words.join('');
+      const vowels = (letters.match(OCR_VOWELS) || []).length / letters.length;
+      if (vowels < 0.2 || vowels > 0.8) return false;
+    }
+    return true;
+  }
+  function ocrRuns(words) {
+    const runs = [];
+    let cur = [];
+    const flush = () => {
+      while (cur.length && !ocrScript().test(cur[0].text)) cur.shift();
+      while (cur.length && !ocrScript().test(cur[cur.length - 1].text)) cur.pop();
+      if (cur.length) runs.push(cur);
+      cur = [];
+    };
+    for (const w of words) {
+      if (!/\S/.test(w.text)) continue;
+      if (w.confidence < OCR_MIN_CONF) flush();
+      else cur.push(w);
+    }
+    flush();
+    return runs;
+  }
+  function ocrJoin(words) {
+    let out = '';
+    for (const w of words) {
+      const t = w.text.trim();
+      if (!t) continue;
+      out += out && !(OCR_CJK.test(out.slice(-1)) && OCR_CJK.test(t[0])) ? ` ${t}` : t;
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  }
+  function readLinesOther(data) {
+    const segs = [];
+    for (const block of data.blocks || []) {
+      for (const para of block.paragraphs) {
+        for (const line of para.lines) {
+          if (line.confidence < OCR_MIN_LINE_CONF - 10) continue;
+          for (const words of ocrRuns(line.words)) {
+            const text = ocrJoin(words);
+            if (!ocrPlausible(text)) continue;
+            const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+            for (const w of words) {
+              box.x0 = Math.min(box.x0, w.bbox.x0);
+              box.y0 = Math.min(box.y0, w.bbox.y0);
+              box.x1 = Math.max(box.x1, w.bbox.x1);
+              box.y1 = Math.max(box.y1, w.bbox.y1);
+            }
+            if (box.y1 - box.y0 < 6) continue;
+            segs.push({ text, box, conf: line.confidence });
+          }
+        }
+      }
+    }
+    return segs;
+  }
+
   async function readLines(worker, canvas, dict) {
     const { data } = await worker.recognize(canvas, {}, { blocks: true, text: false });
+    if (!OCR_THAI()) return readLinesOther(data);
     const segs = [];
     for (const block of data.blocks || []) {
       for (const para of block.paragraphs) {
@@ -3701,7 +3894,8 @@
   // 다만 숫자·기호 사이에 한두 글자짜리 태국어 조각이 흩어진 줄은 길어도 엉터리다
   // ('ความยาว 10cm' 을 'คอลมยาว 70 6 ทา 250 6 ทา' 로 읽은 것이 온전한 'ความยาว' 를 이겼다).
   function pickBestLines(found) {
-    const crumbs = (t) => t.split(/[^ก-๛]+/).filter((r) => r && r.length <= 2).length;
+    // 부스러기(한두 글자 토막) 벌점은 태국어만 — 다른 언어는 짧은 낱말(of·di·la)이 흔하다.
+    const crumbs = (t) => (OCR_THAI() ? t.split(/[^ก-๛]+/).filter((r) => r && r.length <= 2).length : 0);
     const score = (s) => s.conf + Math.min(s.text.length, 40) * 0.3 - crumbs(s.text) * 5;
     const kept = [];
     for (const s of [...found].sort((a, b) => score(b) - score(a))) {
@@ -3790,7 +3984,7 @@
         for (const [pi, pc] of pieces) {
           const text = pc.text.replace(/\s+/g, ' ').trim();
           // 태국어가 없는 문단(숫자·영어)은 그대로 둔다.
-          if (!THAI.test(text) || !(pc.box.x1 > pc.box.x0)) continue;
+          if (!ocrScript().test(text) || isMyText(text) || !(pc.box.x1 > pc.box.x0)) continue;
           out[pi].push({ text, box: pc.box, lines: pc.lines, conf: 99 });
         }
       }
@@ -3808,7 +4002,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        requests: [{ image: { content: data }, features: [{ type: 'TEXT_DETECTION' }], imageContext: { languageHints: ['th'] } }],
+        requests: [{ image: { content: data }, features: [{ type: 'TEXT_DETECTION' }], imageContext: { languageHints: [OCR_THAI() ? 'th' : SITE_LANG] } }],
       }),
     });
     const body = await r.json().catch(() => ({}));
@@ -3902,7 +4096,7 @@
   }
 
   async function readImageTextLocal(canvas) {
-    const [workers, dict] = await Promise.all([ocrPool(), loadThaiWords()]);
+    const [workers, dict] = await Promise.all([ocrPool(), OCR_THAI() ? loadThaiWords() : null]);
     try {
       const long = Math.max(canvas.width, canvas.height);
       const found = [];
@@ -4119,7 +4313,7 @@
     const H = canvas.height;
     if (!cached) {
       const segs = pre?.segs || (await readImageText(canvas));
-      const out = segs.length ? await translateToKorean(segs.map((s) => s.text)) : [];
+      const out = segs.length ? await translateToKorean(segs.map((s) => s.text), OCR_THAI() ? 'auto' : ocrGoogle()) : [];
       const lines = [];
       segs.forEach((s, i) => {
         const k = out[i];
@@ -4269,7 +4463,7 @@
       try {
         url = (await renderTranslatedImage(img, pre)) || '';
         ocrDone.set(key, url);
-        if (!url && !auto) toast('이 사진에서는 번역할 태국어 글자를 찾지 못했습니다.');
+        if (!url && !auto) toast(`이 사진에서는 번역할 ${hsLangName(ocrGoogle()) || '외국어'} 글자를 찾지 못했습니다.`);
       } catch (e) {
         ocrFailed.add(key);
         console.warn(`[${APP_NAME}] 사진 번역 실패:`, e);
@@ -4413,7 +4607,7 @@
       : isShowingTranslation(imgBtnTarget)
         ? '원래 사진'
         : ocrDone.get(key) === ''
-          ? '태국어 글자 없음'
+          ? '읽을 글자 없음'
           : '사진 번역';
     imgBtn.toggleAttribute('data-busy', busy);
     if (imgAllBtn) {
@@ -4497,8 +4691,8 @@
         pending = true;
         requestAnimationFrame(() => {
           pending = false;
-          // 무료 사진 글자 읽기는 태국어(+영어 글자)뿐이다 — 대만 쇼피처럼 다른 글자 쇼핑몰에서는 Vision 키가 있을 때만.
-          if (!cfg.imageTranslate || (SITE_SCRIPT && SITE_LANG2 !== 'th' && !cfg.visionKey)) return hideImageButton();
+          // 무료 사진 글자 읽기는 그 쇼핑몰 말의 모델로(30개 언어 — 1.34.2 까지는 태국어뿐). 모델이 없는 말은 Vision 키가 있을 때만.
+          if (!cfg.imageTranslate || (!ocrModel() && !cfg.visionKey)) return hideImageButton();
           const img = imageUnder(lastX, lastY);
           if (img) showImageButton(img);
           else hideImageButton();
@@ -4539,12 +4733,13 @@
     panel.innerHTML = `
       <h3>${APP_NAME} 설정 <span id="lzk-site-label" style="font-weight:400;opacity:.6"></span></h3>
 
-      <label>검색 용어집 (한국어=태국어, 한 줄에 하나)</label>
-      <textarea id="lzk-glossary" placeholder="사무실=สำนักงาน&#10;쇼파=โซฟา"></textarea>
+      <label>용어집 (한국어=그 언어 낱말, 한 줄에 하나)</label>
+      <select id="lzk-gl-lang"></select>
+      <textarea id="lzk-glossary" style="margin-top:6px"></textarea>
       <div class="lzk-actions" style="margin-top:6px">
         <button id="lzk-gl-save" type="button">저장</button>
       </div>
-      <div class="lzk-hint">적고 <b>저장</b>을 누르면 GitHub 용어집에 바로 저장되고 칸은 비워집니다. 모든 PC가 같이 씁니다. 이미 있는 단어를 적으면 그 뜻으로 고칩니다.</div>
+      <div class="lzk-hint">언어를 고르고 적은 뒤 <b>저장</b>을 누르면 그 언어의 GitHub 용어집에 바로 저장되고 칸은 비워집니다. 모든 PC가 같이 쓰고, 입력칸·메신저·검색에서 구글보다 먼저 씁니다. 이미 있는 단어를 적으면 그 뜻으로 고칩니다.</div>
       <div class="lzk-hint" id="lzk-gl-status" style="white-space:pre-line"></div>
 
       <details id="lzk-gh-setup">
@@ -4570,7 +4765,7 @@
           <button id="lzk-helper-run" type="button">번역 도우미 켜기</button>
           <button class="lzk-ghost" id="lzk-helper-install" type="button">번역 도우미 설치</button>
         </div>
-        <div class="lzk-hint">크롬 밖에서 도는 프로그램입니다. LINE PC 메시지를 태국어로 보내고 받고, 아무 프로그램 창에서 <b>Ctrl+Alt+K</b> 를 누르면 영어를 그 자리에 한국어로 덮습니다. 설치는 PC마다 한 번이고, 그 뒤로는 윈도우를 켜면 같이 켜지고 새 판도 스스로 받습니다.</div>
+        <div class="lzk-hint">크롬 밖에서 도는 프로그램입니다. LINE PC 에서 상대 언어(30개 언어)로 바꿔 보내고 받은 말을 ${MY_KO ? '한국어' : '내 언어'}로 보여 주며, 아무 프로그램 창에서 <b>Ctrl+Alt+K</b> 를 누르면 30개 언어 글자를 그 자리에 ${MY_KO ? '한국어' : '내 언어'}로 덮습니다. 설치는 PC마다 한 번이고, 그 뒤로는 윈도우를 켜면 같이 켜지고 새 판도 스스로 받습니다.</div>
         <div class="lzk-hint" id="lzk-helper-note" style="white-space:pre-line"></div>
         <input type="text" id="lzk-helper-cmd" readonly hidden>
       </div>
@@ -4590,22 +4785,26 @@
       <div class="lzk-hint">검색어는 먼저 용어집 단어로 쪼개 봅니다. 다 쪼개지면 API 없이 바로 검색합니다.</div>
 
       <div class="lzk-check">
-        <input type="checkbox" id="lzk-auto"><span>페이지 열면 자동으로 한국어 표시</span>
+        <input type="checkbox" id="lzk-auto"><span>쇼핑몰 페이지를 열면 자동으로 ${MY_KO ? '한국어' : '내 언어'}로 표시</span>
       </div>
       <div class="lzk-check">
-        <input type="checkbox" id="lzk-confirm"><span>검색 전 번역된 태국어 확인 (Enter 한 번 더)</span>
+        <input type="checkbox" id="lzk-confirm"><span>검색 전 바뀐 검색어 확인 (Enter 한 번 더)</span>
       </div>
+      <div class="lzk-check">
+        <input type="checkbox" id="lzk-page-lang"><span>외국어 페이지에서는 입력칸에 쓴 ${MY_KO ? '한국어' : '내 언어'}를 그 페이지 언어로 바꾸기</span>
+      </div>
+      <div class="lzk-hint">30개 언어 페이지 어디서나(태국어·영어·일본어·베트남어 …). 번역 단추에서 언어를 고르면 고른 언어가 먼저입니다.</div>
 
       <div class="lzk-check">
-        <input type="checkbox" id="lzk-chat-translate"><span>메신저: 태국어 메시지 밑에 한국어 표시</span>
+        <input type="checkbox" id="lzk-chat-translate"><span>메신저: 외국어 메시지 밑에 ${MY_KO ? '한국어' : '내 언어'} 표시 (30개 언어)</span>
       </div>
-      <label>메신저: 존댓말로 보낼 때 태국어 끝말</label>
+      <label>메신저: 내 성별 (존댓말 끝말)</label>
       <select id="lzk-chat-particle">
-        <option value="ครับ">ครับ (크랍 — 남자)</option>
-        <option value="ค่ะ">ค่ะ / คะ (카 — 여자)</option>
-        <option value="">붙이지 않음</option>
+        <option value="ครับ">남자 — 태국어 ครับ (크랍)</option>
+        <option value="ค่ะ">여자 — 태국어 ค่ะ / คะ (카)</option>
+        <option value="">정하지 않음 — 붙이지 않음</option>
       </select>
-      <div class="lzk-hint">페이스북 메신저에서 한국어를 ~요·~니다로 쳤을 때 태국어 끝에 붙입니다. 반말에는 붙이지 않습니다.</div>
+      <div class="lzk-hint">메신저에서 ~요·~니다로 쳤을 때, 말끝에 남녀가 갈리는 존댓말을 붙이는 언어(태국어)에서 성별에 맞춰 붙입니다. 다른 언어는 존댓말을 번역이 맞춥니다. 반말에는 붙이지 않습니다.</div>
       <div class="lzk-check">
         <input type="checkbox" id="lzk-selection"><span>글자를 드래그하면 '한국어로' 버튼 표시</span>
       </div>
@@ -4685,21 +4884,51 @@
       `이 PC 이번 달(${vu.month}) 사용: ${vu.count} / ${cfg.visionMonthlyCap}건` +
       (visionBlocked ? ` — 지금은 쓸 수 없음: ${visionBlocked}` : '');
     $('#lzk-page-glossary').value = glossaryToText(cfg.pageGlossary);
+    $('#lzk-page-lang').checked = cfg.pageLangAuto;
 
-    // --- 검색 용어집 → GitHub ---
+    // --- 용어집 언어 (2026-11-21: 태국어만이 아니라 30개 언어 — 언어마다 GitHub 파일 하나) ---
+    const glLangs = TYPE_LANGS.filter((l) => l.id === 'th' || l.glossary);
+    const glSel = $('#lzk-gl-lang');
+    for (const l of glLangs) {
+      const o = document.createElement('option');
+      o.value = l.id;
+      o.textContent = langName(l);
+      glSel.appendChild(o);
+    }
+    glSel.value = glossaryDefaultLang(glLangs);
+    const glPick = () => glLangs.find((l) => l.id === glSel.value) || glLangs[0];
+    const glShow = async () => {
+      const l = glPick();
+      $('#lzk-glossary').placeholder = `사무실=${GLOSSARY_EXAMPLE[l.id] || '…'}`;
+      if (l.id === 'th') return showThaiStatus();
+      $('#lzk-gl-status').textContent = `${langName(l)} 용어집: 받는 중…`;
+      const m = await langGlossaryMap(glossaryFileOf(l)).catch(() => null);
+      if (glPick() !== l) return;
+      $('#lzk-gl-status').textContent = m ? `현재 ${langName(l)} 용어집: ${m.size}개` : `${langName(l)} 용어집을 받지 못했습니다(저장은 됩니다).`;
+    };
+    glSel.addEventListener('change', () => {
+      GM_setValue('glLang', glSel.value);
+      glShow();
+    });
+
+    // --- 태국어 용어집(glossary.txt) → GitHub ---
     // 예전 방식으로 이 PC에만 넣어 둔 단어 중 GitHub 에 없는 것은 칸에 미리 넣어 둔다.
     // 저장을 누르면 GitHub 로 옮겨지고 이 PC 목록은 비워진다.
     const remoteNow = remoteGlossary();
     const legacyNew = Object.entries(cfg.glossary || {})
       .map(([k, v]) => [normKey(k), v])
       .filter(([k, v]) => k && v && !(k in remoteNow));
+    if (legacyNew.length) glSel.value = 'th'; // 예전 단어는 태국어다
     $('#lzk-glossary').value = legacyNew.map(([k, v]) => `${k}=${v}`).join('\n');
-    $('#lzk-gl-status').textContent =
-      `현재 용어집: ${Object.keys(remoteNow).length}개` +
-      (glossaryStore ? ` (${new Date(glossaryStore.at).toLocaleString()} 받음)` : ' (아직 받지 못함)') +
-      (legacyNew.length
-        ? `\n이 PC에만 있던 예전 단어 ${legacyNew.length}개를 칸에 넣어 두었습니다. 저장하면 GitHub로 옮겨집니다.`
-        : '');
+    function showThaiStatus() {
+      $('#lzk-gl-status').textContent =
+        `현재 태국어 용어집: ${Object.keys(remoteNow).length}개` +
+        (glossaryStore ? ` (${new Date(glossaryStore.at).toLocaleString()} 받음)` : ' (아직 받지 못함)') +
+        (legacyNew.length
+          ? `\n이 PC에만 있던 예전 단어 ${legacyNew.length}개를 칸에 넣어 두었습니다. 저장하면 GitHub로 옮겨집니다.`
+          : '');
+    }
+    glShow();
 
     const showGhState = () => {
       $('#lzk-gh-state').textContent = !cfg.githubToken
@@ -4843,9 +5072,17 @@
       }
       for (const k of Object.keys(DEFAULTS)) saveCfg(k);
 
+      cfg.pageLangAuto = $('#lzk-page-lang').checked;
+      saveCfg('pageLangAuto');
+      if (!cfg.pageLangAuto && genericPageLang) {
+        genericPageLang = '';
+        refreshLangBar();
+        updateGenericChip();
+      }
+      const glLang = glPick();
       const { entries, bad } = parseEntries($('#lzk-glossary').value);
       if (bad.length) {
-        toast("'한국어=태국어' 모양이 아닌 줄이 있습니다. 고친 뒤 다시 저장하세요.\n" + bad.slice(0, 5).join('\n'), 8000);
+        toast(`'한국어=${langName(glLang)}' 모양이 아닌 줄이 있습니다. 고친 뒤 다시 저장하세요.\n` + bad.slice(0, 5).join('\n'), 8000);
         return;
       }
       if (!entries.length) {
@@ -4876,9 +5113,11 @@
         b.textContent = 'GitHub에 저장 중…';
       });
       try {
-        const r = await saveGlossaryToGitHub(entries);
-        cfg.glossary = {}; // 예전 단어는 방금 GitHub 로 옮겼다
-        saveCfg('glossary');
+        const r = await saveGlossaryToGitHub(entries, glossaryFileOf(glLang));
+        if (glLang.id === 'th') {
+          cfg.glossary = {}; // 예전 단어는 방금 GitHub 로 옮겼다
+          saveCfg('glossary');
+        }
         $('#lzk-glossary').value = '';
         if (!cfg.githubUser) {
           checkGitHubToken(cfg.githubToken)
@@ -4892,7 +5131,7 @@
         if (r.added.length) lines.push(`새로 ${r.added.length}개: ${r.added.slice(0, 8).join(', ')}`);
         if (r.changed.length) lines.push(`고침 ${r.changed.length}개: ${r.changed.slice(0, 8).join(', ')}`);
         toast(
-          'GitHub 용어집에 저장했습니다.\n' +
+          `GitHub ${langName(glLang)} 용어집에 저장했습니다.\n` +
             (lines.join('\n') || '(이미 같은 내용이었습니다)') +
             '\n이 PC는 바로, 다른 PC는 10분 안에 반영됩니다.',
           7000
@@ -5209,13 +5448,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 다른 태국 사이트 — 입력칸의 한국어를 태국어로
+  // 다른 사이트 — 입력칸의 내 말(한국어)을 그 페이지 언어로 (1.35.0 부터 30개 언어 — 예전엔 태국어 페이지만)
   //
   // 라자다·쇼피처럼 검색창 구조를 아는 곳이 아니면 검색을 대신 해 줄 수 없다. 대신 입력칸의
-  // 글자만 태국어로 바꾸고 검색은 그 사이트에 맡긴다: 한국어를 치고 Enter → 태국어로 바뀜 →
+  // 글자만 바꾸고 검색은 그 사이트에 맡긴다: 한국어를 치고 Enter → 그 언어로 바뀜 →
   // 확인하고 Enter 한 번 더 → 사이트가 원래대로 검색. 사이트가 검색을 어떻게 처리하든 상관없다.
-  // 태국어가 한글보다 많이 보이는 페이지에서만 켠다(태국어가 조금 섞인 한국 여행 블로그 등에서
-  // 한국어 검색을 태국어로 바꿔 버리지 않게). 페이지 번역은 크롬 자동번역에 맡긴다.
+  // 그 언어 글자가 한글보다 많이 보이는 페이지에서만 켠다(태국어가 조금 섞인 한국 여행 블로그 등에서
+  // 한국어 검색을 바꿔 버리지 않게 — detectPageLang). 페이지 번역은 크롬 자동번역에 맡긴다.
   // ---------------------------------------------------------------------------
 
   const GENERIC_MIN_THAI = 30;
@@ -5448,25 +5687,81 @@
   }
 
   let typeLang = GM_getValue(TYPE_LANG_KEY, '');
-  let genericThaiPage = false;
-  const genericLang = () => myTypeLangs().find((l) => l.id === (typeLang || (genericThaiPage ? 'th' : ''))) || null;
+  // 이 페이지의 언어(30개 언어 중 내 언어가 아닌 것, 모르면 ''). 1.34.2 까지는 태국어 페이지만 알아봤다
+  // (2026-11-21 사용자: 태국어에만 되던 것을 모든 언어에).
+  let genericPageLang = '';
+  const genericLang = () =>
+    myTypeLangs().find((l) => l.id === (typeLang || (cfg.pageLangAuto ? genericPageLang : ''))) || null;
 
-  // 태국어 페이지인가. 글자 수만 세고 30자에 닿으면 멈춘다(큰 페이지에서도 가볍게).
-  function looksThaiPage() {
-    const lang = (document.documentElement.lang || '').toLowerCase();
-    if (lang === 'th' || lang.startsWith('th-')) return true;
-    const text = (document.body?.textContent || '').slice(0, 300000);
-    let thai = 0;
-    for (const ch of text) {
-      if (ch >= 'ก' && ch <= '๛') thai++;
-    }
-    if (thai < GENERIC_MIN_THAI) return false;
-    let hangul = 0;
-    for (const ch of text) {
-      if (ch >= '가' && ch <= '힣') hangul++;
-    }
-    return thai > hangul;
+  // 글자 갈래(코드 범위 — 정규식보다 훨씬 가볍다; 30만 자를 몇 ms 에 센다). 제 글자로 언어를 아는 것(태국어·가나 …)과
+  // 여러 언어가 같이 쓰는 것(로마자·키릴·아랍·데바나가리·한자).
+  const PAGE_SCRIPT_RANGES = [
+    ['ko', 0xac00, 0xd7a3], ['ko', 0x1100, 0x11ff], ['ko', 0x3130, 0x318f], ['th', 0x0e00, 0x0e7f], ['lo', 0x0e80, 0x0eff],
+    ['ja', 0x3040, 0x30ff], ['he', 0x0590, 0x05ff], ['bn', 0x0980, 0x09ff], ['ta', 0x0b80, 0x0bff], ['te', 0x0c00, 0x0c7f],
+    ['km', 0x1780, 0x17ff], ['my', 0x1000, 0x109f], ['lat', 0x41, 0x5a], ['lat', 0x61, 0x7a], ['lat', 0xc0, 0x24f],
+    ['lat', 0x1e00, 0x1eff], ['cyr', 0x0400, 0x04ff], ['arab', 0x0600, 0x06ff], ['deva', 0x0900, 0x097f], ['han', 0x4e00, 0x9fff],
+  ];
+  const PAGE_OWN = ['ko', 'th', 'lo', 'ja', 'he', 'bn', 'ta', 'te', 'km', 'my'];
+  const PAGE_SHARED = ['lat', 'cyr', 'arab', 'deva', 'han'];
+  // 언어 → 그 글자 갈래(제 글자 언어는 자기 이름). 여기 없는 로마자 언어는 'lat'.
+  const PAGE_LANG_SCRIPT = {
+    ru: 'cyr', uk: 'cyr', mn: 'cyr', ar: 'arab', ur: 'arab', fa: 'arab', hi: 'deva', mr: 'deva', ne: 'deva',
+    zh: 'han', 'zh-TW': 'han', yue: 'han',
+  };
+  const pageScriptOf = (id) => PAGE_LANG_SCRIPT[id] || (PAGE_OWN.includes(id) ? id : 'lat');
+  // html lang → 목록의 언어 id. zh-Hant·zh-TW·zh-HK = 번체, 옛 코드(iw·in·fil)도.
+  function pageLangId(raw) {
+    const v = String(raw || '').trim().toLowerCase().replace(/_/g, '-');
+    if (!v) return '';
+    if (/^zh-(hant|tw|hk|mo)/.test(v)) return 'zh-TW';
+    if (v === 'yue' || v.startsWith('yue-')) return 'yue';
+    const base = v.split('-')[0];
+    return { iw: 'he', in: 'id', fil: 'tl', jw: 'jv' }[base] || base;
   }
+
+  // 페이지 언어 알아보기. 글자 수만 센다(앞 30만 자까지). 그 언어 글자가 30자 이상이고 내 언어 글자보다 많아야
+  // (여러 언어가 같이 쓰는 글자는 두 배) — 태국어가 조금 섞인 한국 여행 블로그에서 한국어 검색을 바꿔 버리지 않게.
+  //  1) html lang 이 목록의 언어면 그것(글자 수로 맞는지 본다). 태국어는 예전처럼 lang=th 이면 바로.
+  //  2) 없거나 안 맞으면 제 글자로 아는 언어(가장 많은 것), 한자만 있으면 간체·번체·광둥어, 키릴 = 러시아어,
+  //     아랍 글자 = 아랍어, 데바나가리 = 힌디어. 로마자만 있고 lang 이 없으면 모른다('').
+  function detectPageLang() {
+    const langs = myTypeLangs();
+    const usable = (id) => {
+      if (!id || id.split('-')[0] === MY2) return '';
+      const hit = langs.find((l) => l.id === id) || langs.find((l) => l.id === id.split('-')[0]);
+      return hit ? hit.id : '';
+    };
+    const attr = usable(pageLangId(document.documentElement.lang));
+    if (attr === 'th') return 'th';
+    const text = (document.body?.textContent || '').slice(0, 300000);
+    const counts = Object.create(null);
+    let han = '';
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c < 0x41) continue;
+      for (const [k, lo, hi] of PAGE_SCRIPT_RANGES) {
+        if (c >= lo && c <= hi) {
+          counts[k] = (counts[k] || 0) + 1;
+          if (k === 'han' && han.length < 400) han += text[i];
+          break;
+        }
+      }
+    }
+    // 내 언어 글자(로마자 언어면 셀 수 없다 — 견주지 않는다).
+    const mineKey = MY_SCRIPT ? pageScriptOf(MY2) : '';
+    const mine = mineKey ? counts[mineKey] || 0 : 0;
+    const enough = (k) => k !== mineKey && (counts[k] || 0) >= GENERIC_MIN_THAI && counts[k] > mine * (PAGE_SHARED.includes(k) ? 2 : 1);
+    if (attr && enough(pageScriptOf(attr))) return attr;
+    let best = '';
+    for (const k of PAGE_OWN) if (enough(k) && (!best || counts[k] > counts[best])) best = k;
+    if (best) return usable(best === 'ko' ? 'ko' : best);
+    if (enough('han')) return usable(chatHanLang(han));
+    if (enough('cyr')) return usable('ru');
+    if (enough('arab')) return usable('ar');
+    if (enough('deva')) return usable('hi');
+    return '';
+  }
+
 
   function genericTarget(el) {
     if (!el || el.readOnly || el.disabled || el.closest('[id^="lzk-"]')) return null;
@@ -5822,8 +6117,8 @@
     toast(
       id
         ? `${langName(l)} 입력 켬: 어느 사이트든 입력칸에 ${MY_KO ? '한국어로' : '내 언어로'} 쓰고 Enter 를 누르면 ${langName(l)}로 바꿉니다.\n끄려면 '번역·${langLabel(l)}' 을 눌러 같은 글자를 다시 누르세요.`
-        : genericThaiPage
-          ? '입력 언어 선택을 껐습니다. 이 태국어 페이지에서는 전처럼 태국어로 바꿉니다.'
+        : cfg.pageLangAuto && genericPageLang && genericLang()
+          ? `입력 언어 선택을 껐습니다. 이 ${langName(genericLang())} 페이지에서는 ${langName(genericLang())}로 바꿉니다.`
           : MY_KO ? '입력 언어 선택을 껐습니다. 한국어가 그대로 입력됩니다.' : '입력 언어 선택을 껐습니다. 쓴 말이 그대로 입력됩니다.',
       4000
     );
@@ -5860,24 +6155,29 @@
   }
 
   let genericOn = false;
-  function activateGeneric() {
+  function activateGeneric(lang) {
     if (genericOn) return;
     genericOn = true;
-    genericThaiPage = true;
-    ensureGlossary();
+    genericPageLang = lang;
     mountFab();
-    registerMenus();
+    if (lang === 'th') {
+      ensureGlossary(); // 태국어 용어집(glossary.txt) 메뉴는 태국어 페이지에서만
+      registerMenus();
+    }
+    updateGenericChip();
   }
 
-  // 태국어가 늦게 그려지는 페이지(SPA)도 있어 15초 동안 몇 번 더 본다.
+  // 글이 늦게 그려지는 페이지(SPA)도 있어 15초 동안 몇 번 더 본다.
   function genericInit() {
     genericBase();
-    if (looksThaiPage()) return activateGeneric();
+    const first = detectPageLang();
+    if (first) return activateGeneric(first);
     let n = 0;
     const t = setInterval(() => {
-      if (looksThaiPage()) {
+      const lang = detectPageLang();
+      if (lang) {
         clearInterval(t);
-        activateGeneric();
+        activateGeneric(lang);
       } else if (++n >= 6) clearInterval(t);
     }, 2500);
   }
@@ -6073,7 +6373,7 @@
     if (!ask.length) return;
     let got = [];
     try {
-      got = await translateToKorean(ask.map((s) => s.prep || s.src));
+      got = await translateToKorean(ask.map((s) => s.prep || s.src), d.from || 'auto');
     } catch (e) {
       console.warn(`[${APP_NAME}] 더빙 번역 실패:`, e.message);
     }
@@ -6132,7 +6432,7 @@
         : !MY_KO && MY_SCRIPT && MY_SCRIPT.test(all) ? MY2 : '';
     }
     const old = new Map(d.sentences.map((s) => [`${s.start}|${s.src}`, s]));
-    d.sentences = dubSentences(cues, d.lang).map((s) => {
+    d.sentences = (d.tt ? ttSentences(cues) : dubSentences(cues, d.lang)).map((s) => {
       const o = old.get(`${s.start}|${s.src}`);
       return o ? Object.assign(s, { ko: o.ko, tried: o.tried, prep: o.prep }) : s;
     });
@@ -6300,6 +6600,28 @@
     dubSubEl.style.fontSize = `${Math.round(Math.max(12, Math.min(40, base * (dubCfg.subScale || 1))))}px`;
   }
 
+  // 틱톡 자막을 띄우는 동안 1초에 한 번 화면에 박힌 자막 줄을 찾아, 있으면 그 줄 바로 위에 둔다 — 중국 틱톡은 대개
+  // 중국어 자막이 박혀 있어 한국어가 그 줄을 반쯤 덮었다(2026-11-21 시험 화면). 4초 넘게 못 찾으면 보통 자리로.
+  function dubAbove(d, v) {
+    if (!d.tt || d.noGrab) return 0;
+    const now = Date.now();
+    // 아직 줄을 못 찾았으면 0.3초마다(자막 줄이 처음 뜨는 순간 한국어가 그 위를 덮지 않게), 찾았으면 1초마다.
+    if (now - (d.aboveAt || 0) > (d.above ? 1000 : 300)) {
+      d.aboveAt = now;
+      let f = null;
+      try {
+        f = hsGrab(v);
+      } catch {
+        d.noGrab = true; // 그림을 읽을 수 없는 영상 — 다시 보지 않는다
+      }
+      if (f) {
+        d.above = f.above;
+        d.aboveSeen = now;
+      } else if (now - (d.aboveSeen || 0) > 4000) d.above = 0;
+    }
+    return d.above || 0;
+  }
+
   function dubTick() {
     const d = dub;
     if (!d || d.failed) return;
@@ -6312,6 +6634,9 @@
     }
     // 유튜브(쇼츠를 넘김): 주소의 영상 id 가 바뀌면 바로 끈다. 1초마다 보는 ytOnNavigate 를 기다리면 앞 쇼츠의
     // 문장이 다음 쇼츠 위에 남아 있었다(사용자 2026-11-02). 손으로 켜 둔 것(dubWanted)은 다음 영상으로 잇는다.
+    // 틱톡: <video> 를 다른 영상에 다시 쓴다(주소 blob 도 그대로) — 영상 id 가 바뀌면 바로 끈다(사용자 2026-11-21:
+    // 넘겨도 앞 영상 자막이 몇 초 남아 새 영상 위에 나왔다).
+    if (TIKTOK && d.itemId && ttItemId(v) !== d.itemId) return dubStop();
     if (YOUTUBE && d.videoId && ytVideoId() !== d.videoId) {
       const keep = dubWanted;
       dubStop();
@@ -6322,7 +6647,7 @@
     if (!d.sentences.length && hsOwns(v)) return;
     // 자동 자막(asr)뿐인 영상에 화면에 박힌 자막이 있으면 화면 자막(사람이 쓴 글)을 보인다 — 목소리(더빙)는 자동 자막대로.
     const hsSubs = hsOwns(v) && d.asr;
-    if (!hsSubs) dubPlaceSub();
+    if (!hsSubs) dubPlaceSub(v, dubAbove(d, v));
     if (YOUTUBE && v.closest('.html5-video-player')?.classList.contains(RC.youtube.adShowing)) {
       if (d.cur !== -2) {
         d.cur = -2;
@@ -6377,6 +6702,7 @@
     if (dub) dubStop();
     const d = { video, sentences: [], cur: -1, lang: '', status: '대본 받는 중…', auto, startedAt: Date.now() };
     if (YOUTUBE) d.videoId = ytVideoId();
+    if (TIKTOK) d.itemId = ttItemId(video);
     dub = d;
     if (YOUTUBE && !auto) dubWanted = true;
     ensureGlossary();
@@ -6393,7 +6719,11 @@
     dubStatus();
     dubSyncButton();
     try {
-      const cues = YOUTUBE && video.closest(`${RC.youtube.player}, ${RC.youtube.shortsPlayerAny}`) ? await ytLoadCues(d) : dubTrackCues(d);
+      const cues = YOUTUBE && video.closest(`${RC.youtube.player}, ${RC.youtube.shortsPlayerAny}`)
+        ? await ytLoadCues(d)
+        : TIKTOK && d.itemId && ttItems.has(d.itemId)
+          ? await ttLoadCues(d)
+          : dubTrackCues(d);
       if (d !== dub) return;
       if (cues) dubSetCues(d, cues);
       else if (auto) return dubStop();
@@ -6421,6 +6751,232 @@
     dubShowSub('');
     dubStatus();
     dubSyncButton();
+  }
+
+  // --- 틱톡: 영상마다 가진 자동 자막(WebVTT) ---
+  // 사용자(2026-11-21, 중국어 틱톡 7676390705278815495): 번역이 잘 안 되고(번역률이 낮다), 넘겨도 앞 영상 자막이 몇 초
+  // 남아 새 영상 위에 나온다. 그때까지 틱톡은 크롬 실시간 자막(소리 → 받아 적기 → 번역, 한 문장 늦고 자주 틀림)뿐이었다.
+  // 틱톡은 영상 정보에 자기 자동 자막(Whisper 받아쓰기, 말한 시각까지 — 그 영상: '小明一加一等于几' 0.2~1.88초 …)을
+  // 갖고 있고, 그 주소는 페이지에서 그대로 받힌다(2026-11-21 확인). 확장의 tt-main.js(페이지 쪽)가 영상 id → 자막 주소를
+  // 넘겨 주면(문서 이벤트 'lzk-tt-items'), 재생 중인 영상의 자막을 받아 한 줄씩 옮겨 그 시각에 띄운다. 영상 id 는
+  // 플레이어 상자(xgwrapper-n-<id>)에서 — 틱톡은 <video> 두 개를 번갈아 다시 쓰고 영상 주소(blob)도 그대로라, 넘겼는지는
+  // id 로만 알 수 있다. 자막이 없는 영상은 예전처럼 화면 자막 읽기·크롬 실시간 자막.
+  const TIKTOK = /(^|\.)tiktok\.com$/.test(location.hostname);
+  const ttItems = new Map(); // 영상 id → { caps: [{ lang, raw, urls, auto, orig, tr }], orig, desc }
+  const ttCues = new Map(); // 영상 id → 받은 자막 줄(다시 볼 때 다시 받지 않는다)
+  const ttNone = new Set(); // 자막이 없거나 내 언어로 말하는 영상 — 다시 보지 않는다
+  let ttHooked = false;
+
+  // 영상 정보 JSON 에서 { id, video: { claInfo | subtitleInfos } } 를 찾아 담는다(몽키판: 첫 페이지 것만 — 페이지 쪽 엿보기가 없다).
+  function ttTake(node, depth = 0) {
+    if (!node || typeof node !== 'object' || depth > 9) return;
+    if (Array.isArray(node)) {
+      for (const x of node) ttTake(x, depth + 1);
+      return;
+    }
+    const v = node.video;
+    if (v && typeof v === 'object' && (v.claInfo || v.subtitleInfos) && /^\d{8,}$/.test(String(node.id || '')) && !ttItems.has(String(node.id))) {
+      const caps = [];
+      for (const c of (v.claInfo && v.claInfo.captionInfos) || []) {
+        const urls = [...(c.urlList || []), c.url].filter((u) => typeof u === 'string' && u);
+        if (urls.length) caps.push({ lang: String(c.languageCode || ''), raw: String(c.language || ''), urls, auto: !!c.isAutoGen, orig: !!c.isOriginalCaption, tr: String(c.translationType || '0') });
+      }
+      for (const s of v.subtitleInfos || []) {
+        if (s && typeof s.Url === 'string') caps.push({ lang: '', raw: String(s.LanguageCodeName || ''), urls: [s.Url], auto: s.Source === 'ASR', orig: s.Source === 'ASR', tr: s.Source === 'MT' ? '1' : '0' });
+      }
+      ttItems.set(String(node.id), { caps, orig: '', desc: String(node.desc || '') });
+    }
+    for (const k in node) if (node[k] && typeof node[k] === 'object') ttTake(node[k], depth + 1);
+  }
+
+  function ttListen() {
+    if (ttHooked || !TIKTOK) return;
+    ttHooked = true;
+    document.addEventListener('lzk-tt-items', (e) => {
+      try {
+        for (const [id, it] of Object.entries(JSON.parse(String(e.detail || '{}')))) {
+          if (it && Array.isArray(it.caps)) ttItems.set(id, it);
+        }
+      } catch {
+        /* 모양이 다르다 */
+      }
+    });
+    document.dispatchEvent(new CustomEvent('lzk-tt-ask')); // 페이지 쪽이 먼저 모아 둔 것
+    try {
+      const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+      if (el) ttTake(JSON.parse(el.textContent));
+    } catch {
+      /* 첫 페이지 정보가 없다 */
+    }
+  }
+
+  // 이 <video> 가 보여 주는 틱톡 영상 id. 플레이어 상자 id(xgwrapper-0-7676…) → 영상 링크 → 주소(/video/<id>).
+  function ttItemId(v) {
+    if (!TIKTOK || !v || !v.closest) return '';
+    const w = v.closest('[id^="xgwrapper-"]');
+    const m = w && /-(\d{8,})$/.exec(w.id);
+    if (m) return m[1];
+    const box = v.closest('article, [data-e2e*="item"], [class*="ItemContainer"]');
+    const a = box && box.querySelector('a[href*="/video/"]');
+    const h = a && /\/video\/(\d{8,})/.exec(a.getAttribute('href') || '');
+    if (h) return h[1];
+    const u = /\/video\/(\d{8,})/.exec(location.pathname);
+    return u ? u[1] : '';
+  }
+
+  // 틱톡 언어 이름 → 구글 코드. languageCode(zh-Hans·ko …)가 있으면 그것, 없으면 cmn-Hans-CN 같은 ISO 639-3.
+  const TT_ISO3 = {
+    cmn: 'zh-CN', zho: 'zh-CN', yue: 'yue', kor: 'ko', eng: 'en', jpn: 'ja', tha: 'th', vie: 'vi', ind: 'id', msa: 'ms', zsm: 'ms',
+    fil: 'tl', tgl: 'tl', spa: 'es', por: 'pt', fra: 'fr', deu: 'de', ita: 'it', rus: 'ru', ukr: 'uk', pol: 'pl', tur: 'tr',
+    ara: 'ar', heb: 'he', hin: 'hi', ben: 'bn', urd: 'ur', tam: 'ta', tel: 'te', mar: 'mr', khm: 'km', lao: 'lo', mya: 'my',
+    mon: 'mn', kaz: 'kk', nld: 'nl', ron: 'ro', ces: 'cs', ell: 'el', hun: 'hu', swe: 'sv', fin: 'fi', dan: 'da', nob: 'no',
+  };
+  function ttLang(c) {
+    const code = String(c.lang || '').toLowerCase();
+    const raw = String(c.raw || '');
+    if (/^zh-(hant|tw|hk|mo)/.test(code) || /^(?:cmn|zho)-Hant|-(?:TW|HK|MO)$/.test(raw)) return 'zh-TW';
+    if (/^zh/.test(code)) return 'zh-CN';
+    if (code) return code.split('-')[0];
+    const iso = raw.split('-')[0].toLowerCase();
+    return TT_ISO3[iso] || iso.slice(0, 2);
+  }
+  const ttMine = (lang) => !!lang && (lang.split('-')[0].toLowerCase() === MY2 || YT_MY_RE.test(lang));
+
+  // 옮길 자막: 원래 말 자막(틱톡이 옮긴 것 말고). 원래 말이 내 언어면 null(한국 영상에 한국어 자막을 덮지 않는다).
+  function ttPick(it) {
+    const caps = (it && it.caps) || [];
+    const orig = caps.find((c) => c.orig) || caps.find((c) => c.tr === '0') || null;
+    if (orig) return ttMine(ttLang(orig)) ? null : orig;
+    // 틱톡이 옮겨 둔 자막만 있으면 내 언어 것을 그대로(번역 없이), 아니면 아무것이나 옮긴다.
+    return caps.find((c) => ttMine(ttLang(c))) || caps[0] || null;
+  }
+
+  function ttParseVtt(text) {
+    const cues = [];
+    const ms = (s) => {
+      const p = s.trim().split(':').map(Number);
+      const sec = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p.length === 2 ? p[0] * 60 + p[1] : p[0];
+      return Math.round(sec * 1000);
+    };
+    for (const block of String(text || '').replace(/\r/g, '').split(/\n{2,}/)) {
+      const lines = block.split('\n');
+      const at = lines.findIndex((l) => l.includes('-->'));
+      if (at < 0) continue;
+      const [a, b] = lines[at].split('-->');
+      const t = lines
+        .slice(at + 1)
+        .join(' ')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const start = ms(a);
+      const end = ms(String(b).split(/\s/).filter(Boolean)[0] || '0');
+      if (t && Number.isFinite(start) && Number.isFinite(end) && end > start) cues.push({ start, end, text: t });
+    }
+    return cues;
+  }
+
+  async function ttFetchVtt(urls) {
+    let last = null;
+    for (const url of urls.slice(0, 3)) {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl && setTimeout(() => ctl.abort(), 5000);
+      try {
+        const r = await fetch(url, ctl ? { signal: ctl.signal } : {});
+        const t = r.ok ? await r.text() : '';
+        if (/^﻿?WEBVTT/.test(t)) return t;
+        last = new Error(`자막 파일이 아닙니다 (HTTP ${r.status})`);
+      } catch (e) {
+        last = e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw last || new Error('자막 주소가 없습니다');
+  }
+
+  async function ttLoadCues(d) {
+    const id = d.itemId;
+    const it = ttItems.get(id);
+    const cap = ttPick(it);
+    if (!cap) {
+      ttNone.add(id);
+      d.status = it && it.caps.length ? '내 언어로 말하는 영상이라 자막을 띄우지 않습니다' : '틱톡 자막이 없는 영상 — 화면 자막·크롬 실시간 자막으로';
+      return null;
+    }
+    const lang = ttLang(cap);
+    d.from = lang;
+    d.lang = lang.split('-')[0].toLowerCase();
+    d.tt = true;
+    d.asr = false; // 틱톡 자막(Whisper)은 시각이 정확하다 — 화면 자막 읽기보다 이쪽
+    let cues = ttCues.get(id);
+    if (!cues) {
+      cues = ttParseVtt(await ttFetchVtt(cap.urls));
+      if (ttCues.size > 200) ttCues.clear();
+      ttCues.set(id, cues);
+    }
+    if (!cues.length) {
+      ttNone.add(id);
+      return null;
+    }
+    d.status = '틱톡 자막 옮기는 중…';
+    return cues;
+  }
+
+  const ttPrefetching = new Set();
+  async function ttPrefetch(id) {
+    if (ttCues.has(id) || ttNone.has(id) || ttPrefetching.has(id) || ttPrefetching.size >= 3) return;
+    const cap = ttPick(ttItems.get(id));
+    if (!cap) return;
+    ttPrefetching.add(id);
+    try {
+      const cues = ttParseVtt(await ttFetchVtt(cap.urls));
+      ttCues.set(id, cues);
+      const lang = ttLang(cap);
+      // 번역은 저장해 두는 번역(cache)에 남는다 — 그 영상을 틀면 dubTranslate 가 바로 꺼내 쓴다. 태국어는 다듬기를 거쳐
+      // 다른 글로 묻기 때문에 미리 옮기지 않는다(용어집이라 빠르다).
+      if (cues.length && !ttMine(lang) && !(MY_KO && lang === 'th')) await translateToKorean(ttSentences(cues).map((s) => s.src), lang);
+    } catch {
+      /* 그 영상을 틀 때 다시 받는다 */
+    } finally {
+      ttPrefetching.delete(id);
+    }
+  }
+
+  // 0.3초마다: 재생 중인 틱톡 영상이 바뀌었고 그 영상에 자막이 있으면 바로 그 자막으로(앞 영상 자막은 dubTick 이 이미 내렸다).
+  function ttTick() {
+    if (!dubCfg.pageSubs || !dubCfg.subs || document.visibilityState !== 'visible') return;
+    const v = livePlayingVideo();
+    // 틱톡이 미리 받아 둔 다음 영상(<video> 가 하나 더 있다)의 자막도 미리 받아 옮겨 둔다 — 넘기는 순간 바로 나오게.
+    for (const o of document.querySelectorAll('video')) {
+      const pid = o !== v && ttItemId(o);
+      if (pid) ttPrefetch(pid);
+    }
+    const id = v && ttItemId(v);
+    if (!id || (dub && dub.video === v && dub.itemId === id) || ttNone.has(id)) return;
+    const it = ttItems.get(id);
+    if (!it) return; // 영상 정보가 아직 — 다음 번에
+    if (!ttPick(it)) {
+      ttNone.add(id);
+      return;
+    }
+    if (dub) dubStop();
+    dubStart(v, true);
+  }
+
+  // 틱톡 자막은 이미 말 한 덩이씩(1~3초) 나뉘어 있다 — 이어 붙이지 않고 한 줄씩 그 시각에. 한 글자 줄도 따로 둔다
+  // (그 영상: '妈一加一等于几' 다음 '滚' 은 다른 사람의 대답이다 — 붙이면 한 사람의 말이 된다).
+  function ttSentences(cues) {
+    const out = [];
+    for (const c of cues) {
+      const text = String(c.text || '').replace(/\[[^\]]*\]|♪+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (text) out.push({ start: c.start, end: c.end, src: text, gender: '' });
+    }
+    out.forEach((s, i) => {
+      s.next = i + 1 < out.length ? out[i + 1].start : s.end + 1500;
+      s.ko = null;
+    });
+    return out;
   }
 
   // --- 다른 사이트의 <video>: 자막 트랙 ---
@@ -6868,7 +7424,8 @@
     else {
       const n = dub.sentences.length;
       const done = dub.sentences.filter((s) => s.ko).length;
-      const lang = { th: '태국어', en: '영어', zh: '중국어', ja: '일본어', ko: '한국어' }[dub.lang] || dub.lang || '?';
+      // 30개 언어 모두 이름으로(예전엔 태국어·영어·중국어·일본어만 — 나머지는 'vi' 같은 코드가 보였다).
+      const lang = dub.lang ? hsLangName(dub.from || dub.lang) : '?';
       const waiting = dub.translating || dub.sentences.some((s) => !s.ko && !s.tried);
       const mode = dubCfg.voiceOn ? '자막 + 목소리' : '한국어 자막';
       // 목소리로 읽은 문장과 너무 밀려 건너뛴 문장 — 건너뜀이 많으면 '최대 빠르기' 를 올리면 된다.
@@ -7180,6 +7737,22 @@
   let liveFor = null;
   let liveForSrc = '';
   let liveSince = 0;
+  // 넘긴 뒤 처음 받은 도우미 글의 줄들 = 앞 영상의 말. 그 줄과 그 줄을 마저 받아 적은 것은 새 영상에 띄우지 않는다 —
+  // 크롬은 앞 영상의 마지막 문장을 넘긴 뒤에야 끝맺어(번역까지) 보내서, 글이 '새로 바뀐' 것처럼 와 새 영상 위에 떴다
+  // (사용자 2026-11-21 틱톡: 전 화면의 자막이 나온다). null = 아직 못 받음.
+  let liveBase = null;
+  // 넘긴 직후 이만큼은 실시간 자막을 띄우지 않는다 — 앞 영상 소리의 마지막 받아 적기가 늦게 온다. 새 영상의 첫 말도
+  // 받아 적히기까지 1초는 걸려 잃는 것이 거의 없다.
+  const LIVE_SWITCH_GUARD_MS = 1200;
+  // 같은 줄을 크롬이 고쳐 쓴 것인가 — 크롬은 줄 끝만 고친다: 빈칸 빼고 같은 앞부분이 짧은 쪽의 60% 이상(6글자 이상).
+  const liveSameLine = (a, b) => {
+    const x = String(a).replace(/\s+/g, '');
+    const y = String(b).replace(/\s+/g, '');
+    if (x === y) return true;
+    let n = 0;
+    while (n < x.length && n < y.length && x[n] === y[n]) n++;
+    return n >= 6 && n >= Math.min(x.length, y.length) * 0.6;
+  };
 
   function livePlayingVideo() {
     let best = null;
@@ -7256,12 +7829,14 @@
     // 영상을 넘기면(재생 중인 영상이나 그 주소가 바뀌면) 그 뒤에 새로 받아 적힌 말만 쓴다 — 크롬 자막 창은 앞 영상의
     // 마지막 문장을 들고 있어서 새 영상 위에 6초까지 남았다(사용자 2026-11-02: 쇼츠·페이스북·틱톡에서 내리면 기존
     // 자막이 그대로). 쇼츠·틱톡처럼 <video> 하나에 영상만 바꿔 끼우는 곳도 있어 영상 주소와 페이지 주소까지 본다.
-    const src = `${v.currentSrc}|${location.pathname}`;
+    // 틱톡은 <video> 와 그 주소를 다음 영상에 그대로 다시 쓰고, 추천 목록에서는 페이지 주소도 안 바뀐다 — 영상 id 까지 본다.
+    const src = `${v.currentSrc}|${location.pathname}|${ttItemId(v)}`;
     if (v !== liveFor || src !== liveForSrc) {
       liveFor = v;
       liveForSrc = src;
       liveSince = Date.now();
       liveHad = false;
+      liveBase = null;
       liveHide();
     }
     // 자막을 꺼 두었거나 우리 자막(자막 파일)이 나오는 영상도 5초마다 묻기는 한다 — 확장이 묻는 동안 도우미가 크롬
@@ -7329,8 +7904,13 @@
           j = null;
         }
         hsHelperOk = !!(j && j.ocr); // 화면 자막 그림을 읽는 도우미(1.32.0 과 함께 나온 판)
-        const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < Date.now() - liveSince; // 이 영상을 틀고 나서 바뀐 말
-        const text = fresh ? liveTail(String(j.text || '').split('\n').slice(-2).join(' ')) : '';
+        // 이 영상을 틀고 나서 바뀐 말 중 앞 영상의 줄(liveBase)이 아닌 것만.
+        let lines = String((j && j.text) || '').split('\n').map((l) => l.trim()).filter(Boolean);
+        if (liveBase === null) liveBase = lines.slice();
+        else lines = lines.filter((l) => !liveBase.some((b) => liveSameLine(b, l)));
+        const since = Date.now() - liveSince;
+        const fresh = j && j.on && j.age < LIVE_MAX_AGE && j.age < since && since > LIVE_SWITCH_GUARD_MS;
+        const text = fresh ? liveTail(lines.slice(-2).join(' ')) : '';
         if (j && Date.now() < liveCcHoldUntil) j.ccTr = liveCc.tr; // 방금 창에서 바꿨다 — 크롬이 설정 파일을 쓰기까지
         if (j && Date.now() < liveDeadHoldUntil) j.dead = false;
         if (j && (j.ccLang || '') + !!j.ccTr !== (liveCc.lang || '') + !!liveCc.tr) {
@@ -7882,7 +8462,7 @@
     // 시험 크롬에서 자막 파일이 없는 이 드라마도 '광고가 끝나면 시작합니다…' 로 10~30초를 붙잡고 있었다.
     // 자동 자막(asr, 기계 받아쓰기)뿐이면 화면 자막도 읽는다 — 있으면 사람이 쓴 그쪽을 보인다(dubTick 이 비켜 준다).
     if ((dubOwns(v) && dub.sentences.length && !dub.asr) || ytKoreanVideo()) return hsStop();
-    const key = `${YOUTUBE ? ytVideoId() : v.currentSrc}|${location.pathname}`;
+    const key = `${YOUTUBE ? ytVideoId() : v.currentSrc}|${location.pathname}|${ttItemId(v)}`;
     if (!hs || hs.v !== v || hs.key !== key) {
       hsStop();
       hs = { v, key, on: false, hits: 0, lines: 0, ticks: 0, miss: 0, seen: null, cand: null, same: 0, read: null, busy: false, showing: false,
@@ -7935,6 +8515,10 @@
 
   function videoDubInit() {
     setInterval(liveTick, 700);
+    if (TIKTOK) {
+      ttListen();
+      setInterval(ttTick, 300);
+    }
     setInterval(hsTick, RC.video.hsEveryMs);
     // 넘기면 앞 영상이 멈춘다 — 다음 liveTick(0.7초)을 기다리지 않고 그 영상의 실시간 자막을 바로 내린다.
     document.addEventListener('pause', (e) => e.target === liveVideo && liveHide(), true);
@@ -8099,6 +8683,8 @@
   let chatDetecting = false;
   let chatDetectRetryAt = 0;
   let chatSame = new WeakMap(); // 말풍선 → 옮겨 보니 그대로 온 글(이미 내 말) — 다시 묻지 않는다
+  // 대화방 상대들이 마지막으로 쓴 언어(말이 없는 대화방의 로마자 이름 상대에게). 처음엔 없음 — 한국어 사용자의 예전 판은 태국어로 봤다.
+  let chatLastLang = String(GM_getValue('chatLastLang', '') || '');
 
   // 한자만 쓴 글(가나 없음)은 중국어 — 구글은 번체를 알아보지 못하고 'ko'·'en' 을 돌려줬다(2026-11-05 시험, 간체는 맞음).
   // 그래서 글자로 가른다: 광둥어 글자가 있으면 광둥어, 번체에만 있는 글자가 간체에만 있는 글자보다 많으면 번체(대만·홍콩).
@@ -8241,11 +8827,21 @@
     if (set === true) return chatLangObj('th');
     if (typeof set === 'string' && set) return chatLangObj(set);
     const seen = chatPartnerLang();
-    if (seen) return chatLangObj(seen);
-    if (!MY_KO) return null;
+    if (seen) {
+      // 상대들이 쓰는 언어를 기억해 둔다 — 아직 말이 없는 대화방의 로마자 이름 상대에게 쓴다(아래).
+      if (seen !== chatLastLang) GM_setValue('chatLastLang', (chatLastLang = seen));
+      return chatLangObj(seen);
+    }
+    // 상대 말이 없으면 이름 글자로(2026-11-21: 예전엔 태국 글자·로마자 이름이면 무조건 태국어였다 — 이제 30개 언어 기준).
+    // 태국·일본·히브리·크메르… 글자 이름은 그 언어, 키릴 = 러시아어, 아랍 글자 = 아랍어, 데바나가리 = 힌디어. 로마자 이름은
+    // 어느 나라 사람인지 글자로 모른다 — 다른 대화방에서 상대가 마지막으로 쓴 언어로(없으면 쓴 그대로 보낸다).
     const name = chatPartnerName();
-    if (!name || HANGUL.test(name)) return null;
-    return THAI.test(name) || /[A-Za-z]/.test(name) ? chatLangObj('th') : null;
+    if (!name) return null;
+    const byName =
+      chatScriptLang(name) ||
+      (/[Ѐ-ӿ]/.test(name) ? 'ru' : /[؀-ۿ]/.test(name) ? 'ar' : /[ऀ-ॿ]/.test(name) ? 'hi' : '');
+    if (byName) return byName.split('-')[0].toLowerCase() === MY2 ? null : chatLangObj(byName);
+    return /[A-Za-z]/.test(name) && chatLastLang && chatLastLang.split('-')[0].toLowerCase() !== MY2 ? chatLangObj(chatLastLang) : null;
   }
 
   // 언어 막대에서 고른 언어 — 메신저에서는 지금 대화방에만(대화방마다 상대 언어가 다르다). 켜져 있는 언어를 다시 누르면 그대로 보냄.

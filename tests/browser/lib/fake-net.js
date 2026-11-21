@@ -73,7 +73,7 @@ function start({ pages, glossary }) {
   const hits = []; // 쇼핑몰 쪽 요청 (host + path)
   const mt = []; // 번역 요청 { sl, tl, q }
   const other = []; // 그 밖에 받은 요청
-  const opts = { keepHangul: false }; // 시험 중에 바꾼다
+  const opts = { keepHangul: false, blockMt: false }; // 시험 중에 바꾼다
   const server = https.createServer(tls, (req, res) => {
     const host = (req.headers.host || '').replace(/:\d+$/, '');
     const u = new URL(req.url, `https://${host}`);
@@ -86,6 +86,8 @@ function start({ pages, glossary }) {
       const sl = u.searchParams.get('sl') || 'auto';
       const tl = u.searchParams.get('tl') || 'ko';
       for (const q of qs) mt.push({ sl, tl, q, path: u.pathname });
+      // opts.blockMt: 구글이 막았을 때처럼(2026-10-27) 429 + HTML 'Sorry…' 안내 페이지
+      if (opts.blockMt) return send(429, '<html><body><h1>Sorry...</h1><p>We\'re sorry... but your computer or network may be sending automated queries.</p></body></html>', 'text/html');
       if (u.pathname === '/translate_a/single') {
         const q = qs[0] || '';
         return send(200, JSON.stringify([[[mtOne(q, sl, tl, opts), q]], null, sl === 'auto' ? guessLang(q) : sl]), 'application/json');

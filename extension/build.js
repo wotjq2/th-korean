@@ -102,6 +102,12 @@ if (TEST_SCRIPT && !TEST_OUT) {
   process.exit(1);
 }
 const SCRIPT_FILE = TEST_SCRIPT ? path.resolve(TEST_SCRIPT) : path.join(ROOT, 'th-korean.user.js');
+// --test-prelude=<파일> : 시험용 빌드에서만 — content.js 맨 앞(gm.js 뒤)에 붙인다(예: 크롬 내장 번역기 흉내, tests/browser).
+const TEST_PRELUDE = (process.argv.find((a) => a.startsWith('--test-prelude=')) || '').slice('--test-prelude='.length);
+if (TEST_PRELUDE && !TEST_OUT) {
+  console.error('--test-prelude 는 --test-out 과 함께만 씁니다');
+  process.exit(1);
+}
 // 압축해제로 불러와도 확장 id 가 폴더 위치와 상관없이 늘 같게(agcbmglciepeobcgkniefahkaiigjkjk).
 // 번역 도우미(line-helper/ChromeLink.cs)가 이 id 만 받아 준다. 웹스토어에 올릴 때는 이 줄을 빼고
 // 스토어가 준 id 를 ChromeLink.Origins 에 더한다.
@@ -164,6 +170,7 @@ async function main() {
   const content = [
     `// 만들어진 파일 — 고치지 마세요. 원본: extension/src/gm.js + th-korean.user.js (extension/build.js)`,
     fs.readFileSync(path.join(SRC, 'gm.js'), 'utf8'),
+    ...(TEST_PRELUDE ? [fs.readFileSync(path.resolve(TEST_PRELUDE), 'utf8')] : []),
     `const GM_info = { script: { name: ${JSON.stringify(NAME)}, version: ${JSON.stringify(h.version)} }, scriptHandler: ${JSON.stringify(NAME)} };`,
     '',
     'gmReady',

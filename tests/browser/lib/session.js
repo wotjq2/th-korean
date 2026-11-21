@@ -8,11 +8,13 @@ const { ROOT } = require('../../lib/load');
 const { launch, sleep } = require('./chrome');
 const net = require('./fake-net');
 
-async function open({ pages, glossary }) {
+// prelude: content.js 앞에 붙일 시험용 파일(예: lib/fake-translator.js).
+async function open({ pages, glossary, prelude }) {
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'lzk-t2-'));
   const ext = path.join(tmp, 'ext');
   // 지금 저장소의 스크립트로 새로 만든다. TEST_SCRIPT 가 있으면 그 (일부러 망가뜨린) 사본으로.
   const extra = process.env.TEST_SCRIPT ? [`--test-script=${path.resolve(process.env.TEST_SCRIPT)}`] : [];
+  if (prelude) extra.push(`--test-prelude=${path.resolve(prelude)}`);
   let fake = null;
   let chrome = null;
   let id;

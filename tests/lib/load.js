@@ -48,9 +48,31 @@ function load(opt = {}) {
     return t;
   };
   const noop = () => {};
-  const el = () => ({ style: {}, classList: { add: noop, remove: noop, contains: () => false, toggle: noop }, setAttribute: noop,
-    getAttribute: () => null, appendChild: noop, append: noop, addEventListener: noop, removeEventListener: noop,
-    querySelector: () => null, querySelectorAll: () => [], remove: noop, dataset: {} });
+  // 페이지에 붙인 요소(id 로 찾는다). 안내(lzk-toast)에 쓴 글은 toasts 에 차례로 남는다.
+  const attached = new Map();
+  const toasts = [];
+  const el = () => {
+    let text = '';
+    const e = { style: {}, classList: { add: noop, remove: noop, contains: () => false, toggle: noop }, setAttribute: noop,
+      getAttribute: () => null, appendChild: noop, append: noop, addEventListener: noop, removeEventListener: noop,
+      querySelector: () => null, querySelectorAll: () => [], dataset: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }),
+      remove() { if (e.id) attached.delete(e.id); } };
+    Object.defineProperty(e, 'textContent', {
+      get: () => text,
+      set: (v) => { text = String(v); if (e.id === 'lzk-toast') toasts.push(text); },
+    });
+    return e;
+  };
+  const body = el();
+  body.appendChild = (n) => { if (n && n.id) attached.set(n.id, n); return n; };
+
+  // 구글 번역 가짜: opt.mt = 'blocked'(429 + HTML 'Sorry' — 2026-10-27 처럼) | 'offline'(인터넷 끊김) | 없으면 정상
+  const mtReply = (url) => (opt.mt === 'blocked' ? { status: 429, text: '<html><body>Sorry...</body></html>' } : opt.mt === 'offline' ? null : { status: 200, text: fakeMt(url) });
+
+  // 크롬 내장 번역기 가짜: opt.translator = { 'ko>th': 'available' | 'downloadable' | 'unavailable', … }.
+  // 켜지 않은(downloadable) 쌍은 누름 중(opt.activation)에만 만들 수 있다 — 진짜 크롬과 같게. 답은 '내장(쌍):원문'.
+  const builtinCalls = [];
+  const userActivation = { isActive: !!opt.activation };
 
   const sb = {
     console,
@@ -64,22 +86,25 @@ function load(opt = {}) {
     GM_xmlhttpRequest: (o) => {
       requests.push(o.url);
       let text;
+      let status = 200;
       if (/th-korean-glossary/.test(o.url)) text = glossaryText;
-      else if (/translate\.googleapis\.com/.test(o.url)) text = fakeMt(o.url);
-      else if (opt.http) text = opt.http(o.url);
+      else if (/translate\.googleapis\.com/.test(o.url)) {
+        const r = mtReply(o.url);
+        if (r) ({ status, text } = r);
+      } else if (opt.http) text = opt.http(o.url);
       queueMicrotask(() => {
         if (text == null) o.onerror && o.onerror({ status: 0, error: 'test: 네트워크 없음' });
-        else o.onload && o.onload({ status: 200, responseText: text, responseHeaders: '', finalUrl: o.url });
+        else o.onload && o.onload({ status, responseText: text, responseHeaders: '', finalUrl: o.url });
       });
       return { abort: noop };
     },
     location: { hostname: host, host, href: `https://${host}/`, origin: `https://${host}`, search: '', pathname: '/', hash: '' },
     history: { pushState: noop, replaceState: noop },
-    navigator: { language: 'ko-KR', languages: ['ko-KR'], userAgent: 'node-test', platform: 'Win32' },
+    navigator: { language: 'ko-KR', languages: ['ko-KR'], userAgent: 'node-test', platform: 'Win32', userActivation },
     document: {
       readyState: 'loading', addEventListener: noop, removeEventListener: noop,
-      documentElement: { lang: '', ...el() }, head: el(), body: null, createElement: el, createTextNode: () => ({}),
-      querySelector: () => null, querySelectorAll: () => [], getElementById: () => null,
+      documentElement: Object.assign(el(), { lang: opt.pageLang || '' }), head: el(), body, createElement: el, createTextNode: () => ({}),
+      querySelector: () => null, querySelectorAll: () => [], getElementById: (id) => attached.get(id) || null,
       createDocumentFragment: () => ({ querySelector: () => null }),
       visibilityState: 'visible', title: '',
     },
@@ -96,6 +121,19 @@ function load(opt = {}) {
       return Promise.resolve(k in store ? structuredClone(store[k]) : d);
     };
   }
+  if (opt.translator) {
+    const state = (s, t) => opt.translator[`${s}>${t}`] || 'unavailable';
+    sb.Translator = {
+      availability: async ({ sourceLanguage: s, targetLanguage: t }) => state(s, t),
+      create: async ({ sourceLanguage: s, targetLanguage: t }) => {
+        const st = state(s, t);
+        if (st === 'unavailable') throw new Error('NotSupportedError');
+        if (st !== 'available' && !userActivation.isActive) throw new Error('NotAllowedError: Requires a user gesture');
+        opt.translator[`${s}>${t}`] = 'available'; // 한 번 켜면 이 사이트에서는 계속
+        return { translate: async (x) => { builtinCalls.push(`${s}>${t}|${x}`); return `내장(${s}>${t}):${x}`; } };
+      },
+    };
+  }
   sb.window = sb;
   sb.self = sb;
   sb.top = sb;
@@ -104,7 +142,7 @@ function load(opt = {}) {
   vm.createContext(sb);
   script().runInContext(sb);
   if (typeof sb.__peek !== 'function') throw new Error('스크립트를 불러오지 못함(__peek 없음)');
-  return { peek: sb.__peek, store, requests, lazyReads, sandbox: sb };
+  return { peek: sb.__peek, store, requests, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb };
 }
 
 module.exports = { load, ROOT, SCRIPT };

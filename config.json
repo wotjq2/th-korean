@@ -36,7 +36,7 @@
   "_languages": "입력칸의 한국어를 바꿀 언어(사이트의 '번역' 단추·LINE 언어 막대). id = 구글 번역 언어 코드(ko·th·en·vi·id·ms·km·lo·my·fr …), label = 단추 글자(1~3자), name = 이름, mt = 번역에 쓸 코드가 id 와 다를 때(중국어 zh-CN), chip = 입력칸 옆 표시. 용어집을 쓰려면 \"glossary\": \"glossary-vi.txt\" 처럼 th-korean-glossary 저장소의 파일 이름을 적는다(한 줄에 '한국어=그 언어', 태국어 glossary.txt 와 같은 꼴) — 입력 전체가 용어집 줄과 맞으면 그 값, 아니면 구글 번역. 태국어(th)는 빼도 늘 들어간다. 예: { \"id\": \"vi\", \"label\": \"베\", \"name\": \"베트남어\", \"chip\": \"→ VI\", \"glossary\": \"glossary-vi.txt\" }",
 
   "translate": { "order": ["gtx", "dict"] },
-  "_translate": "무료 구글 번역 주소를 써 보는 차례. gtx = translate_a/single, dict = translate_a/t(크롬 사전 확장 주소). 한쪽이 막히면(2026-10-27 gtx 429) [\"dict\", \"gtx\"] 로 바꾼다.",
+  "_translate": "무료 구글 번역 주소를 써 보는 차례. gtx = translate_a/single, dict = translate_a/t(크롬 사전 확장 주소). 한쪽이 막히면(2026-10-27 gtx 429) [\"dict\", \"gtx\"] 로 바꾼다. builtin = 크롬 내장 번역기(1.35.4+, 이 PC 안에서 번역) — 적지 않아도 구글이 둘 다 막히거나 인터넷이 안 되면 끝으로 쓴다. 구글이 오래 막히면 [\"builtin\", \"dict\", \"gtx\"] 처럼 앞에 둔다.",
 
   "video": {
     "liveMaxChars": 60,

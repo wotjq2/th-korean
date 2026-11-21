@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.3
+// @version      1.35.4
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -570,7 +570,7 @@
       for (const [h, p] of Object.entries(chip.hosts)) if (/^[a-z0-9.-]+$/.test(h) && places.includes(p)) hosts[h] = p;
     }
     const order = Array.isArray(j.translate && j.translate.order)
-      ? [...new Set(j.translate.order.filter((x) => x === 'gtx' || x === 'dict'))]
+      ? [...new Set(j.translate.order.filter((x) => x === 'gtx' || x === 'dict' || x === 'builtin'))]
       : [];
     return {
       languages: rcLanguages(j.languages),
@@ -1414,16 +1414,28 @@
   let rateLimitUntil = 0;        // 이 시각까지는 페이지 번역을 쉬게 한다
   const RATE_LIMIT_COOLDOWN = 45000;
 
+  // 구글이 막혔을 때의 안내. 크롬 내장 번역기를 누름 한 번으로 켤 수 있으면 그 단추가 된다(builtinEnable).
+  // 예전 안내('설정에서 엔진을 Groq으로')는 키가 없는 대부분의 사용자에게 할 수 있는 일이 아니었다(2026-11-21).
   function noteRateLimit() {
     rateLimitUntil = Date.now() + RATE_LIMIT_COOLDOWN;
     const now = Date.now();
     if (now - rateLimitNotified < 30000) return;
     rateLimitNotified = now;
+    if (builtinWant) {
+      const { from, to } = builtinWant;
+      toastAction(
+        '구글 번역이 잠시 막혔습니다.\n' +
+          `▶ 여기를 누르면 크롬 내장 번역기로 계속 옮깁니다 (${builtinName(from)} → ${builtinName(to)}, 이 PC 안에서 번역).`,
+        15000,
+        builtinEnable
+      );
+      return;
+    }
     toast(
-      '무료 번역 API가 요청을 일시적으로 거절했습니다.\n' +
-        `${RATE_LIMIT_COOLDOWN / 1000}초 뒤 자동으로 다시 시도합니다.\n` +
-        '계속 반복되면 설정에서 엔진을 Groq으로 바꾸세요.',
-      6000
+      '구글 번역이 잠시 막혔습니다.\n' +
+        `${RATE_LIMIT_COOLDOWN / 1000}초 뒤 다시 해 봅니다. 용어집에 있는 말은 그대로 됩니다.` +
+        (builtinMissing ? `\n(${builtinName(builtinMissing)}: 크롬 내장 번역기에 없는 언어라 구글이 풀릴 때까지 기다립니다 — 보통 몇 분~몇 시간)` : ''),
+      7000
     );
   }
 
@@ -1435,19 +1447,180 @@
 
   // 두 주소를 원격 설정(config.json 의 translate.order)의 차례로 써 본다. 구글이 한쪽을 막으면(2026-10-27 gtx 429)
   // 설정만 바꿔 다른 쪽을 먼저 쓰게 한다 — 스크립트·확장을 다시 올리지 않는다.
-  async function freeRaw(text, from, to, timeout) {
-    const order = RC.translate.order;
+  // 구글이 둘 다 막혔거나 인터넷이 안 되면 끝으로 크롬 내장 번역기(builtin)를 쓴다. order 에 'builtin' 을 적으면 그 차례에
+  // (예: 구글이 오래 막히면 config.json 에서 ['builtin', 'dict', 'gtx'] — 심사 없이). opt.builtin === false 면 구글만.
+  async function freeRaw(text, from, to, timeout, opt = {}) {
+    const order = RC.translate.order.includes('builtin') ? RC.translate.order : [...RC.translate.order, 'builtin'];
+    let fail = null; // 구글이 막혔으면 RateLimited, 다른 까닭(인터넷 끊김·시간 초과)이면 그 오류
     for (let i = 0; i < order.length; i++) {
+      if (order[i] === 'builtin') {
+        if (opt.builtin === false) continue;
+        const out = await builtinTranslate(text, from, to);
+        if (out != null) {
+          if (fail) noteBuiltinUsed();
+          freeLastWay = 'builtin';
+          return out;
+        }
+        continue;
+      }
+      if (fail && !fail.rateLimited) continue; // 인터넷이 안 되면 다른 구글 주소도 안 된다 — 내장 번역기만 본다
       const gtx = order[i] === 'gtx';
       if (gtx && Date.now() < gtxBlockedUntil && i < order.length - 1) continue;
       try {
-        return await (gtx ? freeGtx : freeAlt)(text, from, to, timeout);
+        const out = await (gtx ? freeGtx : freeAlt)(text, from, to, timeout);
+        freeLastWay = 'google';
+        return out;
       } catch (e) {
-        if (!isBlocked(e)) throw e;
-        if (gtx) gtxBlockedUntil = Date.now() + 10 * 60 * 1000;
+        if (isBlocked(e)) {
+          if (gtx) gtxBlockedUntil = Date.now() + 10 * 60 * 1000;
+          fail = new RateLimited();
+        } else fail = e;
       }
     }
-    throw new RateLimited();
+    throw fail || new RateLimited();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 크롬 내장 번역기(Translator API, 크롬 138+) — 구글이 막히거나 인터넷이 안 될 때의 예비 길(1.35.4, 4번).
+  // 이 PC 안에서 옮긴다(글이 밖으로 나가지 않는다). 2026-11-21 크롬 157 에서 잰 것: 한국어와 태·영·중(간체·번체)·일·베·
+  // 인니·힌디·스페인·아랍·프랑스·벵골·포르투갈·러시아·독일·마라티·텔루구·터키·타밀·히브리·폴란드·이탈리아어는 되고, 우르두·
+  // 광둥·몽골·말레이·필리핀·크메르·라오·미얀마어는 없다. 한 줄 1~36 ms. 언어 모델은 처음 한 번 받는다(한→태 약 17초).
+  // 크롬은 사이트마다 '누름' 한 번이 있어야 그 언어 쌍을 켜 준다(사용자 언어 목록 밖 — 개인정보 보호). 한 번 켜면 그 사이트에서는
+  // 새로 고쳐도 누름 없이 된다. 그래서 Enter·누름 중이면 바로 켜고, 아니면 막힘 안내를 누를 때 켠다(builtinEnable).
+  // 몽키·번역 도우미에는 Translator 가 없어 이 길은 쉰다.
+  // ---------------------------------------------------------------------------
+  const BUILTIN_OK = typeof Translator !== 'undefined';
+  const builtinTr = new Map(); // '쌍' → 약속(번역기 또는 null)
+  const builtinNone = new Set(); // 내장 번역기에 없는 쌍
+  let builtinWant = null; // 누르면 켤 쌍 { from, to }
+  let builtinMissing = ''; // 내장 번역기에 없는 언어(안내용)
+  let builtinUsedNotified = 0;
+  let builtinDetector = null;
+  const builtinCode = (c) => {
+    c = String(c || '');
+    return c === 'yue' ? 'zh-TW' : c === 'iw' ? 'he' : c === 'fil' ? 'tl' : c;
+  };
+  function builtinName(c) {
+    const l = RC.languages.find((x) => x.mt === c || x.id === c);
+    if (l) return langName(l);
+    try {
+      return new Intl.DisplayNames([MY], { type: 'language' }).of(c) || c; // 내 언어(한국어 등)는 목록에 없다
+    } catch {
+      return c;
+    }
+  }
+  // 마지막 무료 번역이 어느 길이었나 — 검색 안내 '(…)' 에 그대로 보인다(내장 번역기였으면 그렇다고).
+  let freeLastWay = '';
+  const freeLabel = (google = '무료 API') => (freeLastWay === 'builtin' ? '크롬 내장 번역기' : google);
+  // 원문 언어. 'auto' 면 글자로(태·일·한·중·히브리·크메르…), 로마자면 크롬 언어 알아보기(받아 둔 때만), 그래도 모르면 페이지 언어.
+  async function builtinSource(text, from, usePageLang = true) {
+    if (from && from !== 'auto') return from;
+    const s = chatScriptLang(text);
+    if (s) return s;
+    if (/[Ѐ-ӿ]/.test(text)) return 'ru';
+    if (/[؀-ۿ]/.test(text)) return 'ar';
+    if (/[ऀ-ॿ]/.test(text)) return 'hi';
+    if (typeof LanguageDetector !== 'undefined') {
+      try {
+        if (!builtinDetector && (await LanguageDetector.availability()) === 'available') builtinDetector = LanguageDetector.create();
+        if (builtinDetector) {
+          const [top] = await (await builtinDetector).detect(text);
+          if (top && top.confidence >= 0.5 && top.detectedLanguage !== 'und') return top.detectedLanguage;
+        }
+      } catch {
+        builtinDetector = null;
+      }
+    }
+    if (!usePageLang) return '';
+    const pl = String(document.documentElement.lang || '').split('-')[0].toLowerCase();
+    return /^[a-z]{2}$/.test(pl) ? pl : '';
+  }
+  function builtinGet(from, to) {
+    const key = `${from}>${to}`;
+    if (builtinNone.has(key)) return Promise.resolve(null);
+    if (builtinTr.has(key)) return builtinTr.get(key);
+    const job = (async () => {
+      let a = 'unavailable';
+      try {
+        a = await Translator.availability({ sourceLanguage: from, targetLanguage: to });
+      } catch {
+        /* 크롬이 모르는 언어 코드 */
+      }
+      if (a === 'unavailable') {
+        builtinNone.add(key);
+        builtinMissing = [from, to].find((c) => c.split('-')[0] !== MY2) || to;
+        return null;
+      }
+      // 아직 이 사이트에서 안 켠 쌍은 누름(Enter·누름) 중에만 켤 수 있다.
+      if (a !== 'available' && !(navigator.userActivation && navigator.userActivation.isActive)) {
+        builtinWant = { from, to };
+        return null;
+      }
+      return Translator.create({
+        sourceLanguage: from,
+        targetLanguage: to,
+        monitor(m) {
+          m.addEventListener('downloadprogress', (e) => {
+            if (e.loaded < 1) toast(`크롬 내장 번역기를 받는 중 (${builtinName(from)} → ${builtinName(to)}) ${Math.round(e.loaded * 100)}%\n처음 한 번만 받습니다.`, 4000);
+          });
+        },
+      });
+    })()
+      .catch(() => null)
+      .then((t) => {
+        if (!t) builtinTr.delete(key);
+        else if (builtinWant && builtinWant.from === from && builtinWant.to === to) builtinWant = null;
+        return t;
+      });
+    builtinTr.set(key, job);
+    return job;
+  }
+  async function builtinTranslate(text, from, to) {
+    if (!BUILTIN_OK || !text || !String(text).trim()) return null;
+    const src = builtinCode(await builtinSource(text, from));
+    const dst = builtinCode(to);
+    if (!src || !dst) return null;
+    if (src === dst) return text;
+    const t = await builtinGet(src, dst);
+    if (!t) return null;
+    try {
+      return await t.translate(text);
+    } catch {
+      return null;
+    }
+  }
+  // 여러 줄. 첫 줄부터 안 되면(켜지 않은 쌍·없는 언어) null — 그때는 막힘 안내로 간다.
+  async function builtinMany(lines, from, to) {
+    if (!BUILTIN_OK) return null;
+    const out = [];
+    for (const l of lines) {
+      const r = await builtinTranslate(l, from, to);
+      if (r == null && !out.length) return null;
+      out.push(r);
+    }
+    return out;
+  }
+  function noteBuiltinUsed() {
+    const now = Date.now();
+    if (now - builtinUsedNotified < 60000) return;
+    builtinUsedNotified = now;
+    toast('구글 번역이 잠시 막혀 크롬 내장 번역기로 옮기고 있습니다(이 PC 안에서 번역).\n구글이 풀리면 저절로 돌아갑니다.', 5000);
+  }
+  // 막힘 안내를 눌렀을 때(그 누름으로 크롬이 쌍을 켜 준다).
+  function builtinEnable() {
+    const w = builtinWant;
+    if (!w) return;
+    toast(`크롬 내장 번역기를 켜는 중… (${builtinName(w.from)} → ${builtinName(w.to)})`, 20000);
+    builtinGet(w.from, w.to).then((t) => {
+      if (!t) {
+        toast('크롬 내장 번역기를 켜지 못했습니다. 크롬을 최신으로 올린 뒤 다시 해 보세요.', 6000);
+        return;
+      }
+      rateLimitUntil = 0;
+      rateLimitNotified = 0;
+      toast('크롬 내장 번역기를 켰습니다. 이 사이트에서는 구글이 막혀도 이것으로 옮깁니다.', 5000);
+      if (!GENERIC) translatePage();
+    });
   }
 
   async function freeGtx(text, from, to, timeout) {
@@ -1538,7 +1711,8 @@
         }
       }
       try {
-        const joined = await freeRaw(lines.join('\n'), from, to);
+        // 이어 보내기는 구글만 — 내장 번역기는 줄마다 옮긴다(아래).
+        const joined = await freeRaw(lines.join('\n'), from, to, undefined, { builtin: false });
         const parts = joined.split('\n');
         if (parts.length === lines.length) {
           idxs.forEach((orig, k) => {
@@ -1549,7 +1723,17 @@
         // 줄 수가 어긋났다 — 이 묶음만 하나씩 처리한다.
       } catch (e) {
         if (e.rateLimited) {
-          // 거절당한 상태에서 개별 재시도를 하면 상황만 악화된다. 이 묶음은 포기한다.
+          // 구글이 막혔다 — 크롬 내장 번역기로 줄마다. 그것도 안 되면(켜지 않은 쌍·없는 언어) 이 묶음은 포기한다.
+          // 거절당한 상태에서 구글에 하나씩 다시 물으면 상황만 나빠진다.
+          const viaBuiltin = await builtinMany(lines, from, to);
+          if (viaBuiltin) {
+            noteBuiltinUsed();
+            freeLastWay = 'builtin';
+            idxs.forEach((orig, k) => {
+              out[orig] = viaBuiltin[k] ? viaBuiltin[k].trim() : null;
+            });
+            return;
+          }
           noteRateLimit();
           return;
         }
@@ -1839,7 +2023,7 @@
         if (dropped.length) notes.push('번역하지 못해 뺀 말: ' + dropped.map((p) => p.ko).join(', '));
         return {
           thai,
-          via: filled.length ? '용어집 + 무료 API' : '용어집',
+          via: filled.length ? `용어집 + ${freeLabel()}` : '용어집',
           note: notes.join('\n'),
         };
       }
@@ -1850,7 +2034,7 @@
     if (cached) return { thai: cached, via: '캐시' };
     const out = await freeRaw(trimmed, 'ko', 'th', SEARCH_FREE_TIMEOUT);
     if (out) cacheSet(trimmed, 'th', out);
-    return { thai: out, via: '무료 API' };
+    return { thai: out, via: freeLabel() };
   }
 
   // 이 쇼핑몰 말(SITE_LANG)의 언어 항목 — 언어 목록(config.json languages)에 없는 말이면 구글 코드만으로.
@@ -3344,9 +3528,23 @@
       document.body.appendChild(el);
     }
     el.textContent = msg;
+    el.onclick = null; // 누를 수 있는 안내(toastAction)였다면 되돌린다
+    el.style.cursor = '';
     placeLzk(); // 글 길이로 너비가 바뀐다 — 화면 안에 들게 다시 맞춘다
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.remove(), ms);
+  }
+  // 누르면 onClick 을 부르는 안내(그 누름이 크롬의 '사용자 동작' 이 된다 — 내장 번역기 켜기).
+  function toastAction(msg, ms, onClick) {
+    toast(msg, ms);
+    const el = document.getElementById('lzk-toast');
+    if (!el) return;
+    el.style.cursor = 'pointer';
+    el.onclick = () => {
+      el.onclick = null;
+      el.style.cursor = '';
+      onClick();
+    };
   }
 
   // 페이지를 넘어가도 보여 줄 토스트. 다음 페이지의 init 에서 꺼내 띄운다.
@@ -6032,7 +6230,7 @@
     if (!MY_KO) {
       const crossed = await crossLookup(value, MY2, lang.id);
       if (crossed) return { thai: crossed, via: '사전' };
-      return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: '번역' };
+      return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: freeLabel('번역') };
     }
     if (lang.id === 'th') {
       await ensureGlossary();
@@ -6042,7 +6240,7 @@
     if (own) return { thai: own, via: '용어집' };
     const hit = (lang.id === 'en' || lang.id === 'zh') && koEnZhLookup(value, lang.id);
     if (hit) return { thai: hit, via: '용어집' };
-    return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: '번역' };
+    return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: freeLabel('번역') };
   }
 
   async function convertInputToThai(input) {
@@ -8843,7 +9041,10 @@
       const data = JSON.parse(await request({ method: 'GET', url, timeout: 6000 }));
       return Array.isArray(data) && typeof data[2] === 'string' ? data[2] : '';
     });
-    return texts.map((t, i) => got[i] || '');
+    const res = texts.map((t, i) => got[i] || '');
+    // 구글이 답하지 않은 글은 글자·크롬 언어 알아보기로(페이지 언어로 짐작하지는 않는다 — 메신저 화면 언어는 상대 말이 아니다).
+    if (BUILTIN_OK) for (let i = 0; i < res.length; i++) if (!res[i]) res[i] = (await builtinSource(texts[i], 'auto', false)) || '';
+    return res;
   }
 
   // 상대가 쓰는 언어(내 언어가 아닌 것) — 최근 말풍선 40개 가운데 가장 많은 것. collect 를 주면 아직 구글에 묻지 않은
@@ -10414,7 +10615,7 @@
     if (!MY_KO) {
       const crossed = await crossLookup(text, MY2, 'th');
       if (crossed) return { thai: crossed, via: '사전' };
-      return { thai: (await freeTranslateOne(text, 'auto', 'th')).trim(), via: '번역' };
+      return { thai: (await freeTranslateOne(text, 'auto', 'th')).trim(), via: freeLabel('번역') };
     }
     await ensureGlossary();
     const idx = buildIndex();

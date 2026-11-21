@@ -19,11 +19,13 @@ function findChrome() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function launch({ profile, hostRules }) {
+// allowComponents: 크롬 부품(내장 번역기 모델 등)을 내려받게 둔다 — 보통 시험은 막는다(진짜 인터넷에 안 나가게).
+async function launch({ profile, hostRules, allowComponents = false }) {
   const args = [
     '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', `--user-data-dir=${profile}`,
-    '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-component-update',
-    '--disable-background-networking', '--disable-default-apps', '--mute-audio', '--lang=ko',
+    '--no-first-run', '--no-default-browser-check', '--disable-sync',
+    ...(allowComponents ? [] : ['--disable-component-update', '--disable-background-networking']),
+    '--disable-default-apps', '--mute-audio', '--lang=ko',
     `--host-resolver-rules=${hostRules}`, '--ignore-certificate-errors',
     '--window-position=-2400,0', '--window-size=1300,900',
     '--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',

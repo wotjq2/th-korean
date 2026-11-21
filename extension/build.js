@@ -86,7 +86,22 @@ const OCR_QUIET =
 const STORE = process.argv.includes('--store');
 // 웹스토어판은 따로 만든다 — dist 는 이 PC 크롬이 압축해제로 불러 쓰는 곳이라, key 없이 덮으면 확장 id 가 바뀌어
 // 번역 도우미와의 연결이 끊긴다.
-const OUT = path.join(__dirname, STORE ? 'store/dist' : 'dist');
+// node extension/build.js --test-out=<폴더> : 2단계 시험(tests/browser)용. key 를 빼서(이 PC 번역 도우미와 이어지지 않게)
+// 그 폴더에 만든다. zip·시험 없음. 폴더를 통째로 지우고 쓰므로 임시 폴더 안만 받는다.
+const TEST_OUT = (process.argv.find((a) => a.startsWith('--test-out=')) || '').slice('--test-out='.length);
+const TMP_DIRS = [require('os').tmpdir(), fs.realpathSync.native(require('os').tmpdir())].map((d) => d.toLowerCase() + path.sep);
+if (TEST_OUT && !TMP_DIRS.some((d) => path.resolve(TEST_OUT).toLowerCase().startsWith(d))) {
+  console.error(`--test-out 은 임시 폴더(${require('os').tmpdir()}) 안이어야 합니다: ${TEST_OUT}`);
+  process.exit(1);
+}
+const OUT = TEST_OUT ? path.resolve(TEST_OUT) : path.join(__dirname, STORE ? 'store/dist' : 'dist');
+// --test-script=<파일> : 시험용 빌드에서만 — 일부러 망가뜨린 스크립트 사본으로 만들어 시험이 잡는지 본다.
+const TEST_SCRIPT = (process.argv.find((a) => a.startsWith('--test-script=')) || '').slice('--test-script='.length);
+if (TEST_SCRIPT && !TEST_OUT) {
+  console.error('--test-script 는 --test-out 과 함께만 씁니다');
+  process.exit(1);
+}
+const SCRIPT_FILE = TEST_SCRIPT ? path.resolve(TEST_SCRIPT) : path.join(ROOT, 'th-korean.user.js');
 // 압축해제로 불러와도 확장 id 가 폴더 위치와 상관없이 늘 같게(agcbmglciepeobcgkniefahkaiigjkjk).
 // 번역 도우미(line-helper/ChromeLink.cs)가 이 id 만 받아 준다. 웹스토어에 올릴 때는 이 줄을 빼고
 // 스토어가 준 id 를 ChromeLink.Origins 에 더한다.
@@ -119,8 +134,9 @@ async function vendorFile(url) {
 // 예전 zip·store/dist 는 건드리지 않는다. 시험을 건너뛰는 옵션은 일부러 두지 않았다 — 고친 뒤 다시 만든다.
 function runTestsOrStop() {
   if (!fs.existsSync(path.join(ROOT, 'tests'))) throw new Error('tests 폴더가 없습니다 — 시험 없이 웹스토어판을 만들지 않습니다');
-  console.log('고정 테스트를 돌립니다 (node --test "tests/*.test.js") …');
-  const r = require('child_process').spawnSync(process.execPath, ['--test', '--test-reporter=dot', 'tests/*.test.js'], {
+  // 1단계(브라우저 없이) + 2단계(시험용 크롬 + 가짜 쇼핑몰, 30초쯤)
+  console.log('고정 테스트를 돌립니다 (node --test "tests/*.test.js" "tests/browser/*.test.js") …');
+  const r = require('child_process').spawnSync(process.execPath, ['--test', '--test-reporter=dot', 'tests/*.test.js', 'tests/browser/*.test.js'], {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -131,7 +147,7 @@ function runTestsOrStop() {
 
 async function main() {
   if (STORE) runTestsOrStop();
-  const script = fs.readFileSync(path.join(ROOT, 'th-korean.user.js'), 'utf8').replace(/^﻿/, '');
+  const script = fs.readFileSync(SCRIPT_FILE, 'utf8').replace(/^﻿/, '');
   const h = header(script);
   if (!/^\d+(\.\d+){0,3}$/.test(h.version || '')) throw new Error(`@version 이 크롬 버전 꼴이 아닙니다: ${h.version}`);
 
@@ -183,7 +199,7 @@ async function main() {
     name: NAME,
     version: h.version,
     description: DESCRIPTION,
-    ...(STORE ? {} : { key: DEV_KEY }),
+    ...(STORE || TEST_OUT ? {} : { key: DEV_KEY }),
     icons,
     action: { default_title: NAME, default_popup: 'popup.html', default_icon: icons },
     background: { service_worker: 'background.js' },

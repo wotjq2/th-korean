@@ -115,7 +115,22 @@ async function vendorFile(url) {
   return file;
 }
 
+// 웹스토어판은 고정 테스트(tests/)를 먼저 돌려, 하나라도 실패하면 zip 을 만들지 않는다(2026-11-21 사용자: 막아 줘).
+// 예전 zip·store/dist 는 건드리지 않는다. 시험을 건너뛰는 옵션은 일부러 두지 않았다 — 고친 뒤 다시 만든다.
+function runTestsOrStop() {
+  if (!fs.existsSync(path.join(ROOT, 'tests'))) throw new Error('tests 폴더가 없습니다 — 시험 없이 웹스토어판을 만들지 않습니다');
+  console.log('고정 테스트를 돌립니다 (node --test "tests/*.test.js") …');
+  const r = require('child_process').spawnSync(process.execPath, ['--test', '--test-reporter=dot', 'tests/*.test.js'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  if (r.error) throw new Error(`시험을 돌리지 못했습니다: ${r.error.message}`);
+  if (r.status !== 0) throw new Error('고정 테스트가 실패해서 웹스토어 zip 을 만들지 않았습니다. 위의 실패한 시험을 고친 뒤 다시 만드세요.');
+  console.log('고정 테스트 통과.');
+}
+
 async function main() {
+  if (STORE) runTestsOrStop();
   const script = fs.readFileSync(path.join(ROOT, 'th-korean.user.js'), 'utf8').replace(/^﻿/, '');
   const h = header(script);
   if (!/^\d+(\.\d+){0,3}$/.test(h.version || '')) throw new Error(`@version 이 크롬 버전 꼴이 아닙니다: ${h.version}`);

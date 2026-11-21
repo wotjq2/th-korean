@@ -43,11 +43,13 @@ const MT_TABLE = {
 };
 // 진짜 구글처럼: 같은 말로 옮기라면 그대로 돌려주고, 한국어가 아닌 말로 옮긴 답에는 한글이 남지 않는다.
 // (한글을 남기면 확장의 화면 글 옮기기가 끝없이 다시 옮겨 페이지가 멈췄다 — 2026-11-21 시험에서 찾음)
-function mtOne(q, sl, tl) {
+// opts.keepHangul: 한국어 → 다른 말 답에 원래 한국어를 남긴다(구글이 이름 등을 그대로 둘 때) — 멈춤 시험용.
+function mtOne(q, sl, tl, opts = {}) {
   const base = tl.split('-')[0];
   const k = `${base}|${q}`;
   if (MT_TABLE[k]) return MT_TABLE[k];
   if (guessLang(q).split('-')[0] === base) return q;
+  if (opts.keepHangul && base !== 'ko' && /[가-힣]/.test(q)) return `${q} (${tl})`;
   if (base === 'ko') return `번역:${q}`;
   return `[${tl}]` + q.replace(/[ㄱ-ㆎ가-힣]+/g, (m) => `k${m.length}`);
 }
@@ -71,6 +73,7 @@ function start({ pages, glossary }) {
   const hits = []; // 쇼핑몰 쪽 요청 (host + path)
   const mt = []; // 번역 요청 { sl, tl, q }
   const other = []; // 그 밖에 받은 요청
+  const opts = { keepHangul: false }; // 시험 중에 바꾼다
   const server = https.createServer(tls, (req, res) => {
     const host = (req.headers.host || '').replace(/:\d+$/, '');
     const u = new URL(req.url, `https://${host}`);
@@ -85,9 +88,9 @@ function start({ pages, glossary }) {
       for (const q of qs) mt.push({ sl, tl, q, path: u.pathname });
       if (u.pathname === '/translate_a/single') {
         const q = qs[0] || '';
-        return send(200, JSON.stringify([[[mtOne(q, sl, tl), q]], null, sl === 'auto' ? guessLang(q) : sl]), 'application/json');
+        return send(200, JSON.stringify([[[mtOne(q, sl, tl, opts), q]], null, sl === 'auto' ? guessLang(q) : sl]), 'application/json');
       }
-      const out = qs.map((q) => (sl === 'auto' ? [mtOne(q, sl, tl), guessLang(q)] : mtOne(q, sl, tl)));
+      const out = qs.map((q) => (sl === 'auto' ? [mtOne(q, sl, tl, opts), guessLang(q)] : mtOne(q, sl, tl, opts)));
       return send(200, JSON.stringify(out), 'application/json');
     }
     if (host === 'api.github.com' || host === 'raw.githubusercontent.com') {
@@ -112,7 +115,7 @@ function start({ pages, glossary }) {
       // 앞에서부터 맞는 규칙을 쓴다 — 나머지 이름은 모두 '없는 주소'(진짜 인터넷으로 안 나간다)
       const hostRules = [...mapped.map((h) => `MAP ${h} 127.0.0.1:${port}`), 'MAP * ~NOTFOUND'].join(', ');
       resolve({
-        port, hostRules, hits, mt, other,
+        port, hostRules, hits, mt, other, opts,
         close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); fs.rmSync(dir, { recursive: true, force: true }); }),
       });
     })

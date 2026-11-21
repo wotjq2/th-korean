@@ -110,6 +110,26 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
     assert.ok(Math.abs(x2 - x1) <= 4 && Math.abs(y2 - y1) <= 4, `자리를 잊음: 놓은 곳 ${x1},${y1} / 새로 고침 뒤 ${x2},${y2}`);
   });
 
+  test('영어 사용자: 번역 답에 원래 한국어가 섞여 와도 페이지가 멈추지 않는다', T, async () => {
+    // 2026-11-21 찾은 멈춤: 단추 안내(title)를 옮긴 글에 한국어가 남으면 끝없이 다시 옮겼다.
+    S.fake.opts.keepHangul = true;
+    try {
+      await S.setStore({ 'gm:uiTr:en': {} }); // 전에 옮겨 둔 화면 글을 지우고 새로 묻게
+      await S.setMyLang('en');
+      await t.go('https://shopee.vn/');
+      await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+      await t.until(`/\\(en\\)/.test(document.getElementById('lzk-fab').title)`, 10000, '단추 안내가 옮겨짐');
+      for (let i = 0; i < 6; i++) {
+        await sleep(500);
+        const title = await t.ev(`document.getElementById('lzk-fab').title`, 5000); // 멈췄으면 여기서 '멈춤'
+        assert.ok(title.length < 300, `단추 안내가 계속 길어짐: ${title.slice(0, 120)}…`);
+      }
+    } finally {
+      S.fake.opts.keepHangul = false;
+      await S.setMyLang('ko');
+    }
+  });
+
   test('전체: 확장 오류 0건, 한국어로 검색된 적 없음, 모르는 주소 요청 없음, 진짜 인터넷은 막힘', T, async () => {
     assert.deepEqual(t.errors(), []);
     assert.deepEqual(S.fake.hits.filter((h) => /search|catalog/.test(h) && HANGUL.test(h)), []);

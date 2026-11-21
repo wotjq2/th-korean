@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.1
+// @version      1.35.2
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -164,14 +164,23 @@
       node.nodeValue = out;
     } else uiWrote.set(node, v);
   }
+  // 속성도 우리가 써 넣은 글은 다시 옮기지 않는다(글 노드의 uiWrote 와 같은 막이). 옮긴 글에 원래 한국어가 남으면
+  // ('번역' → '번역 Translate') 고치기 → MutationObserver → 또 고치기가 끝없이 돌아 페이지가 멈췄다(2026-11-21 시험).
+  const uiWroteAttr = new WeakMap(); // 요소 → { 속성: 우리가 써 넣은 글 }
   function uiFixAttrs(el) {
     let wait = false;
     for (const a of UI_ATTRS) {
       const v = el.getAttribute && el.getAttribute(a);
       if (!v || !HANGUL.test(v)) continue;
+      const wrote = uiWroteAttr.get(el);
+      if (wrote && wrote[a] === v) continue;
       const out = uiReplace(v);
       if (out == null) wait = true;
-      else if (out !== v) el.setAttribute(a, out);
+      else if (out !== v) {
+        if (wrote) wrote[a] = out;
+        else uiWroteAttr.set(el, { [a]: out });
+        el.setAttribute(a, out);
+      }
     }
     if (wait) {
       uiWaiting.add(el);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.2
+// @version      1.35.3
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -956,7 +956,30 @@
     return { map, mods };
   }
 
-  let glossaryStore = GM_getValue(GLOSSARY_STORE, null);
+  // 확장(통합 번역)에서는 용어집 사본(몇 MB)을 탭마다 미리 읽지 않고 처음 쓸 때 읽는다(GM_lazyGet — extension/src/gm.js).
+  // 2026-11-21 잰 것: 저장값 전체를 탭마다 읽어 한국어 뉴스 같은 탭 하나도 15~25MB 를 더 썼다. 몽키·번역 도우미에는
+  // GM_lazyGet 이 없어서 예전처럼 바로 읽는다. 용어집을 쓰기 전에는 glossaryStoreLoad() 를 기다린다(ensureGlossary 가 한다).
+  const gmLazyGet = (k, d) => (typeof GM_lazyGet === 'function' ? GM_lazyGet(k, d) : Promise.resolve(GM_getValue(k, d)));
+  let glossaryStoreReady = typeof GM_lazyGet !== 'function';
+  let glossaryStore = glossaryStoreReady ? GM_getValue(GLOSSARY_STORE, null) : null;
+  let glossaryStoreRead = null;
+  function glossaryStoreLoad() {
+    if (glossaryStoreReady) return Promise.resolve();
+    if (!glossaryStoreRead) {
+      glossaryStoreRead = gmLazyGet(GLOSSARY_STORE, null)
+        .then((v) => {
+          if (!glossaryStore && v) {
+            glossaryStore = v; // 읽는 사이에 새로 받았으면(refreshGlossary) 그쪽이 새것이다
+            glossaryParsed = null;
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          glossaryStoreReady = true;
+        });
+    }
+    return glossaryStoreRead;
+  }
   let glossaryParsed = null; // 처음 쓸 때 해석한다 (normKey 가 쓰는 상수가 아직 정의 전이라)
   let glossaryLoading = null;
   // 받기에 실패하면 1분은 오래된 사본으로 그냥 쓴다. 쇼츠를 넘길 때마다·번역 묶음마다 다시 받으려 해서 실패가
@@ -981,6 +1004,7 @@
   function refreshGlossary() {
     if (glossaryLoading) return glossaryLoading;
     glossaryLoading = (async () => {
+      await glossaryStoreLoad(); // 가진 판(ETag)을 알아야 304 로 받는다
       for (const src of GLOSSARY_SOURCES) {
         try {
           const headers = { ...(src.headers || {}) };
@@ -1015,6 +1039,7 @@
   // 검색 직전에 부른다. 사본이 없으면(처음 설치) 받을 때까지 기다리고,
   // 오래됐으면 지금 사본으로 바로 답하면서 뒤에서 새로 받는다.
   async function ensureGlossary() {
+    await glossaryStoreLoad();
     if (!glossaryStore) {
       await refreshGlossary();
       return;
@@ -4788,6 +4813,8 @@
   }
 
   function togglePanel() {
+    // 용어집 사본을 아직 안 읽었으면(확장은 처음 쓸 때 읽는다) 읽은 뒤에 연다 — 수십 ms.
+    if (!glossaryStoreReady && !document.getElementById('lzk-panel')) return void glossaryStoreLoad().then(togglePanel);
     const existing = document.getElementById('lzk-panel');
     if (existing) {
       existing.remove();
@@ -5398,6 +5425,7 @@
 
   // 쇼피처럼 구조를 확인하지 못한 사이트에서 무엇이 인식됐는지 바로 볼 수 있게 한다.
   function reportSiteInfo() {
+    if (!glossaryStoreReady) return void glossaryStoreLoad().then(reportSiteInfo);
     const input = getSearchInput();
     // 업데이트가 실제로 올라갔는지 여기서 바로 보이게 한다. 서버가 꺼진 채로
     // '업데이트 확인' 을 누르면 Tampermonkey 는 조용히 실패하고 옛 버전이 그대로 돈다.
@@ -5469,6 +5497,7 @@
   // 특정 단어가 왜 엉뚱하게 번역되는지 바로 가리기 위한 도구.
   // "용어집에 있는데 왜 안 걸리지" 를 추측으로 풀다 오래 헤맨 적이 있어서 넣었다.
   function lookupWord() {
+    if (!glossaryStoreReady) return void glossaryStoreLoad().then(lookupWord);
     const raw = prompt('용어집에서 찾아볼 한국어 단어나 검색어를 넣으세요', '차량 핸드폰 거치대');
     if (raw == null) return;
     const key = normKey(raw);
@@ -5912,7 +5941,7 @@
 
   async function loadLangGlossary(file) {
     const key = `langGlossary:${file}`;
-    let store = GM_getValue(key, null);
+    let store = await gmLazyGet(key, null); // 확장은 탭마다 미리 읽지 않는다(glossaryStoreLoad 위 설명)
     if (!store || Date.now() - store.at > LANG_GLOSSARY_TTL) {
       try {
         const text = await request({
@@ -6418,6 +6447,7 @@
   }
 
   async function dubTranslateBatch(d, batch) {
+    await glossaryStoreLoad(); // 태국어 자막은 용어집을 거꾸로도 본다(dubFromGlossary)
     const ask = [];
     for (const s of batch) {
       s.tried = true;

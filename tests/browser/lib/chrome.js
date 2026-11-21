@@ -144,8 +144,24 @@ async function launch({ profile, hostRules }) {
         .map((e) => (e.method === 'Runtime.exceptionThrown'
           ? e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text
           : e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')).slice(0, 300));
+    // 확장의 격리된 실행 문맥(content script 쪽)에서 식을 돌린다 — 지금 페이지에서 마지막으로 생긴 것.
+    const evIso = async (expr, ms = 10000) => {
+      let ctx = null;
+      for (const e of events) {
+        if (e.sessionId !== s) continue;
+        if (e.method === 'Runtime.executionContextsCleared') ctx = null;
+        else if (e.method === 'Runtime.executionContextCreated' && e.params.context.auxData && e.params.context.auxData.type === 'isolated') ctx = e.params.context.id;
+      }
+      if (!ctx) throw new Error('확장 문맥(isolated)이 없음');
+      const r = await Promise.race([
+        send('Runtime.evaluate', { expression: expr, contextId: ctx, awaitPromise: true, returnByValue: true }, s),
+        sleep(ms).then(() => { throw new Error(`확장 문맥이 ${ms / 1000}초 동안 응답하지 않음(멈춤)`); }),
+      ]);
+      if (r.exceptionDetails) throw new Error(`확장 문맥 식 오류: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}`);
+      return r.result.value;
+    };
     if (url !== 'about:blank') await go(url);
-    return { s, targetId, ev, go, reload, until, click, drag, typeIn, enter, center, errors };
+    return { s, targetId, ev, evIso, go, reload, until, click, drag, typeIn, enter, center, errors };
   }
 
   async function close() {

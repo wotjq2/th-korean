@@ -10,7 +10,9 @@ const { MT_TABLE } = require('./lib/fake-net');
 
 MT_TABLE['vi|wireless earphones'] = 'tai nghe không dây';
 
-const GLOSSARY = ['무선이어폰=หูฟังไร้สาย', '이어폰=หูฟัง', '무선=ไร้สาย', '블루투스=บลูทูธ', '스피커=ลำโพง'].join('\n');
+// GitHub 의 '지금' 용어집. 블루투스이어폰은 예전 사본에는 없던 새 단어(업데이트 시험).
+const GLOSSARY = ['무선이어폰=หูฟังไร้สาย', '이어폰=หูฟัง', '무선=ไร้สาย', '블루투스=บลูทูธ', '스피커=ลำโพง', '블루투스이어폰=หูฟังบลูทูธ'].join('\n');
+const OLD_GLOSSARY = ['무선이어폰=หูฟังไร้สาย', '이어폰=หูฟัง', '무선=ไร้สาย'].join('\n');
 const HANGUL = /[가-힣]/;
 const T = { timeout: 60000 };
 
@@ -44,7 +46,7 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
   test('태국 쇼피(한국어 사용자): 상품 글은 한국어, 검색어는 용어집으로 태국어', T, async () => {
     await S.setMyLang('ko');
     await t.go('https://shopee.co.th/');
-    assert.equal(await t.ev('document.documentElement.lang'), 'th');
+    await t.until(`document.documentElement.lang === 'th'`, 10000, '문서 언어 th');
     await t.until(`[...document.querySelectorAll('#app li')].length === 4 && [...document.querySelectorAll('#app li')].every((e) => /[가-힣]/.test(e.innerText))`, 10000, '상품 글 한국어');
     assert.match(await t.ev(`document.querySelector('input[name=keyword]').placeholder`), /한국어/);
     const mtBefore = S.fake.mt.length;
@@ -56,7 +58,7 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
 
   test('베트남 쇼피(한국어 사용자): 베트남어 글 → 한국어, 검색어 → 베트남어, 가격 그대로', T, async () => {
     await t.go('https://shopee.vn/');
-    assert.equal(await t.ev('document.documentElement.lang'), 'vi');
+    await t.until(`document.documentElement.lang === 'vi'`, 10000, '문서 언어 vi (th 아님)');
     await t.until(`[...document.querySelectorAll('#app li')].length === 4 && [...document.querySelectorAll('#app li')].every((e) => /[가-힣]/.test(e.innerText))`, 10000, '상품 글 한국어');
     assert.equal(await t.ev(`document.getElementById('price').innerText`), PRICE['shopee.vn']);
     assert.match(await t.ev(`(document.getElementById('lzk-fab') || {}).title || ''`), /베트남/);
@@ -108,6 +110,31 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
     await sleep(800);
     const [x2, y2] = await rect();
     assert.ok(Math.abs(x2 - x1) <= 4 && Math.abs(y2 - y1) <= 4, `자리를 잊음: 놓은 곳 ${x1},${y1} / 새로 고침 뒤 ${x2},${y2}`);
+  });
+
+  test('용어집: 보통 한국어 페이지는 큰 용어집을 탭에 읽지 않고, 쇼핑몰은 쓸 때 읽는다(1.35.3)', T, async () => {
+    await S.setMyLang('ko');
+    await t.go('https://news.example.com/');
+    await t.until(`document.getElementById('lzk-fab') || document.readyState === 'complete'`, 10000, '페이지');
+    await sleep(1500);
+    assert.equal(await t.evIso(`gmStore.has('remoteGlossary')`), false, '뉴스 탭이 태국어 용어집을 들고 있음');
+    assert.equal(await t.evIso(`[...gmStore.keys()].some((k) => k.startsWith('langGlossary:'))`), false, '뉴스 탭이 언어별 용어집을 들고 있음');
+    await t.go('https://shopee.co.th/');
+    await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+    await search('input[name="keyword"]', '무선 이어폰', 'หูฟังไร้สาย');
+    await sleep(300);
+    assert.equal(await t.evIso(`gmStore.has('remoteGlossary')`), true, '쇼핑몰에서 용어집을 안 읽음');
+  });
+
+  test('용어집 업데이트: 탭에 미리 안 읽어도, 사본이 오래됐으면 GitHub 에서 새로 받아 새 단어를 쓴다', T, async () => {
+    const ver = await S.popup.ev('chrome.runtime.getManifest().version');
+    await S.setStore({ 'gm:remoteGlossary': { text: OLD_GLOSSARY, at: Date.now() - 2 * 60 * 60 * 1000, ver, etag: null } });
+    await t.go('https://shopee.co.th/');
+    await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+    await search('input[name="keyword"]', '블루투스 이어폰', 'หูฟังบลูทูธ');
+    const saved = await S.getStore('gm:remoteGlossary');
+    assert.match(saved.text, /블루투스이어폰/, '새로 받은 용어집이 저장되지 않음');
+    assert.ok(Date.now() - saved.at < 60000, '받은 때가 새로 적히지 않음');
   });
 
   test('영어 사용자: 번역 답에 원래 한국어가 섞여 와도 페이지가 멈추지 않는다', T, async () => {

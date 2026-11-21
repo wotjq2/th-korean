@@ -88,6 +88,14 @@ function load(opt = {}) {
     localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
     requestAnimationFrame: noop,
   };
+  // 확장처럼(extension/src/gm.js) 큰 값은 미리 안 읽고 GM_lazyGet 으로 읽는 판. 무엇을 읽었는지 lazyReads 에 남는다.
+  const lazyReads = [];
+  if (opt.lazy) {
+    sb.GM_lazyGet = (k, d) => {
+      lazyReads.push(k);
+      return Promise.resolve(k in store ? structuredClone(store[k]) : d);
+    };
+  }
   sb.window = sb;
   sb.self = sb;
   sb.top = sb;
@@ -96,7 +104,7 @@ function load(opt = {}) {
   vm.createContext(sb);
   script().runInContext(sb);
   if (typeof sb.__peek !== 'function') throw new Error('스크립트를 불러오지 못함(__peek 없음)');
-  return { peek: sb.__peek, store, requests, sandbox: sb };
+  return { peek: sb.__peek, store, requests, lazyReads, sandbox: sb };
 }
 
 module.exports = { load, ROOT, SCRIPT };

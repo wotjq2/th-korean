@@ -12,11 +12,38 @@
 const GM_PREFIX = 'gm:'; // 확장 저장소 안에서 스크립트 값과 확장 자신의 값을 나눈다
 const gmStore = new Map();
 
-const gmReady = chrome.storage.local.get(null).then((all) => {
+// 큰 값(용어집 글 — 언어마다 수십만~백만 글자)은 탭을 열 때 미리 읽지 않는다. 스크립트가 쓸 때 GM_lazyGet 으로 읽는다.
+// 2026-11-21 잰 것: 저장값 전체(5 MB)를 탭마다 읽어 한국어 뉴스 탭 하나도 15~25 MB 를 더 쓰고 확장 준비가 60 ms 늦었다.
+const GM_LAZY = /^(remoteGlossary|langGlossary:)/;
+
+const gmReady = (async () => {
+  // 이름만 먼저 받아(크롬 130+) 큰 값은 빼고 읽는다. 이름 목록을 못 받으면 예전처럼 전부.
+  let want = null;
+  try {
+    const keys = await chrome.storage.local.getKeys();
+    want = keys.filter((k) => k.startsWith(GM_PREFIX) && !GM_LAZY.test(k.slice(GM_PREFIX.length)));
+  } catch {
+    want = null;
+  }
+  const all = await chrome.storage.local.get(want);
   for (const [k, v] of Object.entries(all)) {
     if (k.startsWith(GM_PREFIX)) gmStore.set(k.slice(GM_PREFIX.length), v);
   }
-});
+})();
+
+// 큰 값 읽기(약속). 한 번 읽으면 이 탭에 둔다 — 다른 탭에서 바뀌면 아래 onChanged 가 따라간다.
+function GM_lazyGet(key, def) {
+  if (gmStore.has(key) || !GM_LAZY.test(key)) return Promise.resolve(GM_getValue(key, def));
+  if (!gmAlive()) return Promise.resolve(def);
+  return chrome.storage.local
+    .get(GM_PREFIX + key)
+    .then((o) => {
+      const v = o[GM_PREFIX + key];
+      if (v !== undefined && !gmStore.has(key)) gmStore.set(key, v);
+      return GM_getValue(key, def);
+    })
+    .catch(() => def);
+}
 
 // 다른 탭에서 바꾼 값(설정·대화방 켜기 등)도 바로 따라간다. 몽키도 그렇게 한다.
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -25,6 +52,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (!k.startsWith(GM_PREFIX)) continue;
     const key = k.slice(GM_PREFIX.length);
     if (newValue === undefined) gmStore.delete(key);
+    else if (GM_LAZY.test(key) && !gmStore.has(key)) continue; // 이 탭이 아직 안 읽은 큰 값은 들고 있지 않는다
     else gmStore.set(key, newValue);
   }
 });

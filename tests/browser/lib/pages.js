@@ -24,7 +24,14 @@ const lazadaVn = () => `<!doctype html><html lang="vi"><head><meta charset="utf-
 <form action="/catalog/"><input id="q" type="search" name="q" style="width:360px;font-size:16px"></form>
 <p id="rec">Sản phẩm đề xuất cho bạn</p></body></html>`;
 
+// 쇼핑몰도 외국어도 아닌 보통 한국어 페이지(뉴스) — 확장이 큰 용어집을 읽을 까닭이 없다.
+const koNews = () => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>뉴스</title></head>
+<body style="font-family:sans-serif;margin:24px"><h1>오늘의 소식</h1>
+${Array.from({ length: 50 }, (_, i) => `<p>${i}. 오늘 서울 날씨는 맑고 기온은 영상 12도까지 오르겠습니다.</p>`).join('\n')}
+<input id="q" placeholder="검색"></body></html>`;
+
 const PAGES = {
+  'news.example.com': koNews,
   'shopee.co.th': shopee('shopee.co.th'),
   'shopee.vn': shopee('shopee.vn'),
   'shopee.sg': shopee('shopee.sg'),

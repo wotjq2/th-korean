@@ -61,6 +61,12 @@ test('config.json: 자막 바꿀 말(subPrep)의 정규식이 다 살아 있다'
   }
 });
 
+test('config.json: 한국어 다듬기(koPrep) 칸이 다 살아 있다', () => {
+  const base = load().peek('RC').koPrep.length;
+  const want = (cfg.koPrep || []).length;
+  assert.equal(RC.koPrep.length - base, want, `koPrep: ${want - (RC.koPrep.length - base)}개가 틀린 정규식·모르는 자리라 버려짐`);
+});
+
 test('rcBuild: 깨진 JSON 이면 기본값으로 돈다', () => {
   const d = load({ config: '{ 깨진 json' }).peek('RC');
   assert.ok(d.languages.length > 0);

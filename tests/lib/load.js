@@ -87,7 +87,11 @@ function load(opt = {}) {
       requests.push(o.url);
       let text;
       let status = 200;
-      if (/th-korean-glossary/.test(o.url)) text = glossaryText;
+      // opt.glossaryFiles = { 'glossary-vi.txt': 글, … } 이면 파일 이름으로 고른다(없으면 glossary 글)
+      if (/th-korean-glossary/.test(o.url)) {
+        const file = decodeURIComponent((o.url.split('?')[0].match(/\/([^/]+\.txt)$/) || [])[1] || '');
+        text = opt.glossaryFiles && file in opt.glossaryFiles ? opt.glossaryFiles[file] : glossaryText;
+      }
       else if (/translate\.googleapis\.com/.test(o.url)) {
         const r = mtReply(o.url);
         if (r) ({ status, text } = r);

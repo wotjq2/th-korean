@@ -73,6 +73,14 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
     assert.equal(await here(), 'www.lazada.vn/catalog/?q=loa bluetooth');
   });
 
+  test('한국어 다듬기(1.35.5): 줄임말로 친 검색어도 표준 한국어로 다듬어 구글에 넘긴다', T, async () => {
+    await t.go('https://shopee.vn/');
+    await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+    const before = S.fake.mt.length;
+    await search('input[name="keyword"]', '넘 이쁜 원피스', '[vi]k2 k2 k3');
+    assert.ok(S.fake.mt.slice(before).some((m) => m.q === '너무 예쁜 원피스'), `구글에 간 말: ${S.fake.mt.slice(before).map((m) => m.q).join(' | ')}`);
+  });
+
   test('싱가포르 쇼피(영어 사용자): 영어 글·영어 검색어는 그대로', T, async () => {
     await S.setMyLang('en');
     await t.go('https://shopee.sg/');

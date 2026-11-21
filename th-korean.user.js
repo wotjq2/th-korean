@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.4
+// @version      1.35.5
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -455,6 +455,50 @@
     ],
   };
 
+  // ---- 한국어 다듬기 — 30개 언어 공통(1.35.5, 5번) ----
+  // 구글·크롬 내장 번역기에 한국어를 넘기기 직전에 초성체·줄임말·흔한 맞춤법 실수·큰 숫자를 표준 한국어로 바꾼다.
+  // 2026-11-22 구글에 넣어 본 것: 'ㄱㄱ 지금 출발' → 영어 'ㄱㄱ Leave now', 'ㅇㅋ 알겠어' → 일본어 'ㅇ'(뜻이 사라짐),
+  // '낼 몇시에 만나?' → 일본어에서 '내일' 이 빠짐. 다듬어 넘기니 모두 바르게 나왔다 — 한 번 고치면 모든 언어가 함께 좋아진다.
+  // 용어집 찾기에는 쓰지 않는다(용어집 키는 사용자가 친 그대로 — 'ㅋㅋ' 같은 대화 라운드 키가 그대로 걸린다).
+  // 칸: [찾을 말(정규식), 바꿀 말, 자리]. 자리: word = 낱말 하나 전체(앞뒤가 글자·숫자가 아님, 기본 — '넘어지다'·'넘버원' 은 그대로),
+  // start = 낱말 첫머리('이쁘다' 의 이쁘), jamo = 낱자 묶음(앞뒤가 다른 낱자만 아니면 — '웃겨ㅋㅋ' 처럼 붙여 써도), any = 정규식 그대로.
+  // config.json 의 koPrep 칸이 뒤에 붙는다 — 대화 라운드마다 심사 없이 늘린다. 뜻은 대화 라운드 r01(초성체)을 따랐다.
+  // 받침이 ㄹ 인 글자 모두(할·줄·을·릴·낼…) — 아래 '께' 규칙에 쓴다.
+  const KO_RIEUL = Array.from({ length: 399 }, (_, i) => String.fromCharCode(0xac00 + i * 28 + 8)).join('');
+  const KO_PREP_DEFAULT = [
+    // 웃음·울음(뜻을 담은 그림 글자는 어느 언어로도 그대로 간다)
+    ['ㅋ{2,}', ' 하하 ', 'jamo'], ['ㅎ{2,}', ' 하하 ', 'jamo'], ['[ㅠㅜ]+', ' 😢 ', 'jamo'],
+    // 초성체
+    ['ㅇㅇ', ' 응 ', 'jamo'], ['ㅇㅋ(?:ㅇㅋ)*', ' 오케이 ', 'jamo'], ['(?:ㄱㅅ)+|ㄳ', ' 고마워 ', 'jamo'], ['(?:ㅈㅅ)+', ' 죄송해요 ', 'jamo'],
+    ['ㄴㄴ', ' 아니 ', 'jamo'], ['ㄱㄱ', ' 가자 ', 'jamo'], ['ㅂㅂ|ㅂㅇ|ㅃㅇ|ㅃㅃ|ㅎㅇ', ' 안녕 ', 'jamo'], ['(?:ㅊㅋ)+', ' 축하해 ', 'jamo'],
+    ['ㅇㅈ', ' 인정 ', 'jamo'], ['ㄹㅇ', ' 진짜 ', 'jamo'], ['ㅅㄱ', ' 수고해 ', 'jamo'], ['ㅁㄹ', ' 몰라 ', 'jamo'], ['ㄷㄷ', ' 덜덜 ', 'jamo'],
+    ['ㄱㄷ', ' 기다려 ', 'jamo'], ['ㅈㅂ', ' 제발 ', 'jamo'], ['ㅇㄷ', ' 어디 ', 'jamo'], ['ㅈㄴ', ' 정말 ', 'jamo'],
+    // 줄임말(낱말 하나 전체일 때만)
+    ['넘', '너무'], ['넘넘', '너무너무'], ['넘나', '너무나'], ['낼', '내일'], ['담에', '다음에'], ['글구|그리구', '그리고'],
+    ['왜케', '왜 이렇게'], ['첨', '처음'], ['첨에', '처음에'], ['첨엔', '처음엔'], ['첨부터', '처음부터'], ['쌤', '선생님'],
+    ['쫌', '좀'], ['마니', '많이'], ['머해|모해', '뭐 해'], ['머', '뭐'], ['머야|모야', '뭐야'], ['오키|오키오키', '오케이'],
+    ['넵|넹|넴', '네'], ['웅|엉', '응'], ['짱', '최고'], ['존맛|존맛탱|JMT|jmt', '정말 맛있어'], ['노잼', '재미없어'],
+    ['꿀잼|개꿀잼', '정말 재미있어'], ['졸귀|존귀', '정말 귀여워'], ['존나|졸라', '정말'], ['갠적으로', '개인적으로'],
+    ['셤', '시험'], ['겜', '게임'],
+    // 낱말 첫머리
+    ['어케', '어떻게', 'start'], ['이쁘', '예쁘', 'start'], ['이뻐', '예뻐', 'start'], ['이쁜', '예쁜', 'start'], ['이쁨', '예쁨', 'start'],
+    // 몇일 → 며칠 은 넣지 않는다: 바르게 고치면 구글이 일본어로 '数日'(며칠 동안)로 옮겼다 — 틀린 철자 '몇일' 을 더 잘 알아듣는다(2026-11-22).
+    // 흔한 맞춤법 실수. 받침 ㄹ 뒤의 '께'(할께·줄께·먹을께·드릴께·보낼께) — 구글이 '께' 를 높임 조사로 읽는다.
+    [`(?<=[${KO_RIEUL}])께(?=요|[\\s.,!?~]|$)`, '게', 'any'], ['됬', '됐', 'any'], ['되요(?=[\\s.,!?~]|$)', '돼요', 'any'],
+    ['되서(?![가-힣])', '돼서', 'any'],
+  ];
+  const KO_LETTER = '가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9';
+  function koPrepRule(src, to, mode) {
+    const left = `(?<![${KO_LETTER}])`;
+    const right = `(?![${KO_LETTER}])`;
+    const re =
+      mode === 'any' ? src
+        : mode === 'jamo' ? `(?<![ㄱ-ㅎㅏ-ㅣ])(?:${src})(?![ㄱ-ㅎㅏ-ㅣ])`
+          : mode === 'start' ? `${left}(?:${src})`
+            : `${left}(?:${src})${right}`;
+    return [new RegExp(re, 'gu'), to];
+  }
+
   const rcNum = (v, d, min, max) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d);
   const rcStr = (v, d, re) => (typeof v === 'string' && v.length <= 300 && (!re || re.test(v)) ? v : d);
   // 선택자는 문법이 맞는지만 본다(페이지 쪽 엔진에는 document 가 없다 — 그때는 글자만 본다).
@@ -595,6 +639,7 @@
       ocr: { lang: rcStr(j.ocr && j.ocr.lang, D.ocr.lang, /^[a-z_]{3,10}(\+[a-z_]{3,10}){0,3}$/) },
       shops: rcShops(j.shops),
       subPrep: rcSubPrep(j.subPrep),
+      koPrep: rcKoPrep(j.koPrep),
     };
   }
 
@@ -616,6 +661,40 @@
     if (extra && typeof extra === 'object' && !Array.isArray(extra)) for (const [lang, list] of Object.entries(extra)) add(lang, list);
     return out;
   }
+
+  // 한국어 다듬기 표: 기본 표 + config.json koPrep [['찾을 말', '바꿀 말', 자리?], …](뒤에 붙는다). 틀린 정규식·너무 긴 것·모르는 자리는 버린다.
+  function rcKoPrep(extra) {
+    const out = [];
+    // 길이 제한은 config.json 에서 온 칸에만(기본 표의 '께' 규칙은 받침 ㄹ 글자 399개를 품어 길다).
+    const add = (list, max) => {
+      if (!Array.isArray(list)) return;
+      for (const e of list.slice(0, 500)) {
+        if (!Array.isArray(e) || typeof e[0] !== 'string' || typeof e[1] !== 'string' || !e[0] || e[0].length > max || e[1].length > 120) continue;
+        const mode = e[2] === undefined ? 'word' : e[2];
+        if (!['word', 'start', 'jamo', 'any'].includes(mode)) continue;
+        try {
+          out.push(koPrepRule(e[0], e[1], mode));
+        } catch {
+          /* 이 브라우저가 모르는 정규식 — 버린다 */
+        }
+      }
+    };
+    add(KO_PREP_DEFAULT, 1000);
+    add(extra, 120);
+    return out;
+  }
+
+  // 번역에 넘길 한국어를 다듬는다(구글·내장 번역기 직전에만 — freeGtx·freeAlt·freeAltMany·builtinTranslate). 줄 수는 그대로 둔다
+  // (여러 줄을 이어 보낸 뒤 줄로 다시 나눈다). 한글이 없으면 그대로.
+  function koPrep(text) {
+    const s0 = String(text == null ? '' : text);
+    if (!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(s0)) return s0;
+    let s = koBigNumbers(s0);
+    for (const [re, to] of RC.koPrep) s = s.replace(re, to);
+    if (s === s0) return s0;
+    return s.replace(/[ \t]{2,}/g, ' ').replace(/^[ \t]+|[ \t]+$/gm, '');
+  }
+  const koSource = (from, text) => from === 'ko' || (from === 'auto' && HANGUL.test(String(text || '')));
 
   // 자막 한 줄을 그 언어의 표로 바꾼다. 광둥어(yue)·번체(zh-TW)도 중국어(zh) 표를 쓴다.
   function subPrep(text, lang) {
@@ -1584,7 +1663,7 @@
     const t = await builtinGet(src, dst);
     if (!t) return null;
     try {
-      return await t.translate(text);
+      return await t.translate(src === 'ko' ? koPrep(text) : text);
     } catch {
       return null;
     }
@@ -1624,6 +1703,7 @@
   }
 
   async function freeGtx(text, from, to, timeout) {
+    if (koSource(from, text)) text = koPrep(text); // 한국어 다듬기(30개 언어 공통)
     const url = `${FREE_ENDPOINT}?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
     const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
     if (!body.trimStart().startsWith('[')) throw new RateLimited();
@@ -1639,6 +1719,7 @@
 
   // 답: sl=auto 면 [["번역", "en"]], 언어를 정해 주면 ["번역"].
   async function freeAlt(text, from, to, timeout) {
+    if (koSource(from, text)) text = koPrep(text);
     const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=${from}&tl=${to}&q=${encodeURIComponent(text)}`;
     const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
     let data;
@@ -1661,6 +1742,7 @@
   // 라자다 검색 결과 제목 หูฟังไร้สาย(무선 이어폰) → 앞줄 인사말의 '안녕하세요.').
   let dictBlockedUntil = 0;
   async function freeAltMany(lines, from, to, timeout) {
+    lines = lines.map((l) => (koSource(from, l) ? koPrep(l) : l));
     const url = `${FREE_ALT_ENDPOINT}?client=dict-chrome-ex&sl=${from}&tl=${to}&` + lines.map((l) => `q=${encodeURIComponent(l)}`).join('&');
     const body = await request({ method: 'GET', url, ...(timeout ? { timeout } : {}) });
     let data;

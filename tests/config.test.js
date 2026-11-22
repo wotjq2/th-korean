@@ -90,3 +90,18 @@ test('rcBuild: 틀린 칸만 버리고 나머지는 쓴다', () => {
   same(d.translate.order, ['dict', 'gtx']);
   assert.equal(d.video.hsEveryMs, load().peek('RC').video.hsEveryMs);
 });
+
+test('config.json: 메신저 선택자(messenger, 1.35.9)가 다 쓰인다', () => {
+  same(RC.messenger, cfg.messenger, '버려진 선택자가 있다(문법이 틀렸나?)');
+  same(RC.messenger, s.peek('RC_DEFAULT').messenger, '기본값과 같아야 한다(처음 깐 브라우저도 같은 화면을 찾게)');
+});
+
+// 선택자 문법(div[[[)은 진짜 크롬만 가린다 — tests/browser/messenger.test.js
+test('rcBuild: 메신저 선택자가 글이 아니면 그 칸만 기본값으로', () => {
+  const t = load({ config: { messenger: { log: '[role="feed"]', main: 42, bubble: '' } } });
+  const M = t.peek('RC').messenger;
+  const D = t.peek('RC_DEFAULT').messenger;
+  assert.equal(M.main, D.main, '글이 아닌 값');
+  assert.equal(M.bubble, D.bubble, '빈 글');
+  assert.equal(M.log, '[role="feed"]', '맞는 선택자는 쓴다');
+});

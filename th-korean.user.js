@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.8
+// @version      1.35.9
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -517,6 +517,16 @@
       // 것으로, 언어가 말과 상관없다(한국어 쇼츠에 en, 태국어 영상에 en-US — 2026-11-18).
       extraAsr: ['timing-optimized'],
     },
+    // 페이스북 메신저 화면을 찾는 선택자(1.35.9) — 페이스북이 화면을 바꾸면 config.json messenger 만 고친다(스토어 심사 없이).
+    // main = 대화 영역, log = 말풍선 목록, composer = 입력칸, bubble = 말풍선 글(안에 같은 꼴이 없는 맨 안쪽만 쓴다),
+    // sendButton = 보내기 단추 후보(이름표에 'enter' 가 든 것).
+    messenger: {
+      main: '[role="main"]',
+      log: '[role="log"]',
+      composer: '[contenteditable="true"][role="textbox"]',
+      bubble: '[data-message-id] div[dir="auto"]',
+      sendButton: '[role="button"][aria-label], button[aria-label]',
+    },
     ocr: { lang: 'tha' }, // 사진 글자 읽기 언어(Tesseract, 'tha+eng' 처럼 여럿)
     shops: {}, // 검색 가로채기 사이트(라자다·쇼피 칸 고치기, 새 쇼핑몰 더하기) — SITES 참고
     // '문제 알리기' 가 여는 새 글 화면 — 주소 + 제목·본문을 넣을 칸 이름(GitHub 은 title·body, 구글 설문지는 entry.숫자,
@@ -733,6 +743,7 @@
           ? yt.extraAsr.filter((s) => typeof s === 'string' && /^[\w-]{1,40}$/.test(s)).slice(0, 10)
           : D.youtube.extraAsr,
       },
+      messenger: Object.fromEntries(Object.entries(D.messenger).map(([k, d]) => [k, rcSel((j.messenger || {})[k], d)])),
       ocr: { lang: rcStr(j.ocr && j.ocr.lang, D.ocr.lang, /^[a-z_]{3,10}(\+[a-z_]{3,10}){0,3}$/) },
       shops: rcShops(j.shops),
       subPrep: rcSubPrep(j.subPrep),
@@ -1518,31 +1529,61 @@
 
   const CACHE_KEY = 'tmCache';
   const CACHE_MAX = 8000;
-  let cache = GM_getValue(CACHE_KEY, {});
+  // 크롬 확장(1.35.9): 캐시는 background 가 하나만 갖고(IndexedDB) 탭은 처음 쓸 때 받아 새 번역만 보낸다(gm.js GM_tmLoad).
+  // 탭마다 통째로 저장하던 때는 두 탭이 함께 번역하면 한쪽 새 번역이 사라지고, 저장마다 0.5 MB 가 모든 탭에 갔다.
+  // 몽키·번역 도우미는 예전처럼 GM_getValue/GM_setValue.
+  const CACHE_SHARED = typeof GM_tmLoad === 'function';
+  let cache = CACHE_SHARED ? {} : GM_getValue(CACHE_KEY, {});
+  let cacheFresh = {}; // 마지막 저장 뒤 이 탭이 새로 번역한 것(확장만 — 이것만 보낸다)
   let cacheDirty = false;
+  let cacheLoad = null;
+  // 받기를 시작한다(한 번만). 받기 전에 찾은 말은 못 찾은 셈이고(구글에 묻는다), 받는 사이 이 탭이 넣은 것은 받은 것 위에 남긴다.
+  function cacheWarm() {
+    if (!CACHE_SHARED || cacheLoad) return cacheLoad || Promise.resolve();
+    cacheLoad = Promise.resolve(GM_tmLoad())
+      .then((got) => {
+        if (got && typeof got === 'object') cache = Object.assign(got, cache);
+      })
+      .catch(() => {});
+    return cacheLoad;
+  }
 
   // 1.9.1: 검색어 캐시('th|…')를 한 번 비운다. 용어집이 작던 시절 AI 가 낸 오역
   // (빗자루 → ด้ามไม้กวาด, 도시락 → อาหารกลางวัน)이 여기 남아 계속 되살아났다.
-  // 페이지 표시 캐시('ko|…')는 그대로 둔다.
+  // 페이지 표시 캐시('ko|…')는 그대로 둔다. (확장은 1.31.0 부터 스토어에 있어 모두 이미 비웠다 — 표시만 남긴다.)
   if (!GM_getValue('searchCachePurged191', false)) {
-    for (const k of Object.keys(cache)) if (k.startsWith('th|')) delete cache[k];
-    GM_setValue(CACHE_KEY, cache);
+    if (!CACHE_SHARED) {
+      for (const k of Object.keys(cache)) if (k.startsWith('th|')) delete cache[k];
+      GM_setValue(CACHE_KEY, cache);
+    }
     GM_setValue('searchCachePurged191', true);
   }
   // 1.28.8: 페이지 표시 캐시('ko|…')를 한 번 비운다. 줄바꿈으로 이어 보낸 묶음 번역의 짝이 밀려 엉뚱한 번역
   // (หูฟังไร้สาย(무선 이어폰) → '안녕하세요.')이 남아 라자다 검색 결과 제목에 계속 나왔다. 이제 묶음은 줄마다 따로 보낸다.
   if (!GM_getValue('pageCachePurged1288', false)) {
-    for (const k of Object.keys(cache)) if (k.startsWith('ko|')) delete cache[k];
-    GM_setValue(CACHE_KEY, cache);
+    if (!CACHE_SHARED) {
+      for (const k of Object.keys(cache)) if (k.startsWith('ko|')) delete cache[k];
+      GM_setValue(CACHE_KEY, cache);
+    }
     GM_setValue('pageCachePurged1288', true);
   }
 
   function cacheGet(text, to) {
+    cacheWarm();
     return cache[to + '|' + text];
   }
   function cacheSet(text, to, value) {
+    cacheWarm();
     cache[to + '|' + text] = value;
+    if (CACHE_SHARED) cacheFresh[to + '|' + text] = value;
     cacheDirty = true;
+  }
+  // '캐시 비우기'
+  function cacheClear() {
+    cache = {};
+    cacheFresh = {};
+    if (CACHE_SHARED) GM_tmReplace({});
+    else GM_setValue(CACHE_KEY, cache);
   }
   setInterval(() => {
     if (!cacheDirty) return;
@@ -1554,7 +1595,11 @@
       for (const k of keys.slice(keys.length - Math.floor(CACHE_MAX / 2))) trimmed[k] = cache[k];
       cache = trimmed;
     }
-    GM_setValue(CACHE_KEY, cache);
+    if (CACHE_SHARED) {
+      const fresh = cacheFresh;
+      cacheFresh = {};
+      if (Object.keys(fresh).length) GM_tmAdd(fresh);
+    } else GM_setValue(CACHE_KEY, cache);
   }, 2500);
 
   // ---------------------------------------------------------------------------
@@ -3386,6 +3431,10 @@
       list-style: revert;
     }
     #lzk-panel details[open] summary { margin-bottom: 4px; }
+    #lzk-panel .lzk-rp-view {
+      white-space: pre-wrap; font-size: 11px; max-height: 170px; overflow-y: auto; padding: 7px 8px;
+      border: 1px solid #ccc; border-radius: 5px; background: #fafafa; word-break: break-word;
+    }
     #lzk-thchip {
       position: fixed; z-index: 2147483002; height: 24px; padding: 0 9px; border: none; border-radius: 12px;
       background: #0f146e; color: #fff; cursor: pointer; font: 600 12px/24px system-ui, sans-serif;
@@ -3403,6 +3452,11 @@
       font-size: .92em; opacity: .85; white-space: pre-wrap;
     }
     .lzk-msgsrc { margin-top: 2px; font-size: .8em; opacity: .6; white-space: pre-wrap; }
+    .lzk-msgbad {
+      display: none; margin-left: 6px; padding: 0; border: none; background: none; cursor: pointer;
+      color: inherit; opacity: .7; font: inherit; font-size: .8em; text-decoration: underline; vertical-align: baseline;
+    }
+    .lzk-msgko:hover .lzk-msgbad, .lzk-msgbad:focus { display: inline; }
     .lzk-msgsrc:empty { display: none; }
     #lzk-seltip {
       position: absolute; z-index: 2147483002; border: none; border-radius: 6px;
@@ -5363,10 +5417,22 @@
       want: $('#lzk-rp-want').value.trim(),
       what: $('#lzk-rp-what').value.trim(),
     });
+    // 내 언어가 한국어가 아니면(1.35.9): 보낼 글(개발자가 읽는 한국어)을 고칠 칸 대신 읽기 칸에 보여 준다 — 화면 글 옮기기
+    // (uiLocalize)가 그 칸의 한국어를 내 언어로 바꿔 보여서 무엇이 나가는지 읽을 수 있다. 보내는 글은 바뀌지 않는다.
+    // 고치고 싶으면 '그대로 보기·고치기' 로 원래 칸을 연다.
+    const view = $('#lzk-rp-view');
+    if (!MY_KO) {
+      view.hidden = false;
+      bodyEl.hidden = true;
+      $('#lzk-rp-raw').hidden = false;
+      $('#lzk-rp-raw').addEventListener('click', () => (bodyEl.hidden = !bodyEl.hidden));
+      bodyEl.addEventListener('input', () => (view.textContent = bodyEl.value));
+    }
     const build = () => {
       const f = fields();
       title = reportTitle(f);
       bodyEl.value = reportBody(f, reportEnv(helperLine), problemList());
+      if (!MY_KO) view.textContent = bodyEl.value;
     };
     sel.addEventListener('change', () => {
       const e = recent[Number(sel.value)];
@@ -5611,6 +5677,8 @@
         <textarea id="lzk-rp-what" style="height:64px;font-family:inherit" placeholder="예: 검색 결과가 엉뚱해요 / 메신저에서 안 바뀌어요"></textarea>
         <label>보낼 글 (위 칸을 고치면 다시 만들어집니다)</label>
         <textarea id="lzk-rp-body" spellcheck="false" style="height:150px;font-size:11px"></textarea>
+        <div id="lzk-rp-view" class="lzk-rp-view" hidden></div>
+        <button class="lzk-ghost" id="lzk-rp-raw" type="button" hidden style="margin-top:6px">보낼 글 그대로 보기·고치기</button>
         <div class="lzk-hint">사이트는 이름만 들어갑니다(주소 뒤쪽·페이지 글·키·토큰은 넣지 않습니다). 빼고 싶은 줄은 지우세요.</div>
         <div class="lzk-actions" style="margin-top:8px">
           <button id="lzk-rp-send" type="button">GitHub 에 올리기</button>
@@ -5920,8 +5988,7 @@
       toast('원문을 표시합니다. "지금 번역"을 누르면 다시 한국어로 바뀝니다.');
     });
     $('#lzk-clear-cache').addEventListener('click', () => {
-      cache = {};
-      GM_setValue(CACHE_KEY, cache);
+      cacheClear();
       toast('번역 캐시를 비웠습니다.');
     });
     $('#lzk-fab-reset').addEventListener('click', () => {
@@ -5993,6 +6060,7 @@
   // 주소의 태국어가 예전에 우리가 낸 번역(캐시)인데, 지금 용어집은 그 한국어를 다르게
   // 옮긴다면 옛 오역이다. 용어집 값을 돌려준다.
   async function findStaleTranslation(q) {
+    await cacheWarm();
     const flat = (s) => String(s).replace(/\s+/g, ' ').trim();
     const target = flat(q);
     for (const [key, val] of Object.entries(cache)) {
@@ -6050,6 +6118,7 @@
   }
 
   function init() {
+    cacheWarm(); // 쇼핑몰은 곧 상품 글을 옮긴다 — 번역 캐시를 미리 받는다
     GM_addStyle(LZK_CSS);
     mountFab();
     mountLangTools();
@@ -6930,6 +6999,7 @@
     if (genericOn) return;
     genericOn = true;
     genericPageLang = lang;
+    cacheWarm();
     mountFab();
     if (lang === 'th') {
       ensureGlossary(); // 태국어 용어집(glossary.txt) 메뉴는 태국어 페이지에서만
@@ -9407,8 +9477,9 @@
   }
 
   function chatComposer(el) {
-    const ed = el && el.closest ? el.closest('[contenteditable="true"][role="textbox"]') : null;
-    return ed && ed.closest('[role="main"]') ? ed : null;
+    const M = RC.messenger;
+    const ed = el && el.closest ? el.closest(M.composer) : null;
+    return ed && ed.closest(M.main) ? ed : null;
   }
 
   // Lexical 은 문단마다 <p> 라 innerText 가 빈 줄을 끼운다.
@@ -9429,21 +9500,28 @@
     return s.trim();
   }
 
+  // 말풍선 목록(대화 영역 안). 선택자는 원격 설정 messenger(RC.messenger) — 페이스북이 화면을 바꾸면 config.json 만 고친다.
+  function chatLog() {
+    const main = document.querySelector(RC.messenger.main);
+    return main ? main.querySelector(RC.messenger.log) : null;
+  }
+
   function chatBubbles(root = document) {
-    return [...root.querySelectorAll('[data-message-id] div[dir="auto"]')].filter(
-      (d) => !d.querySelector('div[dir="auto"]')
+    const sel = RC.messenger.bubble;
+    return [...root.querySelectorAll(sel)].filter(
+      (d) => !d.querySelector(sel) // 맨 안쪽만(선택자는 문서 전체에서 맞춰 보므로 d 안의 같은 꼴만 걸린다)
     );
   }
 
   // 상대 이름. 대화방 머리의 제목 중 입력칸 이름표('… 님에게 메시지 쓰기')에 들어 있는 가장 긴 것.
   // 화면 언어마다 이름표 문구가 달라도 이름은 그대로 들어 있다.
   function chatPartnerName() {
-    const main = document.querySelector('[role="main"]');
-    const ed = main && main.querySelector('[contenteditable="true"][role="textbox"]');
+    const main = document.querySelector(RC.messenger.main);
+    const ed = main && main.querySelector(RC.messenger.composer);
     const label = (ed && ed.getAttribute('aria-label')) || '';
     let name = '';
     for (const h of main ? main.querySelectorAll('h1, h2, h3') : []) {
-      if (h.closest('[role="log"]')) continue;
+      if (h.closest(RC.messenger.log)) continue;
       const t = h.textContent.trim();
       if (t.length > name.length && label.includes(t)) name = t;
     }
@@ -9532,7 +9610,7 @@
   function chatPartnerLang(collect) {
     const id = chatThreadId();
     if (!collect && chatLangMemo && chatLangMemo.id === id && Date.now() - chatLangMemo.at < 800) return chatLangMemo.v;
-    const log = document.querySelector('[role="main"] [role="log"]');
+    const log = chatLog();
     let best = '';
     if (log) {
       const lr = log.getBoundingClientRect();
@@ -11157,8 +11235,8 @@
   // Enter 라는 글자는 들어 있다. 메시지 목록 쪽 버튼은 보지 않는다.
   function chatSendButton(ed) {
     let box = ed;
-    while (box.parentElement && !box.parentElement.querySelector('[role="log"]')) box = box.parentElement;
-    return [...box.querySelectorAll('[role="button"][aria-label], button[aria-label]')].find((b) =>
+    while (box.parentElement && !box.parentElement.querySelector(RC.messenger.log)) box = box.parentElement;
+    return [...box.querySelectorAll(RC.messenger.sendButton)].find((b) =>
       /enter/i.test(b.getAttribute('aria-label'))
     );
   }
@@ -12095,6 +12173,20 @@
     }
     box.dataset.src = src;
     box.textContent = ko;
+    // 번역이 이상하면 바로 알리기(1.35.9) — 마우스를 올리면 보인다. 말풍선을 누른 것으로 메신저가 받지 않게 막는다.
+    const bad = document.createElement('button');
+    bad.type = 'button';
+    bad.className = 'lzk-msgbad';
+    bad.textContent = '이상해요';
+    bad.title = '번역이 이상해요 — 문제 알리기';
+    for (const t of ['mousedown', 'pointerdown', 'click']) {
+      bad.addEventListener(t, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (t === 'click') openReport({ kind: '메신저 받은 말', src, out: ko, via: '' });
+      });
+    }
+    box.appendChild(bad);
   }
 
   // 받은 말풍선의 짧은 줄이 언어 교차 표에 있으면 구글 대신. 출발 언어는 글자 → 구글이 알아본 그 말풍선의 언어 → 이 대화방 상대 언어.
@@ -12138,7 +12230,7 @@
     if (!todo.length) return;
     todo.forEach(([d]) => chatPending.add(d));
     try {
-      const log = document.querySelector('[role="main"] [role="log"]');
+      const log = chatLog();
       const lr = log ? log.getBoundingClientRect() : null;
       const partner = log ? chatPartnerGender(log, lr) : '';
       const mine = todo.map(([d]) => (lr ? chatBubbleMine(d, lr) : false));
@@ -12190,6 +12282,7 @@
   }
 
   function messengerInit() {
+    cacheWarm();
     GM_addStyle(LZK_CSS);
     mountFab(); // 메신저 설정(끝말 ครับ/ค่ะ 등)도 '한' 에서 연다
     mountLangTools();

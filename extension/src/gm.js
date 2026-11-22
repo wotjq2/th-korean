@@ -14,7 +14,8 @@ const gmStore = new Map();
 
 // 큰 값(용어집 글 — 언어마다 수십만~백만 글자)은 탭을 열 때 미리 읽지 않는다. 스크립트가 쓸 때 GM_lazyGet 으로 읽는다.
 // 2026-11-21 잰 것: 저장값 전체(5 MB)를 탭마다 읽어 한국어 뉴스 탭 하나도 15~25 MB 를 더 쓰고 확장 준비가 60 ms 늦었다.
-const GM_LAZY = /^(remoteGlossary|langGlossary:)/;
+// tmCache(번역 캐시)는 storage 에 두지 않는다 — 아래 GM_tmLoad(1.35.9). 옮기기 전의 옛 값도 탭마다 읽지 않게 여기에 둔다.
+const GM_LAZY = /^(remoteGlossary|langGlossary:|tmCache$)/;
 
 const gmReady = (async () => {
   // 이름만 먼저 받아(크롬 130+) 큰 값은 빼고 읽는다. 이름 목록을 못 받으면 예전처럼 전부.
@@ -215,6 +216,40 @@ function GM_helperAutoStart() {
   if (!gmAlive()) return;
   try {
     chrome.runtime.sendMessage({ t: 'helper-auto' }).catch(() => {});
+  } catch {
+    gmAlive();
+  }
+}
+
+// 번역 캐시(같은 글을 두 번 번역하지 않게, 최대 8,000개) — 1.35.9. 예전에는 탭마다 통째로 들고 2.5초마다 통째로 저장해
+// (1) 두 탭이 함께 번역하면 한쪽 탭의 새 번역이 매번 사라졌고 (2) 저장할 때마다 0.5 MB 가 storage.onChanged 로 열린 모든 탭에
+// 갔다(2026-11-22 실측: 아무것도 안 하는 뉴스 탭이 6초에 1 MB). 이제 background.js 가 IndexedDB 에 하나만 두고, 탭은 처음 쓸 때
+// 한 번 받아(GM_tmLoad) 새로 번역한 것만 보낸다(GM_tmAdd — background 가 합친다). 몽키·번역 도우미에는 이 함수들이 없다
+// (스크립트는 예전처럼 GM_setValue('tmCache')).
+function GM_tmLoad() {
+  if (!gmAlive()) return Promise.resolve(null);
+  try {
+    return chrome.runtime.sendMessage({ t: 'tm-load' }).catch(() => null);
+  } catch {
+    gmAlive();
+    return Promise.resolve(null);
+  }
+}
+
+function GM_tmAdd(entries) {
+  if (!gmAlive()) return;
+  try {
+    chrome.runtime.sendMessage({ t: 'tm-add', e: entries }).catch(() => {});
+  } catch {
+    gmAlive();
+  }
+}
+
+// 통째로 바꾸기 — '캐시 비우기'
+function GM_tmReplace(obj) {
+  if (!gmAlive()) return;
+  try {
+    chrome.runtime.sendMessage({ t: 'tm-replace', v: obj || {} }).catch(() => {});
   } catch {
     gmAlive();
   }

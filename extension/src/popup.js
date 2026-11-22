@@ -416,7 +416,27 @@ function reportBuild() {
   if (!problems.length) out.push('- 없음');
   for (const e of problems.slice(-20)) out.push(`- ${reportDate(e.at)} ${e.host || ''} · ${reportSafe(e.msg)}` + (e.n > 1 ? ` (×${e.n})` : ''));
   body.value = out.join('\n');
+  reportView();
 }
+
+// 내 언어가 한국어가 아니면(1.35.9) 보낼 글(개발자가 읽는 한국어)을 읽기 칸에 보여 준다 — 이 창의 화면 글 옮기기(localize)가
+// 그 칸을 내 언어로 바꿔 보여 무엇이 나가는지 읽을 수 있다. 보내는 글은 그대로. '그대로 보기·고치기' 로 원래 칸을 연다.
+let reportRawOpen = false;
+function reportView() {
+  const foreign = MY !== 'ko';
+  $('#rview').hidden = !foreign;
+  $('#rraw').hidden = !foreign;
+  $('#rbody').hidden = foreign && !reportRawOpen;
+  if (foreign) $('#rview').textContent = $('#rbody').value;
+}
+$('#rraw').addEventListener('click', () => {
+  reportRawOpen = !reportRawOpen;
+  reportView();
+});
+$('#rbody').addEventListener('input', () => {
+  if (MY !== 'ko') $('#rview').textContent = $('#rbody').value;
+});
+myLangReady.then(reportView);
 
 function reportTitle() {
   const first = $('#rwhat').value.trim().split('\n')[0];

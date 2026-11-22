@@ -43,6 +43,18 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     ccSettings({ cmd: 'cc-reset' }, sender).then(reply);
     return true;
   }
+  if (m && m.t === 'tm-load') {
+    tmLoad().then(reply, () => reply(null));
+    return true;
+  }
+  if (m && m.t === 'tm-add') {
+    tmAdd(m.e).then(() => reply(true), () => reply(false));
+    return true;
+  }
+  if (m && m.t === 'tm-replace') {
+    tmReplace(m.v).then(() => reply(true), () => reply(false));
+    return true;
+  }
   if (m && m.t === 'open-tab' && /^(https:\/\/|chrome:\/\/settings\/)/.test(String(m.url))) {
     chrome.tabs.create({ url: m.url, index: sender.tab ? sender.tab.index + 1 : undefined }).then(
       () => reply(true),
@@ -152,4 +164,99 @@ function toB64(buf) {
   let s = '';
   for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
   return btoa(s);
+}
+
+// ---------------------------------------------------------------------------
+// 번역 캐시(1.35.9) — 탭들이 같이 쓰는 하나. IndexedDB 'th-korean' 의 'kv' 칸에 'tmCache' = { '언어|원문': 번역 }(넣은 차례).
+// 예전에는 chrome.storage.local 의 gm:tmCache 를 탭마다 통째로 들고 통째로 저장했다 — 두 탭이 함께 번역하면 한쪽 새 번역이
+// 사라지고, 저장할 때마다 0.5 MB 가 열린 모든 탭에 갔다(storage.onChanged). IndexedDB 는 바뀜 알림을 탭에 보내지 않는다.
+// 탭은 처음 쓸 때 통째로 한 번 받고(tm-load) 새로 번역한 것만 보낸다(tm-add). 처음 한 번 옛 gm:tmCache 를 옮기고 지운다.
+// ---------------------------------------------------------------------------
+
+const TM_KEY = 'tmCache';
+const TM_MAX = 8000; // 넘으면 오래된 절반을 버린다(스크립트의 CACHE_MAX 와 같다)
+let tmMem = null; // 이 service worker 가 살아 있는 동안의 사본
+let tmLoading = null;
+let tmTimer = 0;
+
+function tmDb() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open('th-korean', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function tmIdb(mode, fn) {
+  const db = await tmDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('kv', mode);
+      const req = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => resolve(req && req.result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function tmLoad() {
+  if (tmMem) return Promise.resolve(tmMem);
+  if (!tmLoading) {
+    tmLoading = (async () => {
+      let v = await tmIdb('readonly', (s) => s.get(TM_KEY)).catch(() => null);
+      if (!v || typeof v !== 'object') {
+        // 처음: storage 의 옛 캐시를 옮긴다(옮긴 뒤 지운다 — 지우는 알림은 이번 한 번만 탭들에 간다)
+        const old = (await chrome.storage.local.get('gm:' + TM_KEY))['gm:' + TM_KEY];
+        v = old && typeof old === 'object' && !Array.isArray(old) ? old : {};
+        await tmIdb('readwrite', (s) => s.put(v, TM_KEY));
+        if (old !== undefined) await chrome.storage.local.remove('gm:' + TM_KEY);
+      }
+      tmMem = v;
+      return v;
+    })().finally(() => {
+      tmLoading = null;
+    });
+  }
+  return tmLoading;
+}
+
+function tmTrim(c) {
+  const keys = Object.keys(c);
+  if (keys.length <= TM_MAX) return c;
+  const out = {};
+  for (const k of keys.slice(keys.length - Math.floor(TM_MAX / 2))) out[k] = c[k];
+  return out;
+}
+
+// 저장은 0.5초 모아서 한 번(번역이 줄마다 잇따른다)
+function tmSaveSoon() {
+  clearTimeout(tmTimer);
+  tmTimer = setTimeout(() => {
+    tmTimer = 0;
+    const v = tmMem;
+    if (v) tmIdb('readwrite', (s) => s.put(v, TM_KEY)).catch((e) => console.warn('[통합 번역] 번역 캐시 저장 실패:', e && e.message));
+  }, 500);
+}
+
+async function tmAdd(entries) {
+  if (!entries || typeof entries !== 'object') return;
+  let c = await tmLoad();
+  for (const [k, v] of Object.entries(entries)) {
+    if (typeof k !== 'string' || typeof v !== 'string') continue;
+    delete c[k]; // 새로 넣은 것이 맨 뒤(오래된 것부터 버린다)
+    c[k] = v;
+  }
+  c = tmTrim(c);
+  tmMem = c;
+  tmSaveSoon();
+}
+
+async function tmReplace(obj) {
+  await tmLoad();
+  tmMem = tmTrim(obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {});
+  tmSaveSoon();
 }

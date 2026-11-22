@@ -42,6 +42,7 @@ function load(opt = {}) {
   const glossaryText = opt.glossary || '';
 
   const timers = [];
+  const intervals = []; // 스크립트가 건 setInterval — 돌리지 않고 모아 둔다(시험이 tick() 으로 한 번씩 돌린다)
   const later = (fn, ms, ...a) => {
     const t = setTimeout(fn, ms, ...a);
     if (t.unref) t.unref(); // 스크립트가 걸어 둔 타이머 때문에 시험이 끝나지 않는 일이 없게
@@ -78,7 +79,7 @@ function load(opt = {}) {
   const sb = {
     console,
     URL, URLSearchParams, TextEncoder, TextDecoder, AbortController, structuredClone,
-    setTimeout: later, clearTimeout, setInterval: () => 0, clearInterval: noop, queueMicrotask,
+    setTimeout: later, clearTimeout, setInterval: (fn) => intervals.push(fn), clearInterval: noop, queueMicrotask,
     GM_info: { script: { version: 'test' } },
     GM_getValue: (k, d) => (k in store ? store[k] : d),
     GM_setValue: (k, v) => { store[k] = v; },
@@ -139,6 +140,14 @@ function load(opt = {}) {
       return Promise.resolve(k in store ? structuredClone(store[k]) : d);
     };
   }
+  // 확장의 공유 번역 캐시(gm.js GM_tmLoad·GM_tmAdd·GM_tmReplace, 1.35.9) 흉내: opt.sharedCache = { '언어|원문': 번역 }.
+  // 보낸 것은 tmCalls 에 ['add', 항목] / ['replace', 값] 으로 남는다.
+  const tmCalls = [];
+  if (opt.sharedCache) {
+    sb.GM_tmLoad = () => Promise.resolve(structuredClone(opt.sharedCache));
+    sb.GM_tmAdd = (e) => tmCalls.push(['add', structuredClone(e)]);
+    sb.GM_tmReplace = (v) => tmCalls.push(['replace', structuredClone(v)]);
+  }
   if (opt.translator) {
     const state = (s, t) => opt.translator[`${s}>${t}`] || 'unavailable';
     sb.Translator = {
@@ -160,7 +169,8 @@ function load(opt = {}) {
   vm.createContext(sb);
   script().runInContext(sb);
   if (typeof sb.__peek !== 'function') throw new Error('스크립트를 불러오지 못함(__peek 없음)');
-  return { peek: sb.__peek, store, requests, calls, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb };
+  const tick = () => intervals.forEach((fn) => fn());
+  return { peek: sb.__peek, store, requests, calls, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb, tmCalls, tick };
 }
 
 module.exports = { load, ROOT, SCRIPT };

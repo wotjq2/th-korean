@@ -141,6 +141,28 @@ describe('문제 알리기 (진짜 크롬 + 확장)', () => {
     assert.equal(got.body, body);
   });
 
+  test('내 언어가 영어면(1.35.9): 보낼 글을 영어로 읽어 볼 수 있고, 보내는 글은 한국어 그대로', T, async () => {
+    await S.setMyLang('en');
+    await S.chrome.send('Page.bringToFront', {}, t.s);
+    await t.go('https://shopee.co.th/');
+    await t.until(`document.getElementById('lzk-fab')`, 10000, "'EN' 단추");
+    assert.equal(await runMenu('문제 알리기 · 번역이 이상해요').catch((e) => String(e)), 'ok');
+    await t.until(`document.querySelector('#lzk-report[open]')`, 10000, '문제 알리기 칸');
+    assert.equal(await t.ev(`document.getElementById('lzk-rp-body').hidden`), true, '한국어 칸은 숨김');
+    // 읽기 칸의 한국어가 영어(가짜 번역 '[en]…')로 바뀐다
+    await t.until(`(() => { const v = document.getElementById('lzk-rp-view'); return v && !v.hidden && v.textContent.length > 50 && !/[가-힣]/.test(v.textContent); })()`, 15000, '읽기 칸이 내 언어로');
+    assert.match(await val('#lzk-rp-body'), /### 무슨 일인가요\?/, '보내는 글은 한국어(개발자가 읽는다)');
+    await t.ev(`document.getElementById('lzk-rp-raw').scrollIntoView({ block: 'center' }), 1`);
+    await t.click('#lzk-rp-raw');
+    assert.equal(await t.ev(`document.getElementById('lzk-rp-body').hidden`), false, "'그대로 보기·고치기' 로 원래 칸");
+    // 확장 창도
+    await S.popup.reload();
+    await S.popup.until(`(() => { const v = document.getElementById('rview'); return v && !v.hidden && v.textContent.length > 50 && !/[가-힣]/.test(v.textContent); })()`, 15000, '확장 창 읽기 칸이 내 언어로');
+    assert.equal(await S.popup.ev(`document.getElementById('rbody').hidden`), true);
+    assert.match(await S.popup.ev(`document.getElementById('rbody').value`), /### 환경/);
+    await S.setMyLang('ko');
+  });
+
   test('확장 오류 없음', async () => {
     const errs = t.errors().filter((e) => !/page-boom/.test(e));
     assert.deepEqual(errs, []);

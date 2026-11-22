@@ -1441,11 +1441,53 @@ async function hsReadLine(v, model, kind, lang) {
     return { ...best, ok: hsOk(best.text, best.conf, kind) };
   }
   const raw = kind === 'khmr' || kind === 'laoo' || kind === 'mymr';
-  const r = await ocr(v.file, { langs: [model], psm: raw ? '13' : '7' });
   // 빈칸: 태국·라오·크메르·미얀마 글자는 띠 높이의 0.33 넘는 틈, 일본어(띠 = 글자 높이)는 0.5
-  const text = hsTidy([HS_NOSPACE.has(kind) ? hsGapJoin(r.words, v.gaps, v.em, kind === 'ja' ? 0.5 : 0.33) : hsTidy((r.lines || []).map((l) => l.text))]);
-  const conf = Math.round(r.conf);
-  return { text, conf, lang, ok: hsOk(text, conf, kind) };
+  const read = (r) => hsTidy([HS_NOSPACE.has(kind) ? hsGapJoin(r.words, v.gaps, v.em, kind === 'ja' ? 0.5 : 0.33) : hsTidy((r.lines || []).map((l) => l.text))]);
+  const r = await ocr(v.file, { langs: [model], psm: raw ? '13' : '7' });
+  let text = read(r);
+  let conf = Math.round(r.conf);
+  if (!raw) return { text, conf, lang, ok: hsOk(text, conf, kind) };
+  // 크메르·라오·미얀마(2026-11-22): 바르게 읽어도 확신도가 0~30 으로 널뛰어(라오 '…ບ່ອນນີດຽວ…' 이 흰 0·노랑 13·호박색 12)
+  // 맞는 줄이 버려졌다. 한 줄(psm 7)로도 읽어 확신도 높은 쪽을 쓰고, 두 읽기가 거의 같으면(글자 75% 넘게) 확신도가 낮아도
+  // 글로 본다 — 자막이 아닌 뒤범벅은 읽는 방식마다 달라진다. 그리고 어느 쪽으로 받든 글다워야 한다(hsPlausible).
+  // 시험(잘라 낸 자막 27줄 × 흰·노랑·호박 + 다른 29개 언어 자막 85줄 × 흰·노랑을 세 모델로): 맞는 줄 받음 20 → 27/27,
+  // 세 언어 글자 오류 41.3% → 13.8%(라오 60.5 → 10.0, 미얀마 32.4 → 13.0, 크메르 30.3 → 18.7), 다른 언어 줄을 잘못 받음
+  // 라오 11 → 5, 미얀마 5 → 0, 크메르 11 → 3(각 170줄 중).
+  const r7 = await ocr(v.file, { langs: [model], psm: '7' });
+  const t7 = read(r7);
+  const c7 = Math.round(r7.conf);
+  const agree = hsAgree(text, t7);
+  if (c7 > conf) (text = t7), (conf = c7);
+  const ok = (hsOk(text, conf, kind) || (agree && hsOk(text, 100, kind))) && hsPlausible(text, conf);
+  if (kind === 'mymr') text = hsMyFix(text);
+  return { text, conf, lang, ok };
+}
+
+// 글다움(크메르·라오·미얀마): 다른 글자 자막을 이 모델로 읽은 뒤범벅은 짧은 조각('ເພ ຟັ.')이거나 숫자가 섞였다('ပ ၉4 ပါ').
+// 글자(부호 포함) 8개 넘고 빈칸으로 나눈 조각이 평균 4글자 넘으면, 그보다 짧은 줄은 확신도 70 넘을 때만. 15글자 아래 줄에 숫자가
+// 있으면 안 된다(이 언어 자막은 띄어쓰기가 구절 사이에만 있어 조각이 길다).
+function hsPlausible(t, conf) {
+  const s = String(t || '');
+  const letters = (s.match(/[\p{L}\p{M}]/gu) || []).length;
+  const frags = s.split(/\s+/).map((f) => (f.match(/[\p{L}\p{M}]/gu) || []).length).filter((n) => n > 0);
+  const avg = frags.length ? letters / frags.length : 0;
+  if (letters < 15 && /\p{N}/u.test(s)) return false;
+  if (letters >= 8 && avg >= 4) return true;
+  return conf >= 70 && letters >= 2 && avg >= 2;
+}
+
+// 두 읽기가 거의 같은가: 빈칸·문장부호를 빼고 6글자 넘고, 다른 글자가 긴 쪽의 1/4 이하.
+function hsAgree(a, b) {
+  const n = (t) => String(t || '').normalize('NFC').replace(/[\s\p{P}\p{S}]+/gu, '');
+  const x = n(a);
+  const y = n(b);
+  if (x.length < 6 || y.length < 6) return false;
+  return editDist(x, y) <= Math.ceil(Math.max(x.length, y.length) * 0.25);
+}
+
+// 미얀마 모델이 자주 틀리는 꼴: 'ော'·'ါ' 뒤의 'ံ'(U+1036)은 쓰지 않는 꼴 — 'ော်'·'ါ်'(U+103A)이다('တောံ' → 'တော်').
+function hsMyFix(t) {
+  return String(t).replace(/(ော|ါ)ံ/g, '$1်');
 }
 
 // text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], core?:[띠 위, 띠 아래], n?: 글줄 수,

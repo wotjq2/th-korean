@@ -55,3 +55,33 @@ test('노란 자막 화소는 흰색으로, 주황·피부색·흰색·배경은
   for (let i = 0; i < out.length; i += 4) got.push([out[i], out[i + 1], out[i + 2]]);
   assert.deepEqual(got, [[255, 255, 255], [255, 255, 255], [255, 140, 0], [240, 200, 170], [255, 255, 255], [40, 40, 40], [200, 150, 80]]);
 });
+
+// 2026-11-22: 크메르·라오·미얀마는 바르게 읽어도 확신도가 0~30 으로 널뛰어 맞는 줄이 버려졌다 — 두 방식(psm 13·7)으로 읽어
+// 거의 같으면 확신도가 낮아도 받는다(hsAgree). 미얀마 모델의 'ောံ' 은 'ော်' 로(hsMyFix).
+test('두 읽기가 거의 같은가(hsAgree): 글자 75% 넘게 같고 6글자 넘을 때만', () => {
+  const c3 = vm.createContext({});
+  vm.runInContext(`${cut('editDist')}\n${cut('hsAgree')}\nthis.hsAgree = hsAgree;`, c3);
+  assert.equal(c3.hsAgree('ພວກເຮົາຕ້ອງອອກໄປຈາກບ່ອນນີດຽວກີູ', 'ພວກເຮົາຕ້ອງອອກໄປຈາກບ່ອນນີດຽວນີ'), true);
+  assert.equal(c3.hsAgree('ຂ່ອຍບໍຮູວ່າລາວໄປໃສ່', 'ຂ໋ອຍບໍ່ຮູ້ວ່າລາວໄປໃສ'), true);
+  assert.equal(c3.hsAgree('ខ្ទ្ជបននងបាគាត់ទៅណាទេ', 'នខឌឃបនដ៥ងឃាគាគ1ទៅណាទេ'), false, '뒤범벅끼리는 다르다');
+  assert.equal(c3.hsAgree('ລໍ', 'ລໍ'), false, '너무 짧은 줄은 같아도 안 믿는다');
+  assert.equal(c3.hsAgree('ab cd, ef!', 'abcdef'), true, '빈칸·문장부호는 보지 않는다');
+});
+
+test("미얀마 'ောံ'·'ါံ' → 'ော်'·'ါ်', 맞는 'ံ' 은 그대로(hsMyFix)", () => {
+  const c4 = vm.createContext({});
+  vm.runInContext(`${cut('hsMyFix')}\nthis.hsMyFix = hsMyFix;`, c4);
+  assert.equal(c4.hsMyFix('ကျွန်တောံမသိဘူး'), 'ကျွန်တော်မသိဘူး');
+  assert.equal(c4.hsMyFix('ကံကောင်းပါစေ'), 'ကံကောင်းပါစေ');
+});
+
+test('크메르·라오·미얀마 글다움(hsPlausible): 짧은 조각·숫자 섞인 뒤범벅은 거른다', () => {
+  const c5 = vm.createContext({});
+  vm.runInContext(`${cut('hsPlausible')}\nthis.hsPlausible = hsPlausible;`, c5);
+  for (const [t, conf] of [['ພວກເຮົາຕ້ອງອອກໄປຈາກບ່ອນນີດຽວນີ', 0], ['ລຖ້າກ່ອນ ຢ່າຫາກໄປ', 30], ['ចាំបន្តិច កុំទាន់ទៅ', 20], ['ແມ່ນ', 80]]) {
+    assert.equal(c5.hsPlausible(t, conf), true, t);
+  }
+  for (const [t, conf] of [['ເພ ຟັ.', 38], ['ပ ၉4 ပါ', 49], ['ແມ່ນ', 40], ['ກກ ຂ ຄ ງ ຈ', 60]]) {
+    assert.equal(c5.hsPlausible(t, conf), false, t);
+  }
+});

@@ -1,0 +1,38 @@
+# 고정 시험 1·2단계 — 스크립트·설정·확장·시험을 main 에 올릴 때마다.
+# 1단계(tests/*.test.js): 브라우저 없이 1초. 2단계(tests/browser/*.test.js): 가상 PC 의 진짜 크롬 + 지금 만든 확장 + 가짜 사이트
+# (진짜 인터넷·진짜 GitHub 에는 안 나간다 — tests/browser/lib/fake-net.js). 크롬은 windows-latest 에 들어 있고, 시험용 인증서는
+# Git 의 openssl 로 만든다. 확장 빌드에 드는 글자 인식 파일은 build.js 가 jsdelivr 에서 받아 sha256 을 맞춰 본다.
+# 내 PC 에서는 .githooks/pre-push 가 올리기 전에 1단계를 돌린다(이 작업은 그 뒤의 2단계와, 훅이 없는 PC 에서 올린 것까지 본다).
+name: 고정 시험 (1·2단계)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'th-korean.user.js'
+      - 'config.json'
+      - 'extension/**'
+      - 'tests/**'
+      - 'line-helper/engine.js'
+      - '.github/workflows/tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    # 비공개 사본 저장소(같은 커밋을 받는다)에서는 돌리지 않는다 — 공개 저장소의 Actions 는 무료다.
+    if: github.repository == 'wotjq2/th-korean'
+    name: 1·2단계 (윈도우 + 크롬)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 1단계 (브라우저 없이)
+        run: node --test "tests/*.test.js"
+      - name: 2단계 (진짜 크롬 + 가짜 사이트)
+        run: node --test "tests/browser/*.test.js"

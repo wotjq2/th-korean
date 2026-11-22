@@ -258,6 +258,26 @@ static class RemoteConfig
         return out_.Count > 0 ? out_.ToArray() : fallback;
     }
 
+    // report — '문제 알리기' 가 여는 새 글 화면(확장과 같은 칸, config.json _report). { 주소, 제목 칸, 본문 칸 }. 틀리면 GitHub 이슈.
+    public static string[] ReportTarget()
+    {
+        string[] def = { "https://github.com/wotjq2/th-korean/issues/new", "title", "body" };
+        Dictionary<string, object> c = Load();
+        Dictionary<string, object> r = c != null && c.ContainsKey("report") ? c["report"] as Dictionary<string, object> : null;
+        if (r == null) return def;
+        System.Text.RegularExpressions.Regex urlRe = new System.Text.RegularExpressions.Regex("^https://[^\\s\"'<>\\\\]{6,290}$");
+        System.Text.RegularExpressions.Regex paramRe = new System.Text.RegularExpressions.Regex("^[\\w.-]{1,40}$");
+        string url = r.ContainsKey("url") ? r["url"] as string : null;
+        if (url == null || !urlRe.IsMatch(url)) return def;
+        string title = r.ContainsKey("titleParam") ? r["titleParam"] as string : null;
+        string body = r.ContainsKey("bodyParam") ? r["bodyParam"] as string : null;
+        return new[] {
+            url,
+            title == "" ? "" : (title != null && paramRe.IsMatch(title) ? title : def[1]),
+            body != null && paramRe.IsMatch(body) ? body : def[2],
+        };
+    }
+
     public static List<string> ExtensionIds()
     {
         List<string> ids = new List<string>();
@@ -348,5 +368,131 @@ static class ChromeCaptionSwitch
             Thread.Sleep(300);
         }
         return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 문제 알리기 (2026-11-22) — 트레이 메뉴. 확장의 '문제 알리기' 와 같은 곳(config.json report, 기본 GitHub 이슈)에 같은 꼴의 글.
+// 기록(line-helper.log)에는 LINE 에서 보낸·받은 말, 화면 글줄, 창 제목이 그대로 있다 — 공개 글에 대화가 나가지 않게 오류 줄만
+// 고르고, 대화·화면 글·창 제목을 적는 줄은 오류여도 넣지 않으며, 남은 줄의 [ ] 안도 가린다. 사용자 폴더 경로(이름이 든다)도 가린다.
+// 윈도우는 긴 주소를 잘 못 연다(ShellExecute 2천 자 남짓) — 글은 클립보드에 넣고 새 글 화면에서 붙여 넣게 한다(올리기 전에 보인다).
+// ---------------------------------------------------------------------------
+static class Report
+{
+    static readonly System.Text.RegularExpressions.Regex ErrorLine = new System.Text.RegularExpressions.Regex(
+        "실패|오류|못 |못했|못 찾|없습니다|Exception|error|failed", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    // 대화·화면 글·창 제목이 드는 줄 — 오류여도 넣지 않는다('입력칸 바꾸기 실패 [보낼 말] → 번역' 은 번역이 괄호 밖에 있다)
+    static readonly System.Text.RegularExpressions.Regex Private = new System.Text.RegularExpressions.Regex(
+        @"보냄 \[|받음 \[|말풍선|입력칸 바꾸기 실패|창이 바뀌어|화면 글줄|화면 번역 켬|화면 번역: 뗌|다른 창으로|\[평가\]|\[화면\]|\[hs\]|클립보드");
+    static readonly System.Text.RegularExpressions.Regex Bracket = new System.Text.RegularExpressions.Regex(@"\[(?!엔진\]|통합 번역\])[^\]\r\n]{0,400}\]");
+    static readonly System.Text.RegularExpressions.Regex Stamp = new System.Text.RegularExpressions.Regex(@"^(\d\d-\d\d \d\d:\d\d):\d\d\.\d{3} ");
+
+    // 기록 끝쪽에서 오류 줄을 골라 가린다. 같은 말이 잇따르면 한 줄(×횟수).
+    public static List<string> ErrorLines(string logPath, int max)
+    {
+        List<string> outLines = new List<string>();
+        string[] all;
+        try
+        {
+            using (FileStream fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader sr = new StreamReader(fs, Encoding.UTF8))
+                all = sr.ReadToEnd().Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        }
+        catch { return outLines; }
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string lastMsg = null;
+        int count = 0;
+        for (int i = Math.Max(0, all.Length - 3000); i < all.Length; i++)
+        {
+            System.Text.RegularExpressions.Match m = Stamp.Match(all[i]);
+            if (!m.Success) continue; // 오류의 둘째 줄부터(호출 순서)는 넣지 않는다
+            string msg = all[i].Substring(m.Length);
+            if (!ErrorLine.IsMatch(msg) || Private.IsMatch(msg)) continue;
+            msg = Bracket.Replace(msg, "[…]");
+            if (!string.IsNullOrEmpty(home)) msg = msg.Replace(home, "%USERPROFILE%");
+            msg = msg.Replace("@", "@\u200b"); // GitHub '@이름' 알림 막기
+            if (msg.Length > 200) msg = msg.Substring(0, 199) + "…";
+            if (msg == lastMsg && outLines.Count > 0)
+            {
+                count++;
+                outLines[outLines.Count - 1] = "- " + m.Groups[1].Value + " " + msg + " (×" + count + ")";
+                continue;
+            }
+            lastMsg = msg;
+            count = 1;
+            outLines.Add("- " + m.Groups[1].Value + " " + msg);
+        }
+        if (outLines.Count > max) outLines.RemoveRange(0, outLines.Count - max);
+        return outLines;
+    }
+
+    // 기록의 마지막 '엔진 준비: 스크립트 1.35.8' 줄 → 판 번호
+    static string ScriptVersion(string logPath)
+    {
+        try
+        {
+            string text;
+            using (FileStream fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader sr = new StreamReader(fs, Encoding.UTF8)) text = sr.ReadToEnd();
+            System.Text.RegularExpressions.MatchCollection ms = System.Text.RegularExpressions.Regex.Matches(text, @"엔진 준비: 스크립트 (\S+)");
+            if (ms.Count > 0) return ms[ms.Count - 1].Groups[1].Value;
+        }
+        catch { }
+        return "?";
+    }
+
+    static string WindowsName()
+    {
+        try
+        {
+            using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+            {
+                string build = Convert.ToString(k.GetValue("CurrentBuild"));
+                string name = Convert.ToString(k.GetValue("ProductName"));
+                int b;
+                // 윈도우 11 도 ProductName 은 'Windows 10 …' 으로 남아 있다 — 빌드 22000 부터 11
+                if (int.TryParse(build, out b) && b >= 22000) name = name.Replace("Windows 10", "Windows 11");
+                return name + " " + Convert.ToString(k.GetValue("DisplayVersion")) + " (빌드 " + build + ")";
+            }
+        }
+        catch { return Environment.OSVersion.VersionString; }
+    }
+
+    public static string Body(string logPath, string myLang, string lineLang, string screenLang, List<string> ocrLangs)
+    {
+        StringBuilder b = new StringBuilder();
+        b.Append("### 무슨 일인가요?\n(여기에 적어 주세요 — 어느 프로그램에서, 무엇을 했더니, 어떻게 됐는지)\n\n");
+        b.Append("### 환경 (번역 도우미)\n");
+        b.Append("- 번역 도우미: 프로그램 ").Append(File.GetLastWriteTime(Application.ExecutablePath).ToString("yyyy-MM-dd HH:mm"))
+            .Append(" 만듦 · 번역 스크립트 ").Append(ScriptVersion(logPath)).Append('\n');
+        b.Append("- 윈도우: ").Append(WindowsName()).Append(Environment.Is64BitOperatingSystem ? " 64비트" : " 32비트")
+            .Append(" · 화면 언어 ").Append(System.Globalization.CultureInfo.CurrentUICulture.Name).Append('\n');
+        b.Append("- 내 언어: ").Append(myLang).Append(" · LINE 보낼 때 바꿀 언어: ").Append(lineLang == "" ? "끔" : lineLang)
+            .Append(" · 화면 번역 글자: ").Append(screenLang).Append('\n');
+        b.Append("- 윈도우 글자 인식 언어: ").Append(ocrLangs.Count > 0 ? string.Join(", ", ocrLangs.ToArray()) : "없음").Append('\n');
+        List<string> errs = ErrorLines(logPath, 20);
+        b.Append("\n### 최근 오류 기록 (이 PC, ").Append(errs.Count).Append("개 — 대화 글은 넣지 않음)\n");
+        if (errs.Count == 0) b.Append("- 없음\n");
+        foreach (string e in errs) b.Append(e).Append('\n');
+        return b.ToString();
+    }
+
+    // 트레이 메뉴 '문제 알리기' — 글을 클립보드에 넣고 새 글 화면을 연다.
+    public static void Open(string body)
+    {
+        bool copied = false;
+        for (int i = 0; i < 5 && !copied; i++)
+        {
+            try { Clipboard.SetText(body, TextDataFormat.UnicodeText); copied = true; }
+            catch (System.Runtime.InteropServices.ExternalException) { Thread.Sleep(40); }
+        }
+        string[] t = RemoteConfig.ReportTarget();
+        string sep = t[0].Contains("?") ? "&" : "?";
+        string url = t[0] + sep + (t[1] != "" ? t[1] + "=" + Uri.EscapeDataString("[도우미] ") + "&" : "")
+            + t[2] + "=" + Uri.EscapeDataString(copied ? "(복사해 둔 글을 Ctrl+V 로 붙여 넣고, 맨 위에 무슨 일인지 적어 주세요)" : "(글을 복사하지 못했습니다 — 무슨 일인지 적어 주세요)");
+        try { Process.Start(url); } catch (Exception e) { Log.Write("문제 알리기: 브라우저를 열지 못했습니다 — " + e.Message); }
+        App.Show("문제 알리기", copied
+            ? "보낼 글을 복사해 두었습니다. 열린 GitHub 화면의 글 칸을 지우고 Ctrl+V 로 붙여 넣은 뒤 무슨 일인지 적어 올려 주세요(GitHub 계정 필요). 계정이 없으면 메일·메신저에 붙여 넣어 보내 주세요."
+            : "글을 복사하지 못했습니다. 열린 화면에 무슨 일인지 적어 주세요.", !copied, 15000);
     }
 }

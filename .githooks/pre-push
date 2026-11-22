@@ -1,0 +1,20 @@
+#!/bin/sh
+# 올리기(git push) 전에 1단계 고정 시험(tests/*.test.js, 1~2초)을 돌린다. 하나라도 실패하면 올리지 않는다.
+# 까닭: th-korean.user.js 를 main 에 올리면 웹스토어 심사 없이 몽키(Tampermonkey) 사용자와 번역 도우미 엔진(GitHub 에서
+# 스크립트를 받아 쓴다)에 바로 나간다. 웹스토어판 빌드(build.js --store)만 시험을 거치던 빈틈을 막는다(2026-11-22).
+# 켜기(PC 마다 한 번): git config core.hooksPath .githooks
+# 2단계(진짜 크롬, 30초)는 GitHub Actions(.github/workflows/tests.yml)가 올린 뒤에 돌린다.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if ! command -v node >/dev/null 2>&1; then
+  echo "[올리기 전 시험] node 가 없어 건너뜁니다" >&2
+  exit 0
+fi
+out=$(node --test --test-reporter=dot "tests/*.test.js" 2>&1)
+code=$?
+if [ $code -ne 0 ]; then
+  printf '%s\n' "$out" | tail -60 >&2
+  echo "[올리기 전 시험] 1단계 시험이 실패해 올리지 않았습니다. 고친 뒤 다시 올리세요." >&2
+  exit 1
+fi
+echo "[올리기 전 시험] 1단계 통과" >&2
+exit 0

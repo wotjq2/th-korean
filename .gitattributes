@@ -1,0 +1,2 @@
+# 훅은 git 의 sh 가 읽는다 — 윈도우 줄바꿈(CRLF)이면 #!/bin/sh 줄이 깨진다
+.githooks/* text eol=lf

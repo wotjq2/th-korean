@@ -1583,6 +1583,13 @@ static class App
         ToolStripMenuItem logItem = new ToolStripMenuItem(MyLang.T("기록 보기"));
         logItem.Click += delegate { try { Process.Start("notepad.exe", "\"" + Log.FilePath + "\""); } catch { } };
         menu.Items.Add(logItem);
+        // 문제 알리기(2026-11-22) — 환경·오류 기록(대화 글은 뺌)을 복사하고 GitHub 새 글 화면을 연다(ChromeLink.cs Report).
+        ToolStripMenuItem reportItem = new ToolStripMenuItem(MyLang.T("문제 알리기 (GitHub)"));
+        reportItem.Click += delegate
+        {
+            Report.Open(Report.Body(Log.FilePath, MyLang.Code, Lang, ScreenKorean.Lang, ScreenKorean.WindowsLangs()));
+        };
+        menu.Items.Add(reportItem);
         menu.Items.Add(new ToolStripSeparator());
         ToolStripMenuItem quit = new ToolStripMenuItem(MyLang.T("끝내기"));
         quit.Click += delegate { Application.Exit(); };

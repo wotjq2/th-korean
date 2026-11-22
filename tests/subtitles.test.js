@@ -40,6 +40,19 @@ test('config 의 subPrep 은 뒤에 붙고, 틀린 정규식은 버린다', () =
   assert.equal(sub('幹你娘', 'zh-TW'), '他媽的'); // 기본 표도 그대로
 });
 
+test('config.json: 광둥어 화면 자막 글자 인식 실수를 고치고, 표준 중국어는 그대로(2026-11-22)', () => {
+  const cfg = require('../config.json');
+  const sub = load({ config: cfg }).peek('subPrep');
+  // 엔진이 실제로 읽은 꼴(잘라 낸 자막 yue-0·1·2, 흰·노랑·호박) → 고친 꼴
+  assert.equal(sub('我唔知佢去咕邊', 'yue'), '我唔知佢去咗邊');
+  assert.equal(sub('等障 喇好走住', 'yue'), '等陣 唔好走住');
+  assert.equal(sub('我号要即刻离开呢度', 'yue'), '我哋要即刻离开呢度');
+  // 표준 중국어에 나오는 꼴은 안 건드린다
+  for (const s of ['我们去吃饭吧', '喇叭坏了', '他有語言障礙', '一障碍物', '我号码是多少', '你去咕噜', '我咕哝了一声']) {
+    assert.equal(sub(s, 'zh-CN'), s, s);
+  }
+});
+
 // ytSpokenFrom(자막 목록, 영상 정보, 변형 목록) → 말 언어. 내 언어면 YT_MY 를 돌려준다(그러면 번역 자막을 안 띄운다).
 const spoken = (myLang) => load({ myLang }).peek('ytSpokenFrom');
 

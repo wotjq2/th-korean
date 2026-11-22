@@ -1129,7 +1129,7 @@ function hsDeyellow(px) {
   return px;
 }
 
-function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
+function hsBinarize(px, w, h, rows, vh, core, margin = 0, want = 1) {
   const hist = new Array(256).fill(0);
   let n = 0;
   const hr = core || rows;
@@ -1157,18 +1157,62 @@ function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
     edge: Math.max(2, Math.round(vh * 0.004)),
   });
   const made = new Map();
+  // 잉크 덩어리(8방향으로 이어진 획) 번호 — 여러 줄을 줄마다 자를 때만(아래 split) 한 번 센다.
+  let labels = null;
+  const lab = () => {
+    if (labels) return labels;
+    const id = new Int32Array(w * h);
+    const total = [0];
+    const stack = [];
+    for (let i = 0; i < w * h; i++) {
+      if (!ink[i] || id[i]) continue;
+      const L = total.length;
+      total.push(0);
+      id[i] = L;
+      stack.push(i);
+      while (stack.length) {
+        const p = stack.pop();
+        total[L]++;
+        const x = p % w;
+        const y = (p - x) / w;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const q = ny * w + nx;
+            if (ink[q] && !id[q]) {
+              id[q] = L;
+              stack.push(q);
+            }
+          }
+      }
+    }
+    labels = { id, total: Int32Array.from(total) };
+    return labels;
+  };
   // r = 잉크를 남길 줄 범위. tight(한자): 그 범위의 잉크 둘레에서 tight 화소만 남기고 자른다 — psm 13(통째로 한 줄)은 그림
   // 높이를 글줄 높이로 보아, 위아래 빈 곳이 크면 망가졌다(1.32 시험 크기: 둘레 0.3줄). 아니면 그림 전체 + 둘레 흰 여백
   // margin — 위 부호가 그림 끝에 닿으면 Tesseract 가 부호를 버렸다. gaps = 잉크 없는 세로 틈(빈칸 정하기에 씀).
-  return (r, tight = 0) => {
-    const key = r.join('-') + '/' + tight;
+  // split = 여러 줄 중 한 줄을 자를 때(2026-11-22): 획의 절반 넘게 다른 줄에 있는 덩어리는 뺀다 — 큰 글자 두 줄에서 윗줄의
+  // 꼬리(p·y)가 아랫줄 낱말 사이로 내려와 'l'·',' 로 읽혀 아랫줄이 통째로 버려졌다('ngayllBây,giờ').
+  return (r, tight = 0, split = false) => {
+    const key = r.join('-') + '/' + tight + (split ? '/s' : '');
     if (made.has(key)) return made.get(key);
+    let keep = null;
+    if (split) {
+      const { id, total } = lab();
+      const inside = new Int32Array(total.length);
+      for (let y = r[0]; y < r[1]; y++) for (let x = 0; x < w; x++) inside[id[y * w + x]]++;
+      keep = (i) => inside[id[i]] * 2 >= total[id[i]];
+    }
+    const on = (i) => ink[i] && (!keep || keep(i));
     let x0 = w, x1 = 0;
     const perRow = new Array(h).fill(0);
     const perCol = new Array(w).fill(0);
     for (let y = r[0]; y < r[1]; y++)
       for (let x = 0; x < w; x++)
-        if (ink[y * w + x]) {
+        if (on(y * w + x)) {
           perRow[y]++;
           perCol[x]++;
           if (x < x0) x0 = x;
@@ -1184,7 +1228,7 @@ function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
     const H2 = Math.max(1, oh) + 2 * M;
     const out = Buffer.alloc(W2 * H2, 255);
     for (let y = r[0]; y < r[1]; y++)
-      for (let x = ox; x < ox + ow; x++) if (ink[y * w + x] && y >= oy && y < oy + oh) out[(y - oy + M) * W2 + x - ox + M] = 0;
+      for (let x = ox; x < ox + ow; x++) if (on(y * w + x) && y >= oy && y < oy + oh) out[(y - oy + M) * W2 + x - ox + M] = 0;
     const gaps = [];
     for (let x = x0, a = -1; x <= x1 + 1; x++) {
       const empty = x <= x1 && !perCol[x];
@@ -1195,8 +1239,8 @@ function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
       }
     }
     const pgm = Buffer.concat([Buffer.from(`P5\n${W2} ${H2}\n255\n`), out]); // PGM — Tesseract(Leptonica)가 바로 읽는다
-    if (process.env.TH_HS_DEBUG) fs.writeFileSync(path.join(require('os').tmpdir(), `hs-${Date.now()}-${key.replace('/', '_')}.pgm`), pgm);
-    const bands = hsLineBands(perRow, r);
+    if (process.env.TH_HS_DEBUG) fs.writeFileSync(path.join(require('os').tmpdir(), `hs-${Date.now()}-${key.replace(/\//g, '_')}.pgm`), pgm);
+    const bands = hsLineBands(perRow, r, want);
     const got = { file: `data:image/pgm;base64,${pgm.toString('base64')}`, lines: bands.length, bands, gaps };
     made.set(key, got);
     return got;
@@ -1207,7 +1251,31 @@ function hsBinarize(px, w, h, rows, vh, core, margin = 0) {
 // 잉크가 거의 없는 가로줄로 끊긴 덩어리 가운데 큰 것(가장 큰 덩어리 높이의 60% 넘게)만 센다 — 태국어·라오어의 위아래
 // 부호(성조·모음)는 작은 덩어리라 세지 않는다. 사이가 덩어리 높이의 15% 아래면 붙어 있는 것으로 본다.
 // 글줄마다의 줄 범위(위·아래 줄과의 사이 한가운데까지 — 그 사이의 위아래 부호도 그 줄에 든다).
-function hsLineBands(perRow, rows) {
+function hsLineBands(perRow, rows, want = 1) {
+  const lines = hsLineRuns(perRow, rows);
+  // 확장이 줄을 want 개로 셌는데 덜 나왔으면(2026-11-22: 큰 글자 두 줄 — 아랫줄 성조 부호(â·ờ)가 윗줄 꼬리(p·g)에 닿아 틈이
+  // 없었다 → 두 줄을 한 줄로 읽어 'G u Nhu đây'), 가장 높은 덩어리를 가운데쯤의 가장 가는 줄에서 가른다. 그 줄이 덩어리 평균
+  // 잉크의 절반 아래일 때만(한 줄짜리 큰 글자를 가르지 않게).
+  while (want > 1 && lines.length && lines.length < want) {
+    let k = 0;
+    lines.forEach(([s, e], i) => e - s > lines[k][1] - lines[k][0] && (k = i));
+    const [s, e] = lines[k];
+    const hgt = e - s;
+    let sum = 0;
+    for (let y = s; y < e; y++) sum += perRow[y];
+    let cut = -1;
+    for (let y = Math.ceil(s + hgt * 0.3); y <= Math.floor(e - hgt * 0.3); y++) if (cut < 0 || perRow[y] < perRow[cut]) cut = y;
+    if (cut < 0 || perRow[cut] > (sum / hgt) * 0.5) break;
+    lines.splice(k, 1, [s, cut], [cut + 1, e]);
+  }
+  return lines.map(([s, e], i) => [
+    i ? Math.ceil((lines[i - 1][1] + s) / 2) : rows[0],
+    i < lines.length - 1 ? Math.floor((e + lines[i + 1][0]) / 2) : rows[1],
+  ]);
+}
+
+// 잉크가 있는 줄 덩어리들(위아래 부호 덩어리는 붙이고, 너무 낮은 덩어리는 뺀다)
+function hsLineRuns(perRow, rows) {
   let max = 0;
   for (let y = rows[0]; y < rows[1]; y++) max = Math.max(max, perRow[y]);
   if (!max) return [];
@@ -1229,11 +1297,7 @@ function hsLineBands(perRow, rows) {
     else merged.push([...r]);
   }
   const big = Math.max(...merged.map(([s, e]) => e - s));
-  const lines = merged.filter(([s, e]) => e - s >= big * 0.6); // 0.45 로는 라오어 위 부호 줄이 한 줄로 셌다
-  return lines.map(([s, e], i) => [
-    i ? Math.ceil((lines[i - 1][1] + s) / 2) : rows[0],
-    i < lines.length - 1 ? Math.floor((e + lines[i + 1][0]) / 2) : rows[1],
-  ]);
+  return merged.filter(([s, e]) => e - s >= big * 0.6); // 0.45 로는 라오어 위 부호 줄이 한 줄로 셌다
 }
 
 // 읽은 줄 손질: 한자 사이 띄어쓰기를 지우고 양 끝 부스러기(따옴표·쉼표·> 등)를 뗀다.
@@ -1514,8 +1578,8 @@ async function hardsub(text) {
   const view = {
     // 한자: 원래 크기, 띠(없으면 줄)만, 둘레 0.3줄
     han: (r) => {
-      native = native || hsBinarize(px, w, h, rows1, vh, core1);
-      return native(r || band, Math.max(2, Math.round(lh1 * 0.3)));
+      native = native || hsBinarize(px, w, h, rows1, vh, core1, 0, n);
+      return native(r || band, Math.max(2, Math.round(lh1 * 0.3)), !!r); // r = 여러 줄 중 한 줄
     },
     // 다른 글자: 띠 한 줄이 40 화소 아래면 키우고, 그림 전체(가나·한글은 띠만) + 흰 여백 0.4줄
     wide: (coreOnly, r) => {
@@ -1523,9 +1587,9 @@ async function hardsub(text) {
         const u = lh1 < 40 ? Math.min(3, 48 / lh1) : 1;
         const up = u > 1 ? hsUpscale(px, w, h, u) : { px, w, h };
         const core = span(j.core, u, up.h);
-        big = { u, H: up.h, core, bin: hsBinarize(up.px, up.w, up.h, span(j.rows, u, up.h) || [0, up.h], vh * u, core, lh1 * u * 0.4) };
+        big = { u, H: up.h, core, bin: hsBinarize(up.px, up.w, up.h, span(j.rows, u, up.h) || [0, up.h], vh * u, core, lh1 * u * 0.4, n) };
       }
-      const got = big.bin(r || (coreOnly && big.core ? big.core : [0, big.H]));
+      const got = big.bin(r || (coreOnly && big.core ? big.core : [0, big.H]), 0, !!r);
       return { ...got, em: lh1 * big.u };
     },
   };

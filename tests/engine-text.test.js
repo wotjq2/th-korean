@@ -85,3 +85,19 @@ test('크메르·라오·미얀마 글다움(hsPlausible): 짧은 조각·숫자
     assert.equal(c5.hsPlausible(t, conf), false, t);
   }
 });
+
+// 2026-11-22: 큰 글자 두 줄 자막은 아랫줄 성조 부호가 윗줄 꼬리에 닿아 틈이 없었다 — 확장이 센 줄 수(want)만큼 가운데의 가장
+// 가는 줄에서 가른다. 한 줄짜리 큰 글자(가운데가 가늘지 않다)는 가르지 않는다.
+test('줄 가르기(hsLineBands): 틈 없이 붙은 두 줄은 센 줄 수만큼 가른다', () => {
+  const c6 = vm.createContext({});
+  vm.runInContext(`${cut('hsLineBands')}\n${cut('hsLineRuns')}\nthis.hsLineBands = hsLineBands;`, c6);
+  // 0~9 빈 줄, 10~49 윗줄(잉크 40), 50~54 가는 목(잉크 6 — 부호와 꼬리가 닿은 곳), 55~94 아랫줄(잉크 40), 95~99 빈 줄
+  const rows = Array.from({ length: 100 }, (_, y) => (y < 10 || y >= 95 ? 0 : y >= 50 && y < 55 ? 6 : 40));
+  assert.equal(c6.hsLineBands(rows, [0, 100], 1).length, 1, '줄 수를 모르면 예전처럼 한 덩어리');
+  const two = c6.hsLineBands(rows, [0, 100], 2);
+  assert.equal(two.length, 2);
+  assert.ok(two[0][1] >= 48 && two[0][1] <= 56, `가른 자리 ${two[0][1]}`);
+  // 한 줄짜리 큰 글자: 가운데가 가늘지 않으면 2 줄이라 해도 가르지 않는다
+  const one = Array.from({ length: 100 }, (_, y) => (y < 10 || y >= 90 ? 0 : 30 + (y % 7)));
+  assert.equal(c6.hsLineBands(one, [0, 100], 2).length, 1);
+});

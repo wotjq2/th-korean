@@ -126,14 +126,40 @@ async function vendorFile(url) {
   const want = hash && hash.startsWith('sha256=') ? hash.slice(7) : null;
   const file = path.join(VENDOR, path.basename(new URL(bare).pathname));
   const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-  if (fs.existsSync(file) && (!want || sha(fs.readFileSync(file)) === want)) return file;
+  const valid = () => {
+    try {
+      return fs.existsSync(file) && (!want || sha(fs.readFileSync(file)) === want);
+    } catch {
+      return false; // 다른 빌드가 막 바꿔 넣는 중
+    }
+  };
+  if (valid()) return file;
   const r = await fetch(bare);
   if (!r.ok) throw new Error(`${bare} 받기 실패 (HTTP ${r.status})`);
   const buf = Buffer.from(await r.arrayBuffer());
   if (want && sha(buf) !== want) throw new Error(`${bare} 의 sha256 이 @require 와 다릅니다`);
   fs.mkdirSync(VENDOR, { recursive: true });
-  fs.writeFileSync(file, buf);
-  return file;
+  // 2단계 시험은 빌드 여럿을 함께 돌린다 — 처음 받는 파일을 같은 자리에 동시에 쓰면 윈도우가 EBUSY 로 막았다(2026-11-22
+  // GitHub Actions 첫 실행, 새로 받은 저장소라 vendor 가 비어 있었다). 제 임시 파일에 쓰고 바꿔 넣는다. 그 사이 다른 빌드가
+  // 먼저 넣었으면 그것을 쓴다.
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, buf);
+  for (let i = 0; ; i++) {
+    if (valid()) {
+      fs.rmSync(tmp, { force: true });
+      return file;
+    }
+    try {
+      fs.renameSync(tmp, file);
+      return file;
+    } catch (e) {
+      if (i >= 30) {
+        fs.rmSync(tmp, { force: true });
+        throw e;
+      }
+      await new Promise((res) => setTimeout(res, 100));
+    }
+  }
 }
 
 // 웹스토어판은 고정 테스트(tests/)를 먼저 돌려, 하나라도 실패하면 zip 을 만들지 않는다(2026-11-21 사용자: 막아 줘).

@@ -81,6 +81,9 @@
   "shops": {},
   "_shops": "한국어 검색어를 태국어로 바꿔 검색해 주는 쇼핑몰. 라자다(lazada)·쇼피(shopee)는 바뀐 칸만 적으면 고쳐진다. 새 쇼핑몰은 label·host·searchUrl·inputSelectors 를 다 적는다. searchUrl 은 https 이고 {q} 자리에 검색어가 들어가며 그 사이트 주소여야 한다. 예: \"shops\": { \"shopee\": { \"inputSelectors\": [\"input[name=keyword]\"] }, \"bigc\": { \"label\": \"빅씨\", \"host\": \"bigc.co.th\", \"searchUrl\": \"https://www.bigc.co.th/search?q={q}\", \"inputSelectors\": [\"input[type=search]\"], \"queryParam\": \"q\" } } 1.34.0 부터 쇼피·라자다는 나라마다(쇼피 태국·싱가포르·말레이시아·인도네시아·베트남·필리핀·대만·브라질·멕시코·콜롬비아·칠레, 라자다 6개국) 그 나라 말로 검색어를 바꾸고 페이지를 옮긴다. 나라를 더하거나 말을 바꾸려면 \"shopee\": { \"markets\": { \"shopee.pl\": \"pl\" } } 처럼 주소 → 언어 코드. 새 쇼핑몰은 \"lang\" 에 그 쇼핑몰 말(없으면 태국어).",
 
+  "report": { "url": "https://github.com/wotjq2/th-korean/issues/new", "titleParam": "title", "bodyParam": "body", "maxUrl": 7000 },
+  "_report": "'한' 설정 창·통합 번역 창의 '문제 알리기' 가 여는 새 글 화면(1.35.8~). url = https 주소, titleParam·bodyParam = 제목·본문을 넣을 주소 칸 이름(GitHub 이슈는 title·body). 구글 설문지로 바꾸려면 설문지의 '미리 채워진 링크' 주소(…/viewform?usp=pp_url)를 url 에, 본문 질문의 entry.숫자를 bodyParam 에, 제목 질문이 없으면 titleParam 을 \"\" 로. 다 채운 주소가 maxUrl 글자(1000~16000)를 넘으면 본문은 복사해 두고 빈 글 화면만 연다(사용자가 Ctrl+V). 주소가 틀리면 GitHub 이슈로 돌아간다.",
+
   "helper": {
     "extensionIds": ["ohbehckmepbfkpccihmedbnbmmiofcam"],
     "liveTranslate": { "toggle": ["실시간 번역", "자막 번역", "Live translate", "Live Translate"], "captionToggle": ["실시간 자막", "Live Caption", "Live caption"], "page": ["설정", "Settings"],

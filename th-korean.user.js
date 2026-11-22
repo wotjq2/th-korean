@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.35.7
+// @version      1.35.8
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -117,6 +117,100 @@
     return (b ? a + b[0] : a).toUpperCase();
   }
 
+  // ---- 문제 기록 · 최근 번역 (2026-11-22, 1.35.8 '문제 알리기') ----
+  // 사용자가 문제를 알릴 때('한' 설정 창의 '문제 알리기 · 번역이 이상해요') 붙일 것. 이 브라우저에만 두고 어디로도
+  // 보내지 않는다 — 사용자가 보낼 글을 보고 [GitHub 에 올리기]·[복사] 를 눌러 직접 올려야 나간다. 사이트는 이름만
+  // (주소 뒤쪽의 검색어·글 번호는 적지 않는다). problemLog = 실패 안내·경고, recentTr = 사용자가 바꾼 말(검색어·입력칸·
+  // 메신저 보내기·드래그 번역) — '이상했던 번역' 고르기 칸에 나온다.
+  const PROBLEM_KEY = 'problemLog'; // [{ at, host, msg, n? }]
+  const RECENT_TR_KEY = 'recentTr'; // [{ at, host, kind, src, out, via }]
+  const PROBLEM_MAX = 20;
+  const RECENT_TR_MAX = 10;
+  const PROBLEM_SAME_MS = 10 * 60 * 1000; // 같은 말이 이 안에 또 나오면 새 줄 대신 횟수만
+  function problemHost() {
+    try {
+      return String(location.hostname || '').replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  }
+  let problemPending = null;
+  let problemTimer = 0;
+  function problemNote(msg) {
+    const text = String(msg == null ? '' : msg).replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (!text) return;
+    try {
+      let list = problemPending || GM_getValue(PROBLEM_KEY, []);
+      if (!Array.isArray(list)) list = [];
+      const host = problemHost();
+      const now = Date.now();
+      const same = list.find((e) => e && e.msg === text && e.host === host && now - e.at < PROBLEM_SAME_MS);
+      if (same) {
+        same.n = (same.n || 1) + 1;
+        same.at = now;
+      } else list.push({ at: now, host, msg: text });
+      problemPending = list.slice(-PROBLEM_MAX);
+      // 실패가 줄마다 잇따를 수 있다(번역 실패 수십 줄) — 저장은 1초에 한 번.
+      if (!problemTimer) {
+        problemTimer = setTimeout(() => {
+          problemTimer = 0;
+          const v = problemPending;
+          problemPending = null;
+          if (v) GM_setValue(PROBLEM_KEY, v);
+        }, 1000);
+      }
+    } catch {
+      /* 기록은 덤이다 — 번역을 막지 않는다 */
+    }
+  }
+  function problemList() {
+    const v = problemPending || GM_getValue(PROBLEM_KEY, []);
+    return Array.isArray(v) ? v.filter((e) => e && typeof e.msg === 'string') : [];
+  }
+  // console.warn 과 같고, 문제 기록에도 남긴다(앞의 '[통합 번역]' 은 뺀다).
+  function warnNote(...args) {
+    console.warn(...args);
+    problemNote(
+      args
+        .map((a) => (a && typeof a === 'object' && a.message ? a.message : typeof a === 'string' ? a : String(a)))
+        .join(' ')
+        .replace(/^\[[^\]]*\]\s*/, '')
+    );
+  }
+  // 사용자가 바꾼 말 하나(검색어·입력칸·메신저·드래그 번역). 같은 짝은 맨 뒤로.
+  function trNote(kind, src, out, via) {
+    if (!src || !out) return;
+    try {
+      let list = GM_getValue(RECENT_TR_KEY, []);
+      if (!Array.isArray(list)) list = [];
+      const s = String(src).slice(0, 300);
+      const o = String(out).slice(0, 300);
+      list = list.filter((e) => e && !(e.src === s && e.out === o));
+      list.push({ at: Date.now(), host: problemHost(), kind, src: s, out: o, via: String(via || '') });
+      GM_setValue(RECENT_TR_KEY, list.slice(-RECENT_TR_MAX));
+    } catch {
+      /* 기록은 덤이다 */
+    }
+  }
+  function recentTrList() {
+    const v = GM_getValue(RECENT_TR_KEY, []);
+    return Array.isArray(v) ? v.filter((e) => e && typeof e.src === 'string' && typeof e.out === 'string') : [];
+  }
+  // 확장에서 이 스크립트가 낸 처리 안 된 오류(크롬 확장만 — content.js 주소로 가린다. 페이지 자신의 오류는 적지 않는다).
+  (() => {
+    const own = typeof GM_extensionURL === 'function' ? GM_extensionURL('') : '';
+    if (!own || typeof window === 'undefined' || !window.addEventListener) return;
+    window.addEventListener('error', (e) => {
+      if (e && typeof e.filename === 'string' && e.filename.startsWith(own)) {
+        problemNote(`오류: ${e.message} (${e.filename.slice(own.length)}:${e.lineno})`);
+      }
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e && e.reason;
+      if (r && String(r.stack || '').includes(own)) problemNote(`처리 안 된 오류: ${r.message || r}`);
+    });
+  })();
+
   // ---- 화면 글 옮기기 (내 언어가 한국어가 아닐 때만) ----
   // 단추·설정 창·안내(lzk- 로 시작하는 우리 요소)의 한국어 조각만 골라 구글로 옮기고 저장해 둔다(uiTr:<언어>).
   // 따옴표·화살표·줄바꿈에서 끊어 사용자가 쓴 말·번역 결과("무선 이어폰" → "หูฟัง…")는 건드리지 않는다.
@@ -209,7 +303,7 @@
       try {
         got = await freeTranslateMany(runs, 'ko', MY);
       } catch (e) {
-        console.warn(`[${APP_NAME}] 화면 글 옮기기 실패:`, e.message);
+        warnNote(`[${APP_NAME}] 화면 글 옮기기 실패:`, e.message);
       }
       const tr = uiLoad();
       runs.forEach((r, i) => (tr[r] = got[i] && String(got[i]).trim() ? String(got[i]).trim() : r));
@@ -264,7 +358,7 @@
     try {
       uiStart();
     } catch (e) {
-      console.warn(`[${APP_NAME}] 화면 글 옮기기를 켜지 못했습니다:`, e.message);
+      warnNote(`[${APP_NAME}] 화면 글 옮기기를 켜지 못했습니다:`, e.message);
     }
   }
   uiEnsure();
@@ -425,6 +519,9 @@
     },
     ocr: { lang: 'tha' }, // 사진 글자 읽기 언어(Tesseract, 'tha+eng' 처럼 여럿)
     shops: {}, // 검색 가로채기 사이트(라자다·쇼피 칸 고치기, 새 쇼핑몰 더하기) — SITES 참고
+    // '문제 알리기' 가 여는 새 글 화면 — 주소 + 제목·본문을 넣을 칸 이름(GitHub 은 title·body, 구글 설문지는 entry.숫자,
+    // 제목 칸이 없으면 titleParam ''). 다 채운 주소가 maxUrl 글자를 넘으면 본문은 복사해 두고 빈 글 화면만 연다.
+    report: { url: 'https://github.com/wotjq2/th-korean/issues/new', titleParam: 'title', bodyParam: 'body', maxUrl: 7000 },
   };
 
   // 자막(영상 자막 파일·화면에 박힌 자막)을 구글에 넘기기 전에 바꿔 둘 말 — 언어(구글 코드 앞부분)마다 [찾을 말(정규식), 바꿀 말].
@@ -640,6 +737,21 @@
       shops: rcShops(j.shops),
       subPrep: rcSubPrep(j.subPrep),
       koPrep: rcKoPrep(j.koPrep),
+      report: rcReport(j.report),
+    };
+  }
+
+  // '문제 알리기' 받는 곳. https 주소만, 칸 이름은 글자·숫자·.-_ 만. 주소가 틀리면 칸 전체를 기본값으로.
+  function rcReport(r) {
+    const D = RC_DEFAULT.report;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return { ...D };
+    const url = rcStr(r.url, '', /^https:\/\/[^\s"'<>\\]{6,290}$/);
+    if (!url) return { ...D };
+    return {
+      url,
+      titleParam: r.titleParam === '' ? '' : rcStr(r.titleParam, D.titleParam, /^[\w.-]{1,40}$/),
+      bodyParam: rcStr(r.bodyParam, D.bodyParam, /^[\w.-]{1,40}$/),
+      maxUrl: rcNum(r.maxUrl, D.maxUrl, 1000, 16000),
     };
   }
 
@@ -1111,7 +1223,7 @@
           glossaryParsed = parsed;
           return true;
         } catch (e) {
-          console.warn(`[${APP_NAME}] 용어집 받기 실패 (${src.url}):`, e.message);
+          warnNote(`[${APP_NAME}] 용어집 받기 실패 (${src.url}):`, e.message);
         }
       }
       glossaryFailedAt = Date.now();
@@ -1954,7 +2066,7 @@
         );
         if (out && out.trim()) return { ko: out.trim(), via: provider().label };
       } catch (e) {
-        console.warn(`[${APP_NAME}] ${provider().label} 선택 번역 실패, 무료 엔진으로 대체:`, e.message);
+        warnNote(`[${APP_NAME}] ${provider().label} 선택 번역 실패, 무료 엔진으로 대체:`, e.message);
       }
     }
     const out = await freeTranslateOne(text, 'auto', 'ko');
@@ -2010,7 +2122,7 @@
           translated.push(...(await aiTranslateBatch(chunk)));
         }
       } catch (e) {
-        console.warn(`[${APP_NAME}] ${provider().label} 페이지 번역 실패, 무료 엔진으로 대체:`, e.message);
+        warnNote(`[${APP_NAME}] ${provider().label} 페이지 번역 실패, 무료 엔진으로 대체:`, e.message);
         translated = null;
       }
     }
@@ -2091,7 +2203,7 @@
           return { thai: out, via: provider().label };
         }
       } catch (e) {
-        console.warn(`[${APP_NAME}] ${provider().label} 검색어 번역 실패, 무료 엔진으로 대체:`, e.message);
+        warnNote(`[${APP_NAME}] ${provider().label} 검색어 번역 실패, 무료 엔진으로 대체:`, e.message);
       }
     }
 
@@ -2160,7 +2272,7 @@
         lines = await freeAltMany(need.map((p) => p.ko), 'ko', 'th', SEARCH_FREE_TIMEOUT);
       } catch (e) {
         if (isBlocked(e)) dictBlockedUntil = Date.now() + 10 * 60 * 1000;
-        console.warn(`[${APP_NAME}] 검색어 조각을 한 번에 옮기지 못해 하나씩 묻습니다:`, e.message);
+        warnNote(`[${APP_NAME}] 검색어 조각을 한 번에 옮기지 못해 하나씩 묻습니다:`, e.message);
       }
     }
     if (!lines) {
@@ -2274,7 +2386,7 @@
         if (el && !el.title) el.title = texts[i];
       });
     } catch (e) {
-      console.warn(`[${APP_NAME}] 페이지 번역 오류`, e.message);
+      warnNote(`[${APP_NAME}] 페이지 번역 오류`, e.message);
       for (const node of nodes) if (node.isConnected) queue.add(node);
       failed = nodes.length;
     } finally {
@@ -3017,6 +3129,7 @@
       }
 
       setInputValue(input, thai);
+      trNote('검색어', value, thai, via);
 
       const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
       // 통합 번역 아이콘 화면에서도 바꿀 수 있어서, 열려 있는 페이지도 바로 따르게 쓸 때마다 다시 읽는다.
@@ -3308,6 +3421,10 @@
     #lzk-selpop .lzk-close {
       float: right; border: none; background: none; cursor: pointer;
       font-size: 17px; color: #888; line-height: 1; padding: 0 0 0 8px;
+    }
+    #lzk-selpop .lzk-bad {
+      margin-top: 8px; padding: 0; border: none; background: none; cursor: pointer;
+      color: #0f146e; font: 500 11px/1.4 system-ui, sans-serif; text-decoration: underline;
     }
     #lzk-imgbtn, #lzk-imgall {
       position: fixed; z-index: 2147483002; border: none; border-radius: 6px;
@@ -3610,7 +3727,10 @@
   }
 
   let toastTimer = null;
+  // 실패를 알리는 안내는 문제 기록에도 남긴다('문제 알리기' 에 붙는다).
+  const PROBLEM_TOAST = /실패|못(?:했|합|하였)|받지 못|막혀|막혔|오류|비어 있습니다/;
   function toast(msg, ms = 3000) {
+    if (PROBLEM_TOAST.test(msg)) problemNote(msg);
     let el = document.getElementById('lzk-toast');
     if (!el) {
       el = document.createElement('div');
@@ -3679,11 +3799,17 @@
     markNoTranslate(pop);
     pop.innerHTML =
       '<button class="lzk-close" type="button" title="닫기">&times;</button>' +
-      '<div class="lzk-src"></div><div class="lzk-ko"></div><div class="lzk-via"></div>';
+      '<div class="lzk-src"></div><div class="lzk-ko"></div><div class="lzk-via"></div>' +
+      '<button class="lzk-bad" type="button">번역이 이상해요</button>';
     pop.querySelector('.lzk-src').textContent = src;
     pop.querySelector('.lzk-ko').textContent = ko;
     pop.querySelector('.lzk-via').textContent = `번역: ${via}`;
     pop.querySelector('.lzk-close').addEventListener('click', () => pop.remove());
+    pop.querySelector('.lzk-bad').addEventListener('click', () => {
+      pop.remove();
+      openReport({ kind: '드래그 번역', src, out: ko, via });
+    });
+    trNote('드래그 번역', src, ko, via);
     document.body.appendChild(pop);
     placeLzk();
   }
@@ -4103,7 +4229,7 @@
         }
         return { freq, bySkel, maxSkel, logTotal: Math.log10(total) };
       })().catch((e) => {
-        console.warn(`[${APP_NAME}] 태국어 낱말표를 받지 못해 철자 고치기를 건너뜁니다:`, e);
+        warnNote(`[${APP_NAME}] 태국어 낱말표를 받지 못해 철자 고치기를 건너뜁니다:`, e);
         return null; // 다음 페이지에서 다시 시도한다
       });
     }
@@ -4469,7 +4595,7 @@
       try {
         return await visionReadText(canvas);
       } catch (e) {
-        console.warn(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
+        warnNote(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
         toast(`Google Vision 을 쓸 수 없어 무료 인식으로 읽습니다.\n(${e.message || e})`, 6000);
       }
     }
@@ -4847,7 +4973,7 @@
         if (!url && !auto) toast(`이 사진에서는 번역할 ${hsLangName(ocrGoogle()) || '외국어'} 글자를 찾지 못했습니다.`);
       } catch (e) {
         ocrFailed.add(key);
-        console.warn(`[${APP_NAME}] 사진 번역 실패:`, e);
+        warnNote(`[${APP_NAME}] 사진 번역 실패:`, e);
         toast(`사진 번역 실패: ${e.message || e}`, 5000);
         return;
       } finally {
@@ -4925,7 +5051,7 @@
           fresh.map((img) =>
             imageToCanvas(img).then(
               (canvas) => ({ img, canvas }),
-              (e) => console.warn(`[${APP_NAME}] 사진 받기 실패:`, e)
+              (e) => warnNote(`[${APP_NAME}] 사진 받기 실패:`, e)
             )
           )
         )
@@ -4937,7 +5063,7 @@
         try {
           read = await visionReadMany(items);
         } catch (e) {
-          console.warn(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
+          warnNote(`[${APP_NAME}] Google Vision 실패, 무료 인식으로 대신합니다:`, e);
           toast(`Google Vision 을 쓸 수 없어 무료 인식으로 읽습니다.\n(${e.message || e})`, 6000);
         }
         if (read.length) toast(`사진 ${read.length}장을 Google Vision ${visionUsage().count - before}건으로 읽었습니다.`, 4000);
@@ -5101,6 +5227,233 @@
     return out;
   }
 
+  // ---------------------------------------------------------------------------
+  // 문제 알리기 · 번역이 이상해요 (2026-11-22, 1.35.8)
+  // 보낼 글은 이 PC 에서 만들어 칸에 보여 준다(사용자가 보고 고칠 수 있다). [GitHub 에 올리기] = 그 글을 채운 새 글 화면을
+  // 연다(GitHub 계정이 있어야 하고, 거기서 한 번 더 눌러야 올라간다). [복사] = 계정이 없는 사람이 메일·메신저로 보내게.
+  // 넣는 것: 판 번호, 브라우저·OS, 내 언어, 사이트 이름(주소 뒤쪽은 뺀다), 번역 설정(키·토큰은 '있음/없음' 만), 용어집·원격
+  // 설정 받은 때, 번역 도우미 상태, 최근 문제 기록(problemLog). 받는 곳은 원격 설정 report(RC.report).
+  // ---------------------------------------------------------------------------
+  const REPORT_PASTE = '(내용이 길어 따로 복사해 두었습니다 — 이 칸을 지우고 Ctrl+V 로 붙여 넣어 주세요)';
+
+  function reportDate(t) {
+    const d = new Date(t);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  function reportBrowser() {
+    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    let name = '?';
+    for (const [re, n] of [
+      [/Edg\/(\d+)/, 'Edge'],
+      [/Whale\/(\d+)/, 'Whale'],
+      [/OPR\/(\d+)/, 'Opera'],
+      [/Firefox\/(\d+)/, 'Firefox'],
+      [/Chrome\/(\d+)/, 'Chrome'],
+    ]) {
+      const m = ua.match(re);
+      if (m) {
+        name = `${n} ${m[1]}`;
+        break;
+      }
+    }
+    const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '?';
+    return `${name} · ${os}`;
+  }
+
+  // 도우미 답(background.js helperCall) → 한 줄
+  function helperStateText(r) {
+    if (!r) return '';
+    if (r.ok) return r.running ? '켜짐' : '꺼짐';
+    return /not found/i.test(String(r.error || '')) ? '이 PC 에 없음(또는 아직 크롬과 이어지지 않음)' : `연결 실패: ${String(r.error || '?').slice(0, 80)}`;
+  }
+
+  function reportEnv(helperLine) {
+    const handler =
+      typeof GM_extensionURL === 'function'
+        ? '크롬 확장'
+        : (typeof GM_info !== 'undefined' && GM_info.scriptHandler) || '사용자 스크립트';
+    const p = provider();
+    let glossaryLine = '아직 받지 못함';
+    try {
+      const n = Object.keys(remoteGlossary()).length;
+      glossaryLine = `${n}개` + (glossaryStore && glossaryStore.at ? ` · ${reportDate(glossaryStore.at)} 받음` : '');
+    } catch {
+      /* 아직 안 읽었다 */
+    }
+    const pageLang = (document.documentElement && document.documentElement.lang) || '?';
+    const lines = [
+      `- ${APP_NAME} ${SCRIPT_VERSION} (${handler})`,
+      `- 브라우저: ${reportBrowser()} · 브라우저 언어 ${(typeof navigator !== 'undefined' && navigator.language) || '?'}`,
+      `- 내 언어: ${MY}`,
+      `- 사이트: ${problemHost() || '?'} (${SITE.label}) · 페이지 언어 ${pageLang}` + (genericPageLang ? ` · 알아본 언어 ${genericPageLang}` : ''),
+      `- 번역 설정: 페이지 ${cfg.pageEngine} · 검색 ${cfg.searchEngine} · ${p.label} 키 ${cfg[p.keyField] ? '있음' : '없음'} · ` +
+        `Vision 키 ${cfg.visionKey ? '있음' : '없음'} · GitHub 연결 ${cfg.githubToken ? '있음' : '없음'}`,
+      `- 태국어 용어집: ${glossaryLine}`,
+      `- 원격 설정: ${rcStore && rcStore.at ? `${reportDate(rcStore.at)} 받음` : '기본값(아직 받지 못함)'}`,
+    ];
+    if (helperLine) lines.push(`- 번역 도우미: ${helperLine}`);
+    return lines;
+  }
+
+  // GitHub 글에서 '@이름' 은 그 사람에게 알림이 간다 — 사용자가 적은 말·기록의 @ 뒤에 보이지 않는 칸을 넣어 막는다.
+  const reportSafe = (s) => String(s == null ? '' : s).replace(/@(?=[\w-])/g, '@​');
+
+  function reportBody(f, env, problems) {
+    const out = [];
+    if (f.src || f.out) {
+      out.push('### 이상했던 번역');
+      if (f.kind) out.push(`- 어디서: ${f.kind}`);
+      out.push(`- 원문: ${reportSafe(f.src) || '(안 적음)'}`);
+      out.push(`- 나온 번역: ${reportSafe(f.out) || '(안 적음)'}` + (f.via ? ` (${f.via})` : ''));
+      if (f.want) out.push(`- 바라는 뜻: ${reportSafe(f.want)}`);
+      out.push('');
+    }
+    out.push('### 무슨 일인가요?', reportSafe(f.what) || '(안 적음)', '');
+    out.push('### 환경', ...env, '');
+    out.push(`### 최근 문제 기록 (이 PC, ${problems.length}개)`);
+    if (!problems.length) out.push('- 없음');
+    for (const e of problems.slice(-PROBLEM_MAX)) {
+      out.push(`- ${reportDate(e.at)} ${e.host || ''} · ${reportSafe(e.msg)}` + (e.n > 1 ? ` (×${e.n})` : ''));
+    }
+    return out.join('\n');
+  }
+
+  function reportTitle(f) {
+    const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+    if (f.src || f.out) return cut(reportSafe(`[번역] ${f.src || '?'} → ${f.out || '?'}`), 90);
+    return cut(reportSafe(`[문제] ${String(f.what || '').split('\n')[0].trim() || SITE.label}`), 90);
+  }
+
+  // 새 글 주소. 너무 길면(GitHub 은 8천 글자 남짓에서 자른다) 본문 대신 '붙여 넣으세요' 를 넣고 fits=false.
+  function reportUrl(title, body) {
+    const R = RC.report;
+    const sep = R.url.includes('?') ? '&' : '?';
+    const q = R.titleParam ? [`${R.titleParam}=${encodeURIComponent(title)}`] : [];
+    const full = R.url + sep + [...q, `${R.bodyParam}=${encodeURIComponent(body)}`].join('&');
+    if (full.length <= R.maxUrl) return { url: full, fits: true };
+    return { url: R.url + sep + [...q, `${R.bodyParam}=${encodeURIComponent(REPORT_PASTE)}`].join('&'), fits: false };
+  }
+
+  let reportFill = null; // 설정 창이 열려 있을 때 '문제 알리기' 칸을 채우고 펼치는 함수(reportWire)
+
+  function reportWire(panel) {
+    const $ = (s) => panel.querySelector(s);
+    const box = $('#lzk-report');
+    const bodyEl = $('#lzk-rp-body');
+    const note = (t) => ($('#lzk-rp-note').textContent = t);
+    const recent = recentTrList().reverse(); // 새것 먼저
+    const sel = $('#lzk-rp-recent');
+    recent.forEach((e, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      const line = `${e.kind}: ${e.src} → ${e.out}`;
+      o.textContent = line.length > 90 ? line.slice(0, 89) + '…' : line;
+      sel.appendChild(o);
+    });
+    let pre = { kind: '', via: '' };
+    let helperLine = '';
+    let title = '';
+    const fields = () => ({
+      kind: pre.kind,
+      via: pre.via,
+      src: $('#lzk-rp-src').value.trim(),
+      out: $('#lzk-rp-out').value.trim(),
+      want: $('#lzk-rp-want').value.trim(),
+      what: $('#lzk-rp-what').value.trim(),
+    });
+    const build = () => {
+      const f = fields();
+      title = reportTitle(f);
+      bodyEl.value = reportBody(f, reportEnv(helperLine), problemList());
+    };
+    sel.addEventListener('change', () => {
+      const e = recent[Number(sel.value)];
+      pre = e ? { kind: e.kind, via: e.via } : { kind: '', via: '' };
+      $('#lzk-rp-src').value = e ? e.src : '';
+      $('#lzk-rp-out').value = e ? e.out : '';
+      build();
+    });
+    for (const id of ['#lzk-rp-src', '#lzk-rp-out']) {
+      // 손으로 고친 원문·번역은 어디서·어느 엔진인지 모른다
+      $(id).addEventListener('input', () => {
+        pre = { kind: '', via: '' };
+        sel.value = '';
+        build();
+      });
+    }
+    for (const id of ['#lzk-rp-want', '#lzk-rp-what']) $(id).addEventListener('input', build);
+    box.addEventListener('toggle', () => {
+      if (box.open && !bodyEl.value) build();
+    });
+    if (IS_WINDOWS && typeof GM_helperStatus === 'function') {
+      Promise.resolve(GM_helperStatus())
+        .then((r) => {
+          helperLine = helperStateText(r);
+          if (bodyEl.value) build();
+        })
+        .catch(() => {});
+    }
+    const text = () => {
+      if (!bodyEl.value.trim()) build();
+      return bodyEl.value.trim();
+    };
+    $('#lzk-rp-send').addEventListener('click', async () => {
+      const body = text();
+      const { url, fits } = reportUrl(title || reportTitle(fields()), body);
+      if (fits) {
+        note('GitHub 새 글 화면을 열었습니다. 내용을 확인하고 [Create] 를 누르면 올라갑니다(GitHub 계정 필요).');
+      } else {
+        const ok = await copyText(body);
+        note(
+          ok
+            ? '내용이 길어 따로 복사해 두었습니다. 열린 GitHub 화면의 글 칸을 지우고 Ctrl+V 로 붙여 넣은 뒤 [Create].'
+            : '내용이 길어 GitHub 화면에 다 넣지 못했습니다. 아래 칸의 글을 모두 골라 Ctrl+C 한 뒤 GitHub 글 칸에 붙여 넣으세요.'
+        );
+      }
+      window.open(url, '_blank', 'noopener');
+    });
+    $('#lzk-rp-copy').addEventListener('click', async () => {
+      const body = text();
+      const ok = await copyText(`${title || reportTitle(fields())}\n\n${body}`);
+      if (ok) note('복사했습니다. 메일·메신저에 붙여 넣어 개발자에게 보내 주세요.');
+      else {
+        note('복사하지 못했습니다. 아래 칸의 글을 모두 골라 Ctrl+C 하세요.');
+        bodyEl.select();
+      }
+    });
+    reportFill = (p) => {
+      if (!panel.isConnected) return;
+      box.open = true;
+      if (p && (p.src || p.out)) {
+        pre = { kind: p.kind || '', via: p.via || '' };
+        sel.value = '';
+        $('#lzk-rp-src').value = p.src || '';
+        $('#lzk-rp-out').value = p.out || '';
+      }
+      build();
+      box.scrollIntoView({ block: 'start' });
+      $(p && (p.src || p.out) ? '#lzk-rp-want' : '#lzk-rp-what').focus();
+    };
+  }
+
+  // 설정 창을 열고(이미 열려 있으면 그대로) '문제 알리기' 칸으로. pre = { kind, src, out, via } — 드래그 번역 창에서.
+  async function openReport(pre) {
+    if (!document.getElementById('lzk-panel')) {
+      await glossaryStoreLoad();
+      togglePanel();
+    }
+    if (reportFill) reportFill(pre || {});
+  }
+
+  let reportMenuOn = false;
+  function registerReportMenu() {
+    if (reportMenuOn) return;
+    reportMenuOn = true;
+    GM_registerMenuCommand('문제 알리기 · 번역이 이상해요', () => openReport({}));
+  }
+
   function togglePanel() {
     // 용어집 사본을 아직 안 읽었으면(확장은 처음 쓸 때 읽는다) 읽은 뒤에 연다 — 수십 ms.
     if (!glossaryStoreReady && !document.getElementById('lzk-panel')) return void glossaryStoreLoad().then(togglePanel);
@@ -5242,9 +5595,33 @@
         <button class="lzk-ghost" id="lzk-fab-reset" type="button">단추 처음 자리로</button>
       </div>
       <div class="lzk-hint">이 단추와 번역 단추는 끌어서 화면 아무 데나 옮길 수 있습니다. 놓은 자리를 기억합니다.</div>
+
+      <details id="lzk-report">
+        <summary>문제 알리기 · 번역이 이상해요</summary>
+        <div class="lzk-hint">적은 뒤 <b>GitHub 에 올리기</b>를 누르면 아래 글이 채워진 GitHub 새 글 화면이 열립니다(GitHub 계정 필요 — 거기서 한 번 더 눌러야 올라갑니다). 계정이 없으면 <b>복사</b>해서 메일·메신저로 보내 주세요. 저절로 보내는 것은 없습니다.</div>
+        <label>이상했던 번역 (고르면 아래 칸이 채워집니다)</label>
+        <select id="lzk-rp-recent"><option value="">— 직접 적기 —</option></select>
+        <label>원문</label>
+        <input type="text" id="lzk-rp-src" autocomplete="off">
+        <label>나온 번역</label>
+        <input type="text" id="lzk-rp-out" autocomplete="off">
+        <label>바라는 뜻 (알면)</label>
+        <input type="text" id="lzk-rp-want" autocomplete="off">
+        <label>무슨 일인가요?</label>
+        <textarea id="lzk-rp-what" style="height:64px;font-family:inherit" placeholder="예: 검색 결과가 엉뚱해요 / 메신저에서 안 바뀌어요"></textarea>
+        <label>보낼 글 (위 칸을 고치면 다시 만들어집니다)</label>
+        <textarea id="lzk-rp-body" spellcheck="false" style="height:150px;font-size:11px"></textarea>
+        <div class="lzk-hint">사이트는 이름만 들어갑니다(주소 뒤쪽·페이지 글·키·토큰은 넣지 않습니다). 빼고 싶은 줄은 지우세요.</div>
+        <div class="lzk-actions" style="margin-top:8px">
+          <button id="lzk-rp-send" type="button">GitHub 에 올리기</button>
+          <button class="lzk-ghost" id="lzk-rp-copy" type="button">복사</button>
+        </div>
+        <div class="lzk-hint" id="lzk-rp-note" style="white-space:pre-line"></div>
+      </details>
     `;
     document.body.appendChild(panel);
     placeLzk();
+    reportWire(panel);
 
     const $ = (id) => panel.querySelector(id);
     // 사이트 이름은 원격 설정(config.json shops.label)에서 올 수 있다 — 글자로만 넣는다(HTML 로 읽히지 않게).
@@ -5830,6 +6207,7 @@
     if (!GENERIC) GM_registerMenuCommand('설정 열기', togglePanel); // 다른 사이트는 genericBase 가 이미 달았다
     GM_registerMenuCommand('지금 한국어로 번역', translatePage);
     GM_registerMenuCommand('원문 보기', restoreOriginal);
+    registerReportMenu();
   }
 
   // ---------------------------------------------------------------------------
@@ -6350,6 +6728,7 @@
       const { thai, via, note } = await koreanToLang(value, lang);
       if (!thai || untranslated(thai, value)) throw new Error('번역 결과가 비어 있습니다');
       setInputValue(input, thai);
+      trNote('입력칸', value, thai, via);
       input.focus();
       try {
         input.setSelectionRange(thai.length, thai.length);
@@ -6525,6 +6904,7 @@
     mountFab();
     mountLangTools();
     GM_registerMenuCommand('설정 열기', togglePanel);
+    registerReportMenu();
   }
 
   // '한' 옆 언어 막대('번역')와 입력칸 가로채기 — 모든 사이트(일반·라자다·쇼피·메신저). 사용자(2026-11-05): 어떤 언어로
@@ -6772,7 +7152,7 @@
     try {
       got = await translateToKorean(ask.map((s) => s.prep || s.src), d.from || 'auto');
     } catch (e) {
-      console.warn(`[${APP_NAME}] 더빙 번역 실패:`, e.message);
+      warnNote(`[${APP_NAME}] 더빙 번역 실패:`, e.message);
     }
     ask.forEach((s, i) => {
       let ko = got[i];
@@ -6941,7 +7321,7 @@
       dubSaying = rec;
       speechSynthesis.speak(u); // 앞 문장이 남아 있으면 그 뒤에 이어 읽는다
     } catch (e) {
-      console.warn(`[${APP_NAME}] 더빙 목소리 실패:`, e.message);
+      warnNote(`[${APP_NAME}] 더빙 목소리 실패:`, e.message);
     }
   }
   let dubTtsLearned = 0;
@@ -9533,7 +9913,7 @@
           thai = fix((await freeRaw(src, 'ko', 'th', SEARCH_FREE_TIMEOUT)).trim());
           if (thai && !HANGUL.test(thai)) cacheSet(src, 'thc', thai);
         } catch (e) {
-          console.warn(`[${APP_NAME}] 메시지 번역 실패, 용어집으로 대신:`, e.message);
+          warnNote(`[${APP_NAME}] 메시지 번역 실패, 용어집으로 대신:`, e.message);
           const r = await koreanToThai(core);
           thai = r.thai;
           via = r.via;
@@ -10821,6 +11201,7 @@
       // 보내기 전에 적어 둔다 — 보낸 뒤에 적으면 새 말풍선을 먼저 옮겨 '✎ 내가 쓴 말' 이 빠지곤 했다(2026-11-05 시험).
       chatSentLog = [...chatSentLog.filter((e) => sentKey(e.th) !== sentKey(thai)), { ko: value, th: thai }].slice(-300);
       GM_setValue(CHAT_SENT, chatSentLog);
+      trNote('메신저 보내기', value, thai, via);
       await chatSend(ed);
       toast(`"${value}" → "${thai}"  (${via})`, 3500);
     } catch (e) {
@@ -11797,7 +12178,7 @@
         else chatFailed.set(d, { src, at: Date.now() });
       });
     } catch (e) {
-      console.warn(`[${APP_NAME}] 메시지 한국어 번역 실패:`, e.message);
+      warnNote(`[${APP_NAME}] 메시지 한국어 번역 실패:`, e.message);
       todo.forEach(([d, src]) => chatFailed.set(d, { src, at: Date.now() }));
     } finally {
       todo.forEach(([d]) => chatPending.delete(d));

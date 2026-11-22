@@ -220,6 +220,17 @@ function GM_helperAutoStart() {
   }
 }
 
+// 번역 도우미가 켜져 있는지(설정 창 '문제 알리기' 의 환경 줄) — { ok, running } 또는 { ok:false, error }. 몽키에는 없다.
+function GM_helperStatus() {
+  if (!gmAlive()) return Promise.resolve(null);
+  try {
+    return chrome.runtime.sendMessage({ t: 'helper', cmd: 'status' });
+  } catch {
+    gmAlive();
+    return Promise.resolve(null);
+  }
+}
+
 // 크롬 '실시간 번역'(설정 › 접근성) 켜기·끄기 — 확장은 크롬 설정을 못 바꿔 background.js 가 설정 창을 작게 열고 번역
 // 도우미가 그 단추를 눌러 준다. 답: { ok, state: 'on'/'off'/'', error }. 몽키에는 이 함수가 없다(스크립트는 설정 창만 연다).
 function GM_chromeLiveTranslate(on) {

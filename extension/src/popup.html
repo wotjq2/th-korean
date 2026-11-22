@@ -45,6 +45,11 @@
   #mylang .hint { margin-top: 4px; color: var(--sub); font-size: 12px; }
   #langnote:empty { display: none; }
   #langnote { margin-top: 4px; color: #16a34a; font-size: 12px; }
+  #report .hint { margin-top: 6px; color: var(--sub); font-size: 12px; }
+  #report textarea.what { height: 56px; font: 12px/1.4 inherit; font-family: inherit; }
+  #report #rbody { height: 120px; }
+  #rnote { margin-top: 6px; color: var(--sub); font-size: 12px; }
+  #rnote:empty { display: none; }
 </style>
 </head>
 <body>
@@ -74,6 +79,18 @@
   </div>
   <div id="hnote"></div>
 </section>
+<details id="report">
+  <summary>문제 알리기</summary>
+  <div class="hint">페이지에서 바꾼 말(검색어·입력칸·메신저)이 이상하면 그 페이지의 '한' 단추 → 설정 맨 아래 <b>문제 알리기 · 번역이 이상해요</b>가 더 자세합니다(바꾼 말을 골라 넣을 수 있습니다).</div>
+  <textarea id="rwhat" class="what" placeholder="무슨 일인가요? (예: 번역 도우미가 안 켜져요)"></textarea>
+  <textarea id="rbody" spellcheck="false"></textarea>
+  <div class="hint">키·토큰·방문한 주소는 넣지 않습니다. 빼고 싶은 줄은 지우세요. GitHub 에 올리기 = 이 글이 채워진 새 글 화면을 엽니다(GitHub 계정 필요, 거기서 한 번 더 눌러야 올라갑니다). 계정이 없으면 복사해서 메일·메신저로.</div>
+  <div class="row">
+    <button id="rsend">GitHub 에 올리기</button>
+    <button id="rcopy">복사</button>
+  </div>
+  <div id="rnote"></div>
+</details>
 <details id="move">
   <summary>설정 옮기기 (Tampermonkey → 여기)</summary>
   <textarea id="data" spellcheck="false" placeholder="Tampermonkey 의 '저장소' 탭 내용을 통째로 붙여 넣고 [가져오기]"></textarea>

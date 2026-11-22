@@ -4,7 +4,8 @@
 
 const GM_PREFIX = 'gm:';
 // 내보낼 때 뺀다. 용어집 사본·번역 저장은 크고(몇 MB) 다시 받거나 다시 만들 수 있다.
-const SKIP_EXPORT = new Set(['remoteGlossary', 'tmCache', 'ocrCache']);
+// problemLog·recentTr = '문제 알리기' 기록(이 PC 의 일) — 다른 PC 로 옮기지 않는다.
+const SKIP_EXPORT = new Set(['remoteGlossary', 'tmCache', 'ocrCache', 'problemLog', 'recentTr']);
 
 const $ = (s) => document.querySelector(s);
 const note = (t) => {
@@ -217,7 +218,11 @@ const HELPER_INSTALL =
 const HELPER_SETUP_URL = encodeURI('https://raw.githubusercontent.com/wotjq2/th-korean/main/번역도우미_설치.cmd');
 let helperLinked = true;
 
+let helperReply = null; // 마지막 도우미 답 — '문제 알리기' 환경 줄
+
 function showHelper(r) {
+  helperReply = r;
+  reportBuild();
   const st = $('#hstate');
   helperLinked = !!(r && r.ok);
   $('#hsetup').hidden = helperLinked;
@@ -337,4 +342,114 @@ $('#export').addEventListener('click', async () => {
   $('#data').value = JSON.stringify(out, null, 1);
   $('#data').select();
   note(`설정 ${Object.keys(out).length}개 — API 키·토큰이 들어 있으니 GitHub 폴더 밖에 보관하세요.`);
+});
+
+// ---- 문제 알리기 (2026-11-22, 1.35.8) ----
+// 번역 스크립트가 없는 탭(크롬 설정·새 탭)에서도, 도우미처럼 페이지와 상관없는 문제도 알리게. 페이지 번역 문제는 그 페이지의
+// '한' 설정 창이 더 자세하다(그 탭에서 바꾼 말을 고른다 — 스크립트의 reportWire). 받는 곳은 원격 설정 report(스크립트와 같은 꼴).
+const REPORT_DEFAULT = { url: 'https://github.com/wotjq2/th-korean/issues/new', titleParam: 'title', bodyParam: 'body', maxUrl: 7000 };
+let reportTo = REPORT_DEFAULT;
+let reportStore = {};
+const reportSafe = (s) => String(s == null ? '' : s).replace(/@(?=[\w-])/g, '@​');
+
+function reportDate(t) {
+  const d = new Date(t);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function reportBrowser() {
+  const ua = navigator.userAgent || '';
+  let name = '?';
+  for (const [re, n] of [[/Edg\/(\d+)/, 'Edge'], [/Whale\/(\d+)/, 'Whale'], [/OPR\/(\d+)/, 'Opera'], [/Chrome\/(\d+)/, 'Chrome']]) {
+    const m = ua.match(re);
+    if (m) {
+      name = `${n} ${m[1]}`;
+      break;
+    }
+  }
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '?';
+  return `${name} · ${os}`;
+}
+
+function reportPick(text) {
+  try {
+    const r = JSON.parse(text || '{}').report;
+    const ok = (v, re) => typeof v === 'string' && re.test(v);
+    if (!r || !ok(r.url, /^https:\/\/[^\s"'<>\\]{6,290}$/)) return REPORT_DEFAULT;
+    return {
+      url: r.url,
+      titleParam: r.titleParam === '' ? '' : ok(r.titleParam, /^[\w.-]{1,40}$/) ? r.titleParam : REPORT_DEFAULT.titleParam,
+      bodyParam: ok(r.bodyParam, /^[\w.-]{1,40}$/) ? r.bodyParam : REPORT_DEFAULT.bodyParam,
+      maxUrl: typeof r.maxUrl === 'number' && r.maxUrl >= 1000 && r.maxUrl <= 16000 ? r.maxUrl : REPORT_DEFAULT.maxUrl,
+    };
+  } catch {
+    return REPORT_DEFAULT;
+  }
+}
+
+function reportHelperLine() {
+  const r = helperReply;
+  if (!r) return '확인 중';
+  if (r.ok) return r.running ? '켜짐' : '꺼짐';
+  return /not found/i.test(String(r.error || '')) ? '이 PC 에 없음(또는 아직 크롬과 이어지지 않음)' : `연결 실패: ${String(r.error || '?').slice(0, 80)}`;
+}
+
+function reportBuild() {
+  const body = $('#rbody');
+  if (!body) return;
+  const rc = reportStore['gm:remoteConfig'];
+  const problems = Array.isArray(reportStore['gm:problemLog']) ? reportStore['gm:problemLog'].filter((e) => e && typeof e.msg === 'string') : [];
+  const out = [
+    '### 무슨 일인가요?',
+    reportSafe($('#rwhat').value.trim()) || '(안 적음)',
+    '',
+    '### 환경',
+    `- 통합 번역 ${chrome.runtime.getManifest().version} (크롬 확장 창에서 보냄)`,
+    `- 브라우저: ${reportBrowser()} · 브라우저 언어 ${navigator.language || '?'}`,
+    `- 내 언어: ${MY}`,
+    `- 원격 설정: ${rc && rc.at ? reportDate(rc.at) + ' 받음' : '기본값(아직 받지 못함)'}`,
+    `- 번역 도우미: ${reportHelperLine()}`,
+    '',
+    `### 최근 문제 기록 (이 PC, ${problems.length}개)`,
+  ];
+  if (!problems.length) out.push('- 없음');
+  for (const e of problems.slice(-20)) out.push(`- ${reportDate(e.at)} ${e.host || ''} · ${reportSafe(e.msg)}` + (e.n > 1 ? ` (×${e.n})` : ''));
+  body.value = out.join('\n');
+}
+
+function reportTitle() {
+  const first = $('#rwhat').value.trim().split('\n')[0];
+  const t = reportSafe(`[문제] ${first || '확장 창에서'}`);
+  return t.length > 90 ? t.slice(0, 89) + '…' : t;
+}
+
+chrome.storage.local.get(['gm:remoteConfig', 'gm:problemLog']).then((v) => {
+  reportStore = v;
+  reportTo = reportPick(v['gm:remoteConfig'] && v['gm:remoteConfig'].text);
+  reportBuild();
+});
+$('#rwhat').addEventListener('input', reportBuild);
+
+$('#rsend').addEventListener('click', async () => {
+  const R = reportTo;
+  const body = $('#rbody').value.trim();
+  const sep = R.url.includes('?') ? '&' : '?';
+  const q = R.titleParam ? [`${R.titleParam}=${encodeURIComponent(reportTitle())}`] : [];
+  let url = R.url + sep + [...q, `${R.bodyParam}=${encodeURIComponent(body)}`].join('&');
+  if (url.length > R.maxUrl) {
+    await navigator.clipboard.writeText(body).catch(() => {});
+    url = R.url + sep + [...q, `${R.bodyParam}=${encodeURIComponent('(내용이 길어 따로 복사해 두었습니다 — 이 칸을 지우고 Ctrl+V 로 붙여 넣어 주세요)')}`].join('&');
+  }
+  await chrome.tabs.create({ url });
+});
+
+$('#rcopy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(`${reportTitle()}\n\n${$('#rbody').value.trim()}`);
+    $('#rnote').textContent = '복사했습니다. 메일·메신저에 붙여 넣어 개발자에게 보내 주세요.';
+  } catch {
+    $('#rnote').textContent = '복사하지 못했습니다. 위 칸의 글을 모두 골라 Ctrl+C 하세요.';
+    $('#rbody').select();
+  }
 });

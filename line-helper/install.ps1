@@ -77,16 +77,26 @@
             $programs = [Environment]::GetFolderPath('Programs')
             if (-not $programs) { $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
             if (-not (Test-Path $programs)) { New-Item -ItemType Directory -Force $programs | Out-Null }
-            # WScript.Shell 은 시스템 언어 코드(영어·태국어 윈도우 등)로 못 쓰는 글자가 든 .lnk 이름을 거부한다('Value does not
-            # fall within the expected range' — 한국어 윈도우에서만 됐다). 영어 이름으로 만든 뒤 한글 이름으로 바꾼다.
-            $tmpLnk = Join-Path $programs 'th-korean-helper.lnk'
+            # WScript.Shell 은 시스템 언어 코드(영어·태국어 윈도우 등)로 못 쓰는 글자를 .lnk 이름에서도('저장할 수 없습니다')
+            # 대상 경로에서도('Value does not fall within the expected range' — 번역도우미.exe) 거부한다(한국어 윈도우에서만 됐다;
+            # 2026-11-22 이 PC 에서 태국어 이름으로 둘 다 재현). 그래서 영어 이름·영어 대상(explorer.exe)으로 빈 바로가기를 만들고,
+            # 유니코드를 받는 Shell.Application 으로 진짜 대상을 넣은 뒤 한글 이름으로 바꾼다.
+            $tmpName = 'th-korean-helper.lnk'
+            $tmpLnk = Join-Path $programs $tmpName
             $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($tmpLnk)
-            $lnk.TargetPath = $exe
-            $lnk.WorkingDirectory = $dir
+            $lnk.TargetPath = Join-Path $env:WINDIR 'explorer.exe'
             $lnk.Save()
+            $link = (New-Object -ComObject Shell.Application).Namespace($programs).ParseName($tmpName).GetLink
+            $link.Path = $exe
+            $link.WorkingDirectory = $dir
+            $link.Save()
             Move-Item -LiteralPath $tmpLnk -Destination (Join-Path $programs '번역 도우미.lnk') -Force
         }
-        catch { Write-Host "   (시작 메뉴 바로가기는 만들지 못했습니다 — 도우미는 그대로 켭니다: $($_.Exception.Message))" -ForegroundColor Yellow }
+        catch {
+            # 반쯤 만든 임시 바로가기(explorer.exe 를 가리킴)는 남기지 않는다
+            if ($tmpLnk -and (Test-Path -LiteralPath $tmpLnk)) { Remove-Item -LiteralPath $tmpLnk -Force -ErrorAction SilentlyContinue }
+            Write-Host "   (시작 메뉴 바로가기는 만들지 못했습니다 — 도우미는 그대로 켭니다: $($_.Exception.Message))" -ForegroundColor Yellow
+        }
         Start-Process $exe
 
         Write-Host ''

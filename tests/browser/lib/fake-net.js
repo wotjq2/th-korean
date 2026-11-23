@@ -73,7 +73,8 @@ function start({ pages, glossary }) {
   const hits = []; // 쇼핑몰 쪽 요청 (host + path)
   const mt = []; // 번역 요청 { sl, tl, q }
   const other = []; // 그 밖에 받은 요청
-  const opts = { keepHangul: false, blockMt: false }; // 시험 중에 바꾼다
+  // mtDelay: 구글 답을 이만큼(ms) 늦춘다 — 번역을 기다리는 사이에 페이지가 바뀌는 시험(generic-input)
+  const opts = { keepHangul: false, blockMt: false, mtDelay: 0 }; // 시험 중에 바꾼다
   const server = https.createServer(tls, (req, res) => {
     const host = (req.headers.host || '').replace(/:\d+$/, '');
     const u = new URL(req.url, `https://${host}`);
@@ -82,6 +83,10 @@ function start({ pages, glossary }) {
       res.end(body);
     };
     if (host === 'translate.googleapis.com') {
+      if (opts.mtDelay && !req.lzkDelayed) {
+        req.lzkDelayed = true;
+        return setTimeout(() => server.emit('request', req, res), opts.mtDelay);
+      }
       const qs = u.searchParams.getAll('q');
       const sl = u.searchParams.get('sl') || 'auto';
       const tl = u.searchParams.get('tl') || 'ko';

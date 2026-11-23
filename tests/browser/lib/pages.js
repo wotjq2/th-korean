@@ -66,9 +66,24 @@ const thaiSite = () => `<!doctype html><html lang="th"><head><meta charset="utf-
 ${Array.from({ length: 8 }, (_, i) => `<p>${i}. วันนี้อากาศดีมาก ผู้คนออกไปเที่ยวกันเยอะ</p>`).join('\n')}
 <form action="/search"><input id="q" name="q" type="search" style="width:360px;font-size:16px"></form></body></html>`;
 
+// 입력칸을 처음 누르면 0.3초 뒤 새 칸으로 바꿔 끼우는 태국어 사이트(위키백과 Vue 검색칸 흉내 — 바꿀 때 그때 값을 옮기고 새 칸에 포커스).
+const swapSite = () => `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ค้นหา</title></head>
+<body style="font-family:sans-serif;margin:24px"><h1>ข่าววันนี้</h1>
+${Array.from({ length: 8 }, (_, i) => `<p>${i}. วันนี้อากาศดีมาก ผู้คนออกไปเที่ยวกันเยอะ</p>`).join('\n')}
+<form action="/search"><input id="q" name="q" type="search" style="width:360px;font-size:16px"></form>
+<script>
+const old = document.getElementById('q');
+old.addEventListener('focus', () => setTimeout(() => {
+  const n = document.createElement('input');
+  n.id = 'q'; n.name = 'q'; n.type = 'search'; n.className = 'swapped'; n.style.cssText = old.style.cssText;
+  n.value = old.value; old.replaceWith(n); n.focus(); window.__swapped = true;
+}, 300), { once: true });
+</script></body></html>`;
+
 const PAGES = {
   'www.messenger.com': messenger,
   'thai.example.com': thaiSite,
+  'swap.example.com': swapSite,
   'news.example.com': koNews,
   'shopee.co.th': shopee('shopee.co.th'),
   'shopee.vn': shopee('shopee.vn'),

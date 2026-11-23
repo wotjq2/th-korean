@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.36.5
+// @version      1.36.6
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -6847,6 +6847,21 @@
     return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: freeLabel('번역') };
   }
 
+  // 사이트가 입력칸을 새 칸으로 바꿔 끼우는 일이 있다 — 위키백과는 검색칸을 처음 누르면 Vue 검색칸으로 바꾸며 그때 값을
+  // 옮긴다. 번역을 기다리는 사이에 바뀌면 떨어져 나간 옛 칸에만 써져 화면의 칸은 한국어 그대로였다(2026-11-23, 안내에는
+  // 일본어가 보였다). 옛 칸이 떨어졌으면 지금 칸(포커스 → 같은 id → 같은 name)에 아직 바꾸기 전 글(src)이 든 것을 찾는다.
+  function liveInput(input, src) {
+    if (input.isConnected) return input;
+    const same = (el) => el && el !== input && el.isConnected && /^(INPUT|TEXTAREA)$/.test(el.tagName) && String(el.value || '').trim() === src;
+    if (same(document.activeElement)) return document.activeElement;
+    const tag = input.tagName.toLowerCase();
+    for (const sel of [input.id && `#${CSS.escape(input.id)}`, input.name && `${tag}[name="${CSS.escape(input.name)}"]`]) {
+      if (!sel) continue;
+      for (const el of document.querySelectorAll(sel)) if (same(el)) return el;
+    }
+    return input;
+  }
+
   async function convertInputToThai(input) {
     const value = input.value.trim();
     const lang = genericLang();
@@ -6856,7 +6871,17 @@
     try {
       const { thai, via, note } = await koreanToLang(value, lang);
       if (!thai || untranslated(thai, value)) throw new Error('번역 결과가 비어 있습니다');
+      input = liveInput(input, value);
       setInputValue(input, thai);
+      // 쓴 바로 뒤에 바꿔 끼우는 사이트도 있을 수 있다 — 조금 뒤 한 번 더 본다
+      for (const ms of [400, 1200]) {
+        setTimeout(() => {
+          const now = liveInput(input, value);
+          if (now === input || now.value.trim() !== value) return;
+          setInputValue(now, thai);
+          if (document.activeElement === input || !input.isConnected) now.focus();
+        }, ms);
+      }
       trNote('입력칸', value, thai, via);
       input.focus();
       try {

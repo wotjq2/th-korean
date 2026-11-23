@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.36.0
+// @version      1.36.1
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1808,7 +1808,15 @@
         targetLanguage: to,
         monitor(m) {
           m.addEventListener('downloadprogress', (e) => {
-            if (e.loaded < 1) toast(`크롬 내장 번역기를 받는 중 (${builtinName(from)} → ${builtinName(to)}) ${Math.round(e.loaded * 100)}%\n처음 한 번만 받습니다.`, 4000);
+            if (e.loaded >= 1) return;
+            // 다른 안내(검색어 결과·Enter 확인 안내 등)가 떠 있으면 덮지 않는다 — 확장(1.36.0~)은 페이지를 열자마자 저절로 받기
+            // 시작해, 그 사이 검색하면 '받는 중 n%' 가 검색 안내를 가렸다(2026-11-23 GitHub Actions 2단계).
+            // 내 언어가 한국어가 아니면 안내 글이 옮겨지므로 글이 아니라 표시(data-kind)로 알아본다.
+            const cur = document.getElementById('lzk-toast');
+            if (cur && cur.dataset.kind !== 'dl') return;
+            toast(`크롬 내장 번역기를 받는 중 (${builtinName(from)} → ${builtinName(to)}) ${Math.round(e.loaded * 100)}%\n처음 한 번만 받습니다.`, 4000);
+            const now = document.getElementById('lzk-toast');
+            if (now) now.dataset.kind = 'dl';
           });
         },
       });
@@ -3795,6 +3803,7 @@
       document.body.appendChild(el);
     }
     el.textContent = msg;
+    delete el.dataset.kind; // 안내 종류 표시(받는 정도 'dl')는 새 안내마다 지운다
     el.onclick = null; // 누를 수 있는 안내(toastAction)였다면 되돌린다
     el.style.cursor = '';
     placeLzk(); // 글 길이로 너비가 바뀐다 — 화면 안에 들게 다시 맞춘다

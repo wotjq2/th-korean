@@ -87,3 +87,21 @@ test('안내 글: 언어 이름이 코드(ko)가 아니라 이름으로, 검색 
   const r = await s2.peek('translateSearchKeyword')('고양이 사료');
   assert.equal(r.via, '크롬 내장 번역기');
 });
+
+// 1.36.1: 확장은 페이지를 열자마자 저절로 모델을 받기 시작해, 그 사이 검색하면 '받는 중 n%' 가 검색 안내(Enter 확인)를 가렸다
+// (2026-11-23 GitHub Actions 2단계). 받는 정도 안내는 다른 안내를 덮지 않고, 저끼리는 이어서 바꾼다.
+test('받는 정도 안내는 떠 있는 다른 안내(검색 안내 등)를 덮지 않는다', async () => {
+  const s = load({ mt: 'blocked', activation: true, progress: [0, 0.5], translator: { 'ko>th': 'downloadable' } });
+  s.peek('toast')('"고양이 사료" → "อาหารแมว"\n확인 후 Enter를 다시 누르세요.', 6000);
+  assert.equal(await free(s)('고양이 사료', 'ko', 'th'), '내장(ko>th):고양이 사료');
+  assert.ok(!s.toasts.some((t) => /받는 중/.test(t)), `검색 안내를 덮음: ${s.toasts.join(' | ')}`);
+});
+
+test('떠 있는 안내가 없거나 받는 정도 안내면 이어서 보인다(0% → 50%)', async () => {
+  const s = load({ mt: 'blocked', activation: true, progress: [0, 0.5], translator: { 'th>ko': 'downloadable' } });
+  assert.equal(await free(s)('ส่งฟรี', 'th', 'ko'), '내장(th>ko):ส่งฟรี');
+  const dl = s.toasts.filter((t) => /받는 중/.test(t));
+  assert.equal(dl.length, 2, s.toasts.join(' | '));
+  assert.match(dl[0], /태국어 → 한국어\) 0%/);
+  assert.match(dl[1], /50%/);
+});

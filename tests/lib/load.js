@@ -152,10 +152,16 @@ function load(opt = {}) {
     const state = (s, t) => opt.translator[`${s}>${t}`] || 'unavailable';
     sb.Translator = {
       availability: async ({ sourceLanguage: s, targetLanguage: t }) => state(s, t),
-      create: async ({ sourceLanguage: s, targetLanguage: t }) => {
+      create: async ({ sourceLanguage: s, targetLanguage: t, monitor }) => {
         const st = state(s, t);
         if (st === 'unavailable') throw new Error('NotSupportedError');
         if (st !== 'available' && !userActivation.isActive) throw new Error('NotAllowedError: Requires a user gesture');
+        // opt.progress = [0, 0.5, …]: 아직 안 받은 쌍이면 받는 정도(downloadprogress)를 그 차례로 알린다
+        if (st !== 'available' && opt.progress && typeof monitor === 'function') {
+          const fns = [];
+          monitor({ addEventListener: (type, fn) => type === 'downloadprogress' && fns.push(fn) });
+          for (const loaded of opt.progress) fns.forEach((fn) => fn({ loaded }));
+        }
         opt.translator[`${s}>${t}`] = 'available'; // 한 번 켜면 이 사이트에서는 계속
         return { translate: async (x) => { builtinCalls.push(`${s}>${t}|${x}`); return `내장(${s}>${t}):${x}`; } };
       },

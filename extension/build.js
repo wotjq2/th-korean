@@ -20,8 +20,28 @@ const VENDOR = path.join(__dirname, 'vendor');
 const ICONS = path.join(__dirname, 'icons');
 
 const NAME = '통합 번역';
-const DESCRIPTION =
-  '외국어 사이트·메신저·영상을 한국어로 — 태국 쇼핑몰 검색·읽기, 페이스북 메신저, 유튜브·웹 영상 더빙(자막+목소리), 입력칸 한국어→외국어, 사진 속 글자';
+// 1.36.4: 확장 이름·설명을 크롬 화면 언어마다(locales.json → _locales). 기본은 한국어(웹스토어 기본 등록 언어).
+// 예전 설명은 '한국어로' 만 말해 다른 나라 사람에게는 자기 것이 아닌 확장처럼 보였다.
+const LOCALES_FILE = path.join(__dirname, 'locales.json');
+// 웹스토어가 받는 언어(크롬 _locales 이름). 여기 없는 이름은 크롬이 조용히 버리거나 스토어가 거부할 수 있다.
+const STORE_LOCALES = ['ar', 'bn', 'de', 'en', 'es', 'fil', 'fr', 'he', 'hi', 'id', 'it', 'ja', 'ko', 'mr', 'ms', 'pl', 'pt_BR', 'pt_PT', 'ru', 'ta', 'te', 'th', 'tr', 'vi', 'zh_CN', 'zh_TW'];
+function readLocales() {
+  const all = JSON.parse(fs.readFileSync(LOCALES_FILE, 'utf8'));
+  const out = {};
+  for (const [loc, v] of Object.entries(all)) {
+    if (loc === '_') continue;
+    if (!STORE_LOCALES.includes(loc)) throw new Error(`locales.json: 웹스토어가 받지 않는 언어 이름 ${loc}`);
+    const name = String((v && v.name) || '').trim();
+    const desc = String((v && v.desc) || '').trim();
+    // 웹스토어 한도: 이름 75자, 설명 132자
+    if (!name || name.length > 75) throw new Error(`locales.json ${loc}: 이름이 비었거나 75자를 넘음(${name.length})`);
+    if (!desc || desc.length > 132) throw new Error(`locales.json ${loc}: 설명이 비었거나 132자를 넘음(${desc.length})`);
+    out[loc] = { name, desc };
+  }
+  if (!out.ko || !out.en) throw new Error('locales.json: ko·en 은 꼭 있어야 한다');
+  if (out.ko.name !== NAME) throw new Error(`locales.json: ko 이름은 '${NAME}' 이어야 한다(스토어에 올라간 이름)`);
+  return out;
+}
 // @connect 에 없지만 스크립트가 확장 권한으로 부르는 주소(사진 글자 읽기 Vision).
 const EXTRA_HOSTS = ['vision.googleapis.com'];
 // 사진 글자 읽기(Tesseract) 엔진과 태국어 자료. 몽키판은 CDN 에서 받지만, 크롬 웹스토어는 밖에서 받은 코드를
@@ -238,6 +258,16 @@ async function main() {
   if (TEST_BG_PRELUDE) {
     fs.writeFileSync(path.join(OUT, 'background.js'), fs.readFileSync(path.resolve(TEST_BG_PRELUDE), 'utf8') + '\n' + fs.readFileSync(path.join(SRC, 'background.js'), 'utf8'));
   }
+  const locales = readLocales();
+  fs.rmSync(path.join(OUT, '_locales'), { recursive: true, force: true });
+  for (const [loc, v] of Object.entries(locales)) {
+    fs.mkdirSync(path.join(OUT, '_locales', loc), { recursive: true });
+    const msgs = {
+      appName: { message: v.name, description: 'Extension name (store listing title)' },
+      appDesc: { message: v.desc, description: 'Extension description (store listing summary)' },
+    };
+    fs.writeFileSync(path.join(OUT, '_locales', loc, 'messages.json'), JSON.stringify(msgs, null, 2) + '\n');
+  }
   const icons = {};
   for (const s of [16, 32, 48, 128]) {
     fs.copyFileSync(path.join(ICONS, `icon${s}.png`), path.join(OUT, `icon${s}.png`));
@@ -250,12 +280,13 @@ async function main() {
   );
   const manifest = {
     manifest_version: 3,
-    name: NAME,
+    name: '__MSG_appName__',
     version: h.version,
-    description: DESCRIPTION,
+    description: '__MSG_appDesc__',
+    default_locale: 'ko',
     ...(STORE || TEST_OUT ? {} : { key: DEV_KEY }),
     icons,
-    action: { default_title: NAME, default_popup: 'popup.html', default_icon: icons },
+    action: { default_title: '__MSG_appName__', default_popup: 'popup.html', default_icon: icons },
     background: { service_worker: 'background.js' },
     // nativeMessaging: 번역 도우미(LINE·화면 번역) 켜기·끄기·상태, downloads: 도우미가 없을 때 설치 파일 받기
     permissions: ['storage', 'unlimitedStorage', 'nativeMessaging', 'downloads'],

@@ -131,7 +131,59 @@ async function ccSettings(msg, sender) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 처음 설치할 때 '내 언어'(1.36.4): 예전에는 늘 한국어로 시작해, 다른 나라 사람이 깔면 외국어 페이지를 한국어로 바꿔 보여 줬다
+// (그걸 바꿀 확장 창도 처음엔 한국어). 크롬 언어 목록에 한국어가 있으면 한국어(영어 크롬을 쓰는 한국 사람도 그대로), 없으면
+// 크롬 화면 언어·언어 목록에서 '내 언어' 31개 가운데 첫 것, 그것도 없으면 영어. 업데이트(이미 쓰던 사람)는 건드리지 않는다.
+// 목록은 확장 창(popup.js MY_LANGS)과 같다 — tests/static.test.js 가 맞춰 본다.
+// ---------------------------------------------------------------------------
+const MY_LANGS = [
+  'ko', 'th', 'en', 'zh-CN', 'zh-TW', 'ja', 'vi', 'id', 'ms', 'tl', 'km', 'lo', 'my', 'hi', 'bn', 'ur', 'ar',
+  'he', 'tr', 'ru', 'mn', 'de', 'fr', 'es', 'pt', 'it', 'pl', 'ta', 'te', 'mr', 'yue',
+];
+
+// 브라우저 언어 코드 → '내 언어' 코드(없으면 '')
+function myLangOf(code) {
+  const c = String(code || '').replace('_', '-').toLowerCase();
+  if (!c) return '';
+  if (/^zh-(tw|hk|mo|hant)/.test(c)) return 'zh-TW';
+  if (/^zh/.test(c)) return 'zh-CN';
+  if (/^(yue|zh-yue)/.test(c)) return 'yue';
+  const base = c.split('-')[0];
+  const map = { fil: 'tl', iw: 'he', in: 'id', nb: '', no: '' };
+  const b = base in map ? map[base] : base;
+  return MY_LANGS.includes(b) ? b : '';
+}
+
+async function pickMyLang() {
+  let list = [];
+  try {
+    list = await chrome.i18n.getAcceptLanguages();
+  } catch {
+    list = [];
+  }
+  const ui = chrome.i18n.getUILanguage();
+  const all = [ui, ...list, ...(navigator.languages || [])].filter(Boolean);
+  if (all.some((l) => /^ko\b/i.test(l))) return 'ko';
+  for (const l of all) {
+    const m = myLangOf(l);
+    if (m) return m;
+  }
+  return 'en';
+}
+
+// 도우미 켜기(helperAutoStart)도 설치 때 돌며 '내 언어' 를 도우미에 넘긴다 — 언어를 정한 뒤에 켜게 이 약속을 기다린다.
+let myLangInit = Promise.resolve();
+chrome.runtime.onInstalled.addListener((d) => {
+  if (!d || d.reason !== 'install') return;
+  myLangInit = (async () => {
+    const cur = (await chrome.storage.local.get('gm:myLang'))['gm:myLang'];
+    if (!cur) await chrome.storage.local.set({ 'gm:myLang': await pickMyLang() });
+  })().catch(() => {});
+});
+
 async function helperAutoStart() {
+  await myLangInit;
   const { helperAuto = true } = await chrome.storage.local.get('helperAuto');
   if (helperAuto) {
     const r = await helperCall('start', false);
@@ -141,6 +193,7 @@ async function helperAutoStart() {
 
 chrome.runtime.onStartup.addListener(helperAutoStart);
 chrome.runtime.onInstalled.addListener(helperAutoStart);
+
 
 // ---------------------------------------------------------------------------
 // 번역 다리(1.36.0) — 번역 도우미(LINE·화면 번역·자막)가 구글이 막히거나 인터넷이 안 될 때 이 크롬의 내장 번역기를 빌려 쓴다.

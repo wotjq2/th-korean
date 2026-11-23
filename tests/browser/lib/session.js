@@ -9,7 +9,7 @@ const { launch, sleep } = require('./chrome');
 const net = require('./fake-net');
 
 // prelude: content.js 앞에 붙일 시험용 파일. bgPrelude: background.js 앞에 붙일 것(예: lib/fake-translator-sw.js).
-async function open({ pages, glossary, prelude, bgPrelude }) {
+async function open({ pages, glossary, prelude, bgPrelude, lang }) {
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'lzk-t2-'));
   const ext = path.join(tmp, 'ext');
   // 지금 저장소의 스크립트로 새로 만든다. TEST_SCRIPT 가 있으면 그 (일부러 망가뜨린) 사본으로.
@@ -22,7 +22,7 @@ async function open({ pages, glossary, prelude, bgPrelude }) {
   try {
     execFileSync(process.execPath, [path.join(ROOT, 'extension/build.js'), `--test-out=${ext}`, ...extra], { stdio: 'pipe' });
     fake = await net.start({ pages, glossary });
-    chrome = await launch({ profile: path.join(tmp, 'profile'), hostRules: fake.hostRules });
+    chrome = await launch({ profile: path.join(tmp, 'profile'), hostRules: fake.hostRules, lang });
     ({ id } = await chrome.send('Extensions.loadUnpacked', { path: ext }));
   } catch (e) {
     // 반쯤 띄운 것을 치우고 알린다(임시 폴더를 남기지 않게)

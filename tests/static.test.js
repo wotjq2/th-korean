@@ -59,3 +59,30 @@ test('빌드가 복사하는 확장 파일이 다 있다', () => {
   // content.js 는 복사하지 않고 빌드가 만든다(gm.js + 스크립트) — 1.36.3 부터 따로 된 content_scripts 칸에 있다
   for (const m of build.matchAll(/js: \['([^']+)'\]/g)) if (m[1] !== 'content.js') assert.ok(fs.existsSync(p('extension/src', m[1])), m[1]);
 });
+
+// 1.36.4: 처음 설치 때 '내 언어' 를 고르는 background.js 의 목록과 확장 창(popup.js)의 목록이 같아야 한다
+test("'내 언어' 31개 목록: 확장 창과 background 가 같다", () => {
+  const pick = (f) => {
+    const m = fs.readFileSync(p(f), 'utf8').match(/const MY_LANGS = \[([\s\S]*?)\];/);
+    assert.ok(m, `${f} 에 MY_LANGS 없음`);
+    return m[1].match(/'[^']+'/g).map((x) => x.slice(1, -1));
+  };
+  const a = pick('extension/src/popup.js');
+  const b = pick('extension/src/background.js');
+  assert.deepEqual(b, a);
+  assert.equal(a.length, 31);
+});
+
+// 1.36.4: 확장 이름·설명의 언어별 글(extension/locales.json) — 웹스토어 한도(이름 75자, 설명 132자)와 기본 ko
+test('확장 이름·설명 언어별 글이 웹스토어 한도 안이다', () => {
+  const all = JSON.parse(fs.readFileSync(p('extension/locales.json'), 'utf8'));
+  const locs = Object.keys(all).filter((k) => k !== '_');
+  assert.ok(locs.length >= 20, `언어 ${locs.length}개뿐`);
+  assert.equal(all.ko.name, '통합 번역');
+  for (const l of locs) {
+    assert.ok(all[l].name && all[l].name.length <= 75, `${l} 이름 ${all[l].name.length}`);
+    assert.ok(all[l].desc && all[l].desc.length <= 132, `${l} 설명 ${all[l].desc.length}`);
+    // 설명이 '30' 개 언어를 말한다(언어마다 빠뜨리지 않았는지)
+    assert.match(all[l].desc, /30|৩০/, l);
+  }
+});

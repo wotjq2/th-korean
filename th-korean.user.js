@@ -1139,11 +1139,16 @@
   function parseGlossary(text) {
     const map = {};
     const mods = new Set(); // squash 한 한국어
+    // 언어별 용어집의 '직접 고른 말' 칸(맨 아래 — '# === … 아래는 직접 고른 말 ===' 뒤)의 키(squash). 위쪽은 국어사전·위키낱말사전의
+    // 첫 뜻이라 쇼핑과 안 맞는 말이 섞여 있다(케이스=hộp 상자, 간식=thức ăn giữa buổi 정오의 음식 — 2026-11-23 잰 것).
+    const curated = new Set();
     let inMod = false;
+    let inCurated = false;
     for (const line of String(text || '').split('\n')) {
       const t = line.trim();
       if (t.startsWith('#')) {
         if (/^#\s*---/.test(t)) inMod = t.includes(MOD_TAG);
+        if (/^#\s*===.*직접 고른 말/.test(t)) inCurated = true;
         continue;
       }
       const i = t.indexOf('=');
@@ -1154,8 +1159,9 @@
       map[k] = v;
       if (inMod) mods.add(squash(k));
       else mods.delete(squash(k)); // 같은 말이 아래에 또 있으면 아래 칸을 따른다
+      if (inCurated) curated.add(squash(k));
     }
-    return { map, mods };
+    return { map, mods, curated };
   }
 
   // 확장(통합 번역)에서는 용어집 사본(몇 MB)을 탭마다 미리 읽지 않고 처음 쓸 때 읽는다(GM_lazyGet — extension/src/gm.js).
@@ -2337,10 +2343,13 @@
   }
 
   // 쇼핑몰 검색어 → 그 쇼핑몰의 말. 태국은 예전 그대로(용어집 조합·사전·AI). 다른 나라 쇼피·라자다는 입력칸 막대와 같은 길 —
-  // 그 언어 용어집(한국어=그 언어, 통째로 맞을 때) → 구글. 결과 칸 이름(thai)은 예전 그대로 둔다.
+  // 그 언어 용어집(통째로 맞을 때) → 구글. 결과 칸 이름(thai)은 예전 그대로 둔다.
+  // 1.36.3: 그 언어 용어집은 '직접 고른 말' 칸만 쓴다. 위쪽 사전 칸은 국어사전·위키낱말사전의 첫 뜻이라 쇼핑 검색어에서는 구글보다
+  // 나쁜 일이 많았다(2026-11-23 한 낱말 쇼핑 검색어 57개: 베트남어 사전 칸이 구글보다 나쁨 10·나음 3 — 간식 → '정오의 음식',
+  // 이어폰 → 'cái tai nghe'). 낱말 조합(태국어처럼)도 재 봤지만 구글 통번역보다 낫지 않아 넣지 않았다(케이스 → hộp 상자).
   async function translateShopQuery(value) {
     if (SITE_LANG2 === 'th') return translateSearchKeyword(value);
-    return koreanToLang(normKey(value), siteLangObj());
+    return koreanToLang(normKey(value), siteLangObj(), { shop: true });
   }
 
   // 용어집에 없는 조각만 무료 API 로 옮긴다. 여러 조각은 조각마다 따로 넣어 한 번에 보내고 같은 차례로 받는다
@@ -6744,7 +6753,9 @@
     }
     if (!langGlossaryMaps.has(file)) {
       const m = new Map();
-      for (const [k, v] of Object.entries(parseGlossary(store.text).map)) m.set(squash(k), v);
+      const p = parseGlossary(store.text);
+      for (const [k, v] of Object.entries(p.map)) m.set(squash(k), v);
+      m.curated = p.curated; // 직접 고른 말의 키(쇼핑 검색어는 이것만 — langGlossaryLookup opt.curatedOnly)
       langGlossaryMaps.set(file, m);
     }
     return langGlossaryMaps.get(file);
@@ -6752,10 +6763,13 @@
 
   // 입력 전체가 용어집 키와 맞을 때만(KO_EN_ZH_TSV 와 같은 규칙: 끝 문장부호는 떼고, 물음이면 값도 물음이어야).
   // 아랍어·우르두어 물음표는 '؟' 라서 함께 본다(없으면 '얼마예요?' 가 아랍어 용어집을 못 썼다).
-  async function langGlossaryLookup(value, lang) {
+  // opt.curatedOnly: 직접 고른 말만(사전 칸은 건너뛴다) — 다른 나라 쇼핑몰 검색어(translateShopQuery).
+  async function langGlossaryLookup(value, lang, opt = {}) {
     if (!lang.glossary) return '';
     const m = await langGlossaryMap(lang.glossary);
-    const v = m && m.get(squash(value.replace(/[\s.!?~,？！]+$/, '')));
+    const key = squash(value.replace(/[\s.!?~,？！]+$/, ''));
+    if (opt.curatedOnly && !(m && m.curated && m.curated.has(key))) return '';
+    const v = m && m.get(key);
     if (!v || (/[?？]\s*$/.test(value) && !/[?？؟]\s*$/.test(v))) return '';
     return v;
   }
@@ -6812,7 +6826,8 @@
 
   // 고른 언어로. 태국어는 용어집(+문장 번역), 다른 언어는 그 언어의 용어집(있으면) → 영어·중국어 샘플 용어집 →
   // 무료 번역.
-  async function koreanToLang(value, lang) {
+  // opt.shop: 쇼핑몰 검색어 — 언어별 용어집은 직접 고른 말만(사전 칸의 첫 뜻은 쇼핑과 안 맞는 일이 많다).
+  async function koreanToLang(value, lang, opt = {}) {
     // 내 언어가 한국어가 아니면 용어집(한국어=…)은 맞지 않는다 — 구글 번역(원문 언어는 구글이 알아본다: 영어 사용자가
     // 한국어를 섞어 써도 맞게. 내 언어로 못 박았더니 일본어 사용자의 '내일 봐요' 가 엉뚱한 태국어가 됐다 — 2026-11-05 시험).
     if (!MY_KO) {
@@ -6824,7 +6839,7 @@
       await ensureGlossary();
       return koreanToThai(value);
     }
-    const own = await langGlossaryLookup(value, lang).catch(() => '');
+    const own = await langGlossaryLookup(value, lang, { curatedOnly: !!opt.shop }).catch(() => '');
     if (own) return { thai: own, via: '용어집' };
     const hit = (lang.id === 'en' || lang.id === 'zh') && koEnZhLookup(value, lang.id);
     if (hit) return { thai: hit, via: '용어집' };

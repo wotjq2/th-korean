@@ -330,6 +330,45 @@ function mtDetector(onProgress) {
   return mtWatch('ld', mtLdMap, v, onProgress);
 }
 
+// 크롬은 새 언어 모델을 깔 때 번역 서비스를 다시 띄워, 그 전에 만든 번역기가 고장 난다('Other generic failures occurred.' —
+// 2026-11-23 크롬 157: 베트남어·중국어·일본어·태국어·영어 순으로 만들면 앞의 셋이 고장, 다시 만들면 다섯 모두 계속 된다).
+// 그래서 번역·알아보기가 실패하면 그 번역기를 버리고 한 번만 새로 만들어 다시 한다. 다시도 안 되면 실패로(스크립트는 다음 길로).
+async function mtRetry(key, map, get, use) {
+  const v = await get();
+  try {
+    return await use(v);
+  } catch {
+    const e = map.get(key);
+    if (e && e.done) {
+      map.delete(key);
+      e.p.then((x) => x && x.destroy && x.destroy(), () => {});
+    }
+    return use(await get());
+  }
+}
+
+// 크롬 내장 번역기는 영어를 거쳐 옮기는데, 어떤 짧은 말은 영어로 그대로 내놓는다(2026-11-23 크롬 157: 한→베 '내일 만나요' →
+// 'See you tomorrow.' — 영→베 도 그대로. 다른 짧은 말과 다른 14개 언어는 제대로). 메신저·LINE 상대에게 영어가 나가지 않게,
+// 영어가 아닌 언어끼리 옮겼는데 답이 악센트 없는 로마자뿐이고 크롬 언어 알아보기가 영어로 95% 넘게 보면 실패로 돌린다(스크립트는
+// 다음 길로 — 구글도 막혔으면 '번역 실패' 안내). 잰 것: 'See you tomorrow.' en 0.997, 'Thank you' 0.961, 'Bis morgen.' de,
+// 'A demain.' fr, 'Sampai jumpa besok.' id — 다른 언어의 로마자 답은 걸리지 않는다. 언어 알아보기를 못 쓰면(없음·8초 넘음) 통과.
+async function mtEnglishLeak(from, to, text, out) {
+  const base = (c) => String(c).split('-')[0].toLowerCase();
+  if (base(to) === 'en' || base(from) === 'en' || typeof LanguageDetector === 'undefined') return false;
+  const o = String(out || '').trim();
+  if (!o || o === String(text).trim() || !/^[\x20-\x7E]+$/.test(o) || !/[A-Za-z]{2}/.test(o)) return false;
+  try {
+    const got = await Promise.race([
+      mtRetry('ld', mtLdMap, () => mtDetector(null), (d) => d.detect(o)),
+      new Promise((r) => setTimeout(() => r(null), 8000)),
+    ]);
+    const top = got && got[0];
+    return !!top && top.detectedLanguage === 'en' && top.confidence >= 0.95;
+  } catch {
+    return false;
+  }
+}
+
 // m: 번역 도우미(번역 다리)의 물음 또는 이 확장 탭(gm.js)의 물음. sender 는 탭일 때만 — 모델을 받는 정도를 그 탭에 알린다.
 async function mtHandle(m, sender) {
   try {
@@ -346,16 +385,23 @@ async function mtHandle(m, sender) {
       if (!MT_LANG.test(String(m.from)) || !MT_LANG.test(String(m.to))) return { ok: false, error: 'lang' };
       if (typeof Translator === 'undefined') return op === 'avail' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no Translator' };
       if (op === 'avail') return { ok: true, avail: await Translator.availability({ sourceLanguage: m.from, targetLanguage: m.to }) };
-      const t = await mtTranslator(m.from, m.to, op === 'create' ? onProgress : null);
-      if (op === 'create') return { ok: true };
-      return { ok: true, out: await t.translate(text) };
+      if (op === 'create') {
+        await mtTranslator(m.from, m.to, onProgress);
+        return { ok: true };
+      }
+      const out = await mtRetry(`${m.from}>${m.to}`, mtTr, () => mtTranslator(m.from, m.to, null), (t) => t.translate(text));
+      if (await mtEnglishLeak(m.from, m.to, text, out)) return { ok: false, error: 'english' };
+      return { ok: true, out };
     }
     if (op === 'avail-ld' || op === 'create-ld' || op === 'detect') {
       if (typeof LanguageDetector === 'undefined') return op === 'avail-ld' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no LanguageDetector' };
       if (op === 'avail-ld') return { ok: true, avail: await LanguageDetector.availability() };
-      const d = await mtDetector(op === 'create-ld' ? onProgress : null);
-      if (op === 'create-ld') return { ok: true };
-      const list = (await d.detect(text)).slice(0, 3).map((x) => ({ detectedLanguage: x.detectedLanguage, confidence: x.confidence }));
+      if (op === 'create-ld') {
+        await mtDetector(onProgress);
+        return { ok: true };
+      }
+      const got = await mtRetry('ld', mtLdMap, () => mtDetector(null), (d) => d.detect(text));
+      const list = got.slice(0, 3).map((x) => ({ detectedLanguage: x.detectedLanguage, confidence: x.confidence }));
       return { ok: true, list };
     }
     return { ok: false, error: 'op' };

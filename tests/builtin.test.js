@@ -105,3 +105,14 @@ test('떠 있는 안내가 없거나 받는 정도 안내면 이어서 보인다
   assert.match(dl[0], /태국어 → 한국어\) 0%/);
   assert.match(dl[1], /50%/);
 });
+
+// 1.36.1: 크롬은 새 언어 모델을 깔 때 번역 서비스를 다시 띄워, 그 전에 만든 번역기가 'Other generic failures occurred.' 로 고장 난다
+// (2026-11-23 크롬 157 — 화면 번역에서 5개 언어를 받은 뒤 일본어·베트남어 자막이 계속 실패). 고장 난 번역기는 버리고 다음에 새로 만든다.
+test('고장 난 번역기(크롬이 번역 서비스를 다시 띄움)는 버리고 다음에 새로 만든다', async () => {
+  const s = load({ mt: 'blocked', translator: { 'th>ko': 'available' } });
+  assert.equal(await free(s)('ส่งฟรี', 'th', 'ko'), '내장(th>ko):ส่งฟรี');
+  s.breakTranslators();
+  await assert.rejects(free(s)('ขายดี', 'th', 'ko')); // 이번 줄은 놓친다(확장은 background 가 그 자리에서 다시 만든다)
+  assert.equal(await free(s)('ขายดี', 'th', 'ko'), '내장(th>ko):ขายดี');
+  assert.deepEqual(s.builtinCreates, ['th>ko', 'th>ko']);
+});

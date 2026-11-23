@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.36.1
+// @version      1.36.2
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -1841,6 +1841,9 @@
     try {
       return await t.translate(src === 'ko' ? koPrep(text) : text);
     } catch {
+      // 크롬은 새 언어 모델을 깔 때 번역 서비스를 다시 띄워 그 전에 만든 번역기가 고장 난다('Other generic failures occurred.',
+      // 2026-11-23). 기억해 둔 번역기를 버려 다음에는 새로 만든다(확장은 background 가 그 자리에서 한 번 다시 만들어 본다).
+      if (builtinTr.get(`${src}>${dst}`) && (await builtinTr.get(`${src}>${dst}`)) === t) builtinTr.delete(`${src}>${dst}`);
       return null;
     }
   }

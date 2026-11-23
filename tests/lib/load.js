@@ -74,6 +74,8 @@ function load(opt = {}) {
   // 크롬 내장 번역기 가짜: opt.translator = { 'ko>th': 'available' | 'downloadable' | 'unavailable', … }.
   // 켜지 않은(downloadable) 쌍은 누름 중(opt.activation)에만 만들 수 있다 — 진짜 크롬과 같게. 답은 '내장(쌍):원문'.
   const builtinCalls = [];
+  const builtinCreates = []; // 만든 쌍(차례대로)
+  const builtinMade = []; // 만든 번역기 — breakTranslators() 가 모두 고장 낸다(크롬이 번역 서비스를 다시 띄운 것처럼)
   const userActivation = { isActive: !!opt.activation };
 
   const sb = {
@@ -163,7 +165,17 @@ function load(opt = {}) {
           for (const loaded of opt.progress) fns.forEach((fn) => fn({ loaded }));
         }
         opt.translator[`${s}>${t}`] = 'available'; // 한 번 켜면 이 사이트에서는 계속
-        return { translate: async (x) => { builtinCalls.push(`${s}>${t}|${x}`); return `내장(${s}>${t}):${x}`; } };
+        builtinCreates.push(`${s}>${t}`);
+        const tr = {
+          alive: true,
+          translate: async (x) => {
+            if (!tr.alive) throw new Error('UnknownError: Other generic failures occurred.');
+            builtinCalls.push(`${s}>${t}|${x}`);
+            return `내장(${s}>${t}):${x}`;
+          },
+        };
+        builtinMade.push(tr);
+        return tr;
       },
     };
   }
@@ -176,7 +188,8 @@ function load(opt = {}) {
   script().runInContext(sb);
   if (typeof sb.__peek !== 'function') throw new Error('스크립트를 불러오지 못함(__peek 없음)');
   const tick = () => intervals.forEach((fn) => fn());
-  return { peek: sb.__peek, store, requests, calls, lazyReads, toasts, builtinCalls, userActivation, attached, sandbox: sb, tmCalls, tick };
+  const breakTranslators = () => builtinMade.forEach((tr) => (tr.alive = false));
+  return { peek: sb.__peek, store, requests, calls, lazyReads, toasts, builtinCalls, builtinCreates, breakTranslators, userActivation, attached, sandbox: sb, tmCalls, tick };
 }
 
 module.exports = { load, ROOT, SCRIPT };

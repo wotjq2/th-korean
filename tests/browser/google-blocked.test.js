@@ -16,6 +16,20 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
   let S;
   let t;
   const toast = () => t.ev(`((document.getElementById('lzk-toast') || {}).textContent || '').replace(/\\s+/g, ' ')`);
+  // 확장 service worker 안에서 식을 돌린다(가짜 내장 번역기를 고장 내기 등)
+  const sw = async (expr) => {
+    const { targetInfos } = await S.chrome.send('Target.getTargets');
+    const tg = targetInfos.find((x) => x.type === 'service_worker' && x.url.includes(S.extId));
+    if (!tg) throw new Error('service worker 없음');
+    const { sessionId } = await S.chrome.send('Target.attachToTarget', { targetId: tg.targetId, flatten: true });
+    try {
+      const r = await S.chrome.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
+      return r.result.value;
+    } finally {
+      await S.chrome.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+    }
+  };
   const allItemsStartWith = (p) => `[...document.querySelectorAll('#app li')].length === 4 && [...document.querySelectorAll('#app li')].every((e) => e.innerText.startsWith(${JSON.stringify(p)}))`;
 
   before(async () => {
@@ -58,6 +72,17 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     assert.equal(v, '[BI-th]k3 k2');
   });
 
+  test('내장 번역기가 고장 나도(크롬이 번역 서비스를 다시 띄움) background 가 그 자리에서 다시 만들어 옮긴다', T, async () => {
+    // 진짜(2026-11-23 크롬 157): 새 언어 모델을 깔면 그 전에 만든 번역기가 'Other generic failures occurred.' 로 고장 난다
+    assert.equal(await sw('(self.__fakeTranslator.breakAll(), 1)'), 1);
+    await t.typeIn('input[name="keyword"]', '강아지 간식');
+    await t.enter();
+    const v = await t.until(`(() => { const v = document.querySelector('input[name=keyword]').value; return v !== '강아지 간식' && v; })()`, 15000, '고장 뒤 검색어가 바뀌기');
+    assert.equal(v, '[BI-th]k3 k2');
+    const creates = await sw("self.__fakeTranslator.calls.filter((c) => c === 'create ko>th').length");
+    assert.equal(creates, 2, '고장 뒤 새로 만들지 않음');
+  });
+
   test('베트남 쇼피 검색: 막혀도 조용히 실패하지 않고 내장 번역기로 바꾼다', T, async () => {
     await t.go('https://shopee.vn/');
     await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
@@ -66,6 +91,16 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     const v = await t.until(`(() => { const v = document.querySelector('input[name=keyword]').value; return v !== '무선 이어폰' && v; })()`, 15000, '검색어가 바뀌기');
     assert.equal(v, '[BI-vi]k2 k3');
     assert.match(await toast(), /Enter/);
+  });
+
+  test('내장 번역기가 영어로 샌 답(한→베 내일 만나요 → See you tomorrow.)은 쓰지 않는다 — 상대에게 영어가 나가지 않게', T, async () => {
+    await t.typeIn('input[name="keyword"]', '내일 만나요');
+    await t.ev(`(document.getElementById('lzk-toast') || { remove() {} }).remove(), 1`);
+    await t.enter();
+    await t.until(`/검색어 번역 실패/.test((document.getElementById('lzk-toast') || {}).textContent || '')`, 15000, "'검색어 번역 실패' 안내");
+    const v = await t.ev(`document.querySelector('input[name=keyword]').value`);
+    assert.doesNotMatch(v, /See you/, '영어로 바꿔 넣음');
+    assert.ok(await sw("self.__fakeTranslator.calls.includes('ko>vi|내일 만나요')"), '내장 번역기에 묻지 않음(다른 까닭의 실패)');
   });
 
   test('인터넷이 끊겨 모델을 못 받으면(크롬은 끝없이 기다린다) 잠깐 뒤 실패로 알린다 — 말없이 멈추지 않는다', T, async () => {

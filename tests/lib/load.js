@@ -157,6 +157,8 @@ function load(opt = {}) {
       create: async ({ sourceLanguage: s, targetLanguage: t, monitor }) => {
         const st = state(s, t);
         if (st === 'unavailable') throw new Error('NotSupportedError');
+        // opt.createError = { 'ko>th': '…받지 못합니다…' }: 만들기 실패(확장 background 가 돌려주는 까닭 글 그대로)
+        if (opt.createError && opt.createError[`${s}>${t}`]) throw new Error(opt.createError[`${s}>${t}`]);
         if (st !== 'available' && !userActivation.isActive) throw new Error('NotAllowedError: Requires a user gesture');
         // opt.progress = [0, 0.5, …]: 아직 안 받은 쌍이면 받는 정도(downloadprogress)를 그 차례로 알린다
         if (st !== 'available' && opt.progress && typeof monitor === 'function') {
@@ -170,6 +172,8 @@ function load(opt = {}) {
           alive: true,
           translate: async (x) => {
             if (!tr.alive) throw new Error('UnknownError: Other generic failures occurred.');
+            // opt.translateError = { 'ko>vi': 'english' }: 옮기기 실패(영어로 샌 답 등 — background 의 까닭 글)
+            if (opt.translateError && opt.translateError[`${s}>${t}`]) throw new Error(opt.translateError[`${s}>${t}`]);
             builtinCalls.push(`${s}>${t}|${x}`);
             return `내장(${s}>${t}):${x}`;
           },

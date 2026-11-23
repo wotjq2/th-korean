@@ -116,3 +116,17 @@ test('고장 난 번역기(크롬이 번역 서비스를 다시 띄움)는 버�
   assert.equal(await free(s)('ขายดี', 'th', 'ko'), '내장(th>ko):ขายดี');
   assert.deepEqual(s.builtinCreates, ['th>ko', 'th>ko']);
 });
+
+// 1.36.3: 구글이 막히고 내장 번역기도 못 옮기면 그 까닭을 안내에(메신저 보내기·검색어·LINE). 예전에는 늘 '무료 번역 API가
+// 요청을 일시적으로 거절했습니다' — 영어로 샌 답을 막은 것인데도(2026-11-23 메신저 한→베 '내일 만나요').
+test('내장 번역기도 못 옮긴 까닭을 실패 안내에: 영어로 샘·없는 언어·모델 못 받음', async () => {
+  const s = load({ mt: 'blocked', translator: { 'ko>vi': 'available' }, translateError: { 'ko>vi': 'english' } });
+  await assert.rejects(free(s)('내일 만나요', 'ko', 'vi'), (e) => e.rateLimited === true && /베트남어가 아니라 영어로 나와 쓰지 않았습니다/.test(e.message));
+  const s2 = load({ mt: 'blocked', translator: { 'ko>th': 'available' } });
+  await assert.rejects(free(s2)('안녕하세요', 'ko', 'km'), (e) => e.rateLimited === true && /크롬 내장 번역기에는 .+가 없습니다/.test(e.message));
+  const s3 = load({ mt: 'blocked', translator: { 'ko>th': 'downloadable' }, activation: true, createError: { 'ko>th': '크롬 내장 번역기 언어 모델을 받지 못합니다(인터넷 연결 확인)' } });
+  await assert.rejects(free(s3)('안녕하세요', 'ko', 'th'), (e) => /언어 모델을 받지 못했습니다/.test(e.message));
+  // 까닭을 모르면 예전 글 그대로
+  const s4 = load({ mt: 'blocked' });
+  await assert.rejects(free(s4)('안녕하세요', 'ko', 'th'), (e) => /무료 번역 API가 요청을 일시적으로 거절했습니다/.test(e.message));
+});

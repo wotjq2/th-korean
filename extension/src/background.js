@@ -48,6 +48,10 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     ccSettings({ cmd: 'cc-reset' }, sender).then(reply);
     return true;
   }
+  if (m && m.t === 'mt-state') {
+    reply({ state: mtState }); // 확장 창의 '번역 다리' 줄
+    return undefined;
+  }
   if (m && m.t === 'mt') {
     // 이 확장 탭의 크롬 내장 번역기(gm.js) — 페이지에서는 사이트마다 누름이 필요해 여기서 만든다(1.36.0)
     mtHandle(m, sender).then(reply);
@@ -151,6 +155,8 @@ chrome.runtime.onInstalled.addListener(helperAutoStart);
 // ---------------------------------------------------------------------------
 
 let mtPort = null;
+// 확장 창(popup)에 보이는 다리 상태: 'down'(안 이음·도우미 꺼짐·없음) | 'opening'(잇는 중) | 'up'(이어짐) | 'old'(옛 도우미 — 다리를 모름)
+let mtState = 'down';
 let mtNextTry = 0; // 이 시각 전에는 다시 열어 보지 않는다(service worker 가 다시 떠도 이어지게 storage.session 에도)
 const MT_RETRY = 10 * 60 * 1000;
 const MT_LANG = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
@@ -179,6 +185,7 @@ async function mtBridgeOpen(force) {
     return;
   }
   mtPort = port;
+  if (mtState !== 'old') mtState = 'opening';
   let up = 0; // 이은 때
   port.onMessage.addListener((m) => {
     if (!m || typeof m !== 'object') return;
@@ -193,19 +200,27 @@ async function mtBridgeOpen(force) {
       return;
     }
     if (m.bridge === 1) {
-      if (m.running) up = Date.now();
-      else mtClose(port); // 도우미 트레이가 꺼져 있다 — 10분 뒤 또는 켤 때 다시
+      if (m.running) {
+        up = Date.now();
+        mtState = 'up';
+      } else {
+        mtState = 'down';
+        mtClose(port); // 도우미 트레이가 꺼져 있다 — 10분 뒤 또는 켤 때 다시
+      }
       return;
     }
     if ('running' in m) {
-      // 다리를 모르는 옛 도우미 — 스스로 새 판으로 바뀔 때까지(6시간마다 본다) 열지 않는다
-      mtRetryAt(Date.now() + 6 * 3600 * 1000);
+      // 다리를 모르는 옛 도우미 — 도우미는 6시간마다 스스로 새 판으로 바뀐다. 1시간마다 다시 본다(예전 6시간 — 2026-11-23
+      // 사용자 크롬에서 도우미가 새 판이 된 뒤에도 몇 시간 동안 다리가 안 열렸다). 도우미를 켜거나 확장 창을 열면 바로.
+      mtState = 'old';
+      mtRetryAt(Date.now() + 60 * 60 * 1000);
       mtClose(port);
     }
   });
   port.onDisconnect.addListener(() => {
     void chrome.runtime.lastError; // 'Specified native messaging host not found.' = 도우미가 없다
     const wasUp = up && mtPort === port;
+    if (mtPort === port && mtState !== 'old') mtState = 'down';
     mtClose(port);
     // 쓰다가 끊겼다(도우미를 다시 깔았다 등) — 조금 뒤 한 번 더
     if (wasUp) setTimeout(() => mtBridgeOpen(true), 15000);

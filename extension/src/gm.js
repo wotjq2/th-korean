@@ -304,8 +304,9 @@ let gmMtNext = 0;
 function gmMt(msg) {
   if (!gmAlive()) return Promise.resolve(null);
   try {
+    // 실패 답({ ok:false, error })도 그대로 — 까닭('english' 등)을 스크립트의 실패 안내에 쓴다
     return chrome.runtime.sendMessage({ t: 'mt', ...msg }).then(
-      (r) => (r && r.ok ? r : null),
+      (r) => (r && typeof r === 'object' ? r : null),
       () => null
     );
   } catch {
@@ -315,7 +316,8 @@ function gmMt(msg) {
 }
 
 // 답이 없으면(확장이 잠깐 안 받음) 'downloadable' — 스크립트는 그 쌍을 '없음' 으로 기억하지 않는다
-const gmMtAvail = (r) => (!r ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+const gmMtAvail = (r) => (!r || !r.ok ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+const gmMtFail = (r, def) => (r && r.error ? String(r.error) : def);
 
 function gmMtMonitor(monitor) {
   if (typeof monitor !== 'function') return 0;
@@ -337,14 +339,14 @@ if (typeof Translator !== 'undefined') {
       const watch = gmMtMonitor(monitor);
       const r = await gmMt({ op: 'create', from, to, watch });
       gmMtWatch.delete(watch);
-      if (!r) throw new DOMException('크롬 내장 번역기를 만들지 못했습니다', 'NotSupportedError');
+      if (!r || !r.ok) throw new DOMException(gmMtFail(r, '크롬 내장 번역기를 만들지 못했습니다'), 'NotSupportedError');
       return {
         sourceLanguage: from,
         targetLanguage: to,
         // 번역기는 background 에 있다 — 여기는 쌍만 들고 있어 service worker 가 다시 떠도 그대로 쓴다
         translate: async (text) => {
           const a = await gmMt({ op: 'tr', from, to, text: String(text) });
-          if (!a || typeof a.out !== 'string') throw new DOMException('크롬 내장 번역기가 답하지 않습니다', 'OperationError');
+          if (!a || !a.ok || typeof a.out !== 'string') throw new DOMException(gmMtFail(a, '크롬 내장 번역기가 답하지 않습니다'), 'OperationError');
           return a.out;
         },
         destroy() {},
@@ -360,11 +362,11 @@ if (typeof LanguageDetector !== 'undefined') {
       const watch = gmMtMonitor(monitor);
       const r = await gmMt({ op: 'create-ld', watch });
       gmMtWatch.delete(watch);
-      if (!r) throw new DOMException('크롬 언어 알아보기를 만들지 못했습니다', 'NotSupportedError');
+      if (!r || !r.ok) throw new DOMException(gmMtFail(r, '크롬 언어 알아보기를 만들지 못했습니다'), 'NotSupportedError');
       return {
         detect: async (text) => {
           const a = await gmMt({ op: 'detect', text: String(text) });
-          if (!a || !Array.isArray(a.list)) throw new DOMException('크롬 언어 알아보기가 답하지 않습니다', 'OperationError');
+          if (!a || !a.ok || !Array.isArray(a.list)) throw new DOMException(gmMtFail(a, '크롬 언어 알아보기가 답하지 않습니다'), 'OperationError');
           return a.list;
         },
         destroy() {},

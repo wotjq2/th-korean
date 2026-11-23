@@ -2,7 +2,8 @@
 # 매번 새로 만들어지는 깨끗한 윈도우(GitHub 의 가상 PC)에서 사용자가 쓰는 한 줄 설치를 그대로 돌린다:
 #   irm https://raw.githubusercontent.com/wotjq2/th-korean/main/line-helper/install.ps1 | iex
 # Node.js 가 있는 PC 와 없는 PC(휴대용 Node 를 받는 길) 둘 다. 설치 뒤 확인: 파일·exe·시작 프로그램·시작 메뉴·크롬 연결·
-# 링크(th-korean-helper://) 등록, 도우미가 켜져 127.0.0.1:38291 에 답하는지, 화면 자막 그림 한 장을 실제로 읽는지.
+# 링크(th-korean-helper://) 등록, 도우미가 켜져 127.0.0.1:38291 에 답하는지, 화면 자막 그림 한 장을 실제로 읽는지,
+# 번역 다리(크롬 내장 번역기를 빌려 쓰는 통로 — tests/helper/bridge-relay.js)가 물음·답을 그대로 잇는지.
 # 백신(알약 등)이 직접 만든 exe 를 의심하는 것은 여기서 볼 수 없다 — 스토어 올리기 전 손 확인표에.
 #
 # 주의: 설치 단계는 사용자처럼 윈도우 PowerShell 5.1(shell: powershell)로 돈다. 5.1 은 GitHub 이 BOM 없이 쓴 스크립트 파일의
@@ -18,6 +19,7 @@ on:
       - 'line-helper/**'
       - '.github/workflows/helper-install.yml'
       - 'tests/fixtures/hardsub-en-white.json'
+      - 'tests/helper/**'
 
 permissions:
   contents: read
@@ -118,6 +120,17 @@ jobs:
 
           if ($script:fail.Count) { throw "실패 $($script:fail.Count)개: $($script:fail -join ', ')" }
           Write-Host '모두 통과' -ForegroundColor Green
+
+      # 번역 다리(1.36.0~): 구글이 막히면 도우미 엔진이 크롬 내장 번역기를 빌려 쓰는 통로. 설치된 exe 를 크롬처럼 호스트로 띄우고
+      # 엔진처럼 pipe 에 붙어 물음·답이 그대로 오가는지(ChromeLink.cs MtBridge). 도우미 코드는 올리는 즉시 모든 PC 에 퍼진다.
+      - name: 번역 다리 시험 (크롬 ↔ 도우미 ↔ 엔진 통로)
+        shell: pwsh
+        env:
+          EXE_NAME: 번역도우미.exe
+        run: |
+          $exe = Join-Path (Join-Path $env:LOCALAPPDATA 'th-korean-helper') $env:EXE_NAME
+          node (Join-Path $env:GITHUB_WORKSPACE 'tests\helper\bridge-relay.js') $exe
+          if ($LASTEXITCODE -ne 0) { throw "번역 다리 시험 실패(끝 코드 $LASTEXITCODE)" }
 
       - name: 실패하면 도우미 기록 모으기
         if: failure()

@@ -238,6 +238,31 @@ function showHelper(r) {
   st.textContent = r.running ? '켜짐' : '꺼짐';
   $('#hon').disabled = r.running;
   $('#hoff').disabled = !r.running;
+  bridgeShow();
+}
+
+// 번역 다리(1.36.0~): 구글 번역이 막히면 도우미(LINE·화면 번역·자막)가 이 크롬의 내장 번역기를 빌려 쓴다 — 이어졌는지 한 줄로.
+// 도우미가 켜져 있으면 상태를 물을 때 background 가 다리를 연다(곧 이어진다 — 0.5초씩 몇 번 다시 본다).
+async function bridgeShow(tries = 0) {
+  const el = $('#hbridge');
+  if (!helperReply || !helperReply.ok || !helperReply.running) {
+    el.hidden = true;
+    return;
+  }
+  let s = null;
+  try {
+    s = await chrome.runtime.sendMessage({ t: 'mt-state' });
+  } catch {
+    s = null;
+  }
+  const st = s && s.state;
+  el.hidden = false;
+  if (st === 'up') el.textContent = '구글 번역이 막혀도 도우미는 이 크롬의 내장 번역기로 이어 번역합니다 (이어짐)';
+  else if (st === 'old') el.textContent = '도우미가 옛 판이라 크롬 내장 번역기와 아직 못 이었습니다 — 도우미가 스스로 새 판으로 바뀌면(6시간 안) 이어집니다';
+  else if (tries < 8) {
+    el.textContent = '크롬 내장 번역기와 잇는 중…';
+    setTimeout(() => bridgeShow(tries + 1), 500);
+  } else el.textContent = '크롬 내장 번역기와 잇지 못했습니다 — 도우미를 껐다 켜 보세요';
 }
 
 async function helper(cmd) {

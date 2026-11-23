@@ -98,6 +98,8 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     await t.ev(`(document.getElementById('lzk-toast') || { remove() {} }).remove(), 1`);
     await t.enter();
     await t.until(`/검색어 번역 실패/.test((document.getElementById('lzk-toast') || {}).textContent || '')`, 15000, "'검색어 번역 실패' 안내");
+    // 까닭이 안내에(1.36.3) — 예전에는 '무료 번역 API가 요청을 일시적으로 거절했습니다'
+    assert.match(await toast(), /영어로 나와 쓰지 않았습니다/);
     const v = await t.ev(`document.querySelector('input[name=keyword]').value`);
     assert.doesNotMatch(v, /See you/, '영어로 바꿔 넣음');
     assert.ok(await sw("self.__fakeTranslator.calls.includes('ko>vi|내일 만나요')"), '내장 번역기에 묻지 않음(다른 까닭의 실패)');
@@ -130,6 +132,19 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     await t.enter();
     const ms2 = await failed(t1);
     assert.ok(ms2 < 1300, `두 번째도 기다림 ${ms2} ms`);
+  });
+
+  test("확장 창의 '번역 다리' 줄(1.36.3): 이어짐·옛 도우미·도우미 꺼짐", T, async () => {
+    // 시험 크롬에는 도우미가 없다 — background 의 다리 상태와 확장 창이 받은 도우미 답을 정해 두고 그 줄만 본다
+    const line = async (state, reply) => {
+      await sw(`(mtState = ${JSON.stringify(state)}, 1)`);
+      return S.popup.ev(`(async () => { helperReply = ${JSON.stringify(reply)}; await bridgeShow(99); const e = document.getElementById('hbridge'); return e.hidden ? '(숨김)' : e.textContent; })()`);
+    };
+    assert.match(await line('up', { ok: true, running: true }), /크롬의 내장 번역기로 이어 번역합니다 \(이어짐\)/);
+    assert.match(await line('old', { ok: true, running: true }), /옛 판이라 .*새 판으로 바뀌면/);
+    assert.equal(await line('up', { ok: true, running: false }), '(숨김)');
+    assert.equal(await line('up', { ok: false, error: 'Specified native messaging host not found.' }), '(숨김)');
+    await sw("(mtState = 'down', 1)");
   });
 
   test('확장 오류 0건', T, async () => {

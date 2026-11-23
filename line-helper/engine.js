@@ -170,25 +170,27 @@ function installBridge(pipeName) {
       function done(r) {
         clearTimeout(timer);
         wait.delete(id);
-        resolve(r && r.ok ? r : null);
+        resolve(r && typeof r === 'object' ? r : null); // 실패 답({ ok:false, error })도 — 까닭을 스크립트의 실패 안내에
       }
       wait.set(id, done);
       s.write(JSON.stringify({ id, ...msg }) + '\n');
     });
   }
-  const avail = (r) => (!r ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+  const avail = (r) => (!r || !r.ok ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+  const why = (r, def) => (r && r.error ? String(r.error) : def);
   global.Translator = {
     availability: async ({ sourceLanguage: from, targetLanguage: to }) => avail(await call({ op: 'avail', from, to }, 5000)),
     // 처음 쓰는 쌍은 크롬이 언어 모델을 받는다(10~20초)
     create: async ({ sourceLanguage: from, targetLanguage: to }) => {
-      if (!(await call({ op: 'create', from, to }, 90000))) throw new Error('크롬 내장 번역기를 만들지 못했습니다');
+      const made = await call({ op: 'create', from, to }, 90000);
+      if (!made || !made.ok) throw new Error(why(made, '크롬 내장 번역기를 만들지 못했습니다'));
       return {
         sourceLanguage: from,
         targetLanguage: to,
         // 통로가 끊겼다 다시 붙어도 그대로 쓰게 쌍만 들고 있는다(번역기는 확장 쪽에 있다)
         translate: async (text) => {
           const r = await call({ op: 'tr', from, to, text: String(text) }, 30000);
-          if (!r || typeof r.out !== 'string') throw new Error('크롬 내장 번역기가 답하지 않습니다');
+          if (!r || !r.ok || typeof r.out !== 'string') throw new Error(why(r, '크롬 내장 번역기가 답하지 않습니다'));
           return r.out;
         },
         destroy() {},
@@ -198,11 +200,12 @@ function installBridge(pipeName) {
   global.LanguageDetector = {
     availability: async () => avail(await call({ op: 'avail-ld' }, 5000)),
     create: async () => {
-      if (!(await call({ op: 'create-ld' }, 60000))) throw new Error('크롬 언어 알아보기를 만들지 못했습니다');
+      const made = await call({ op: 'create-ld' }, 60000);
+      if (!made || !made.ok) throw new Error(why(made, '크롬 언어 알아보기를 만들지 못했습니다'));
       return {
         detect: async (text) => {
           const r = await call({ op: 'detect', text: String(text) }, 15000);
-          if (!r || !Array.isArray(r.list)) throw new Error('크롬 언어 알아보기가 답하지 않습니다');
+          if (!r || !r.ok || !Array.isArray(r.list)) throw new Error(why(r, '크롬 언어 알아보기가 답하지 않습니다'));
           return r.list;
         },
       };

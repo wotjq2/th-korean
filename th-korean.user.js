@@ -1650,8 +1650,8 @@
   // 무료 API가 요청을 거절하면 JSON 대신 HTML 안내 페이지를 돌려준다.
   // 짧은 시간에 수백 건을 보내면 실제로 발생하며, 보통 잠시 뒤 풀린다.
   class RateLimited extends Error {
-    constructor() {
-      super('무료 번역 API가 요청을 일시적으로 거절했습니다');
+    constructor(msg) {
+      super(msg || '무료 번역 API가 요청을 일시적으로 거절했습니다');
       this.rateLimited = true;
     }
   }
@@ -1697,6 +1697,7 @@
   async function freeRaw(text, from, to, timeout, opt = {}) {
     const order = RC.translate.order.includes('builtin') ? RC.translate.order : [...RC.translate.order, 'builtin'];
     let fail = null; // 구글이 막혔으면 RateLimited, 다른 까닭(인터넷 끊김·시간 초과)이면 그 오류
+    let why = ''; // 내장 번역기도 못 옮긴 까닭(builtinWhy) — 실패 안내에 그대로 쓴다
     for (let i = 0; i < order.length; i++) {
       if (order[i] === 'builtin') {
         if (opt.builtin === false) continue;
@@ -1706,6 +1707,7 @@
           freeLastWay = 'builtin';
           return out;
         }
+        why = builtinWhy;
         continue;
       }
       if (fail && !fail.rateLimited) continue; // 인터넷이 안 되면 다른 구글 주소도 안 된다 — 내장 번역기만 본다
@@ -1721,6 +1723,13 @@
           fail = new RateLimited();
         } else fail = e;
       }
+    }
+    // 내장 번역기도 못 옮겼으면 그 까닭을 알린다(메신저·검색어·LINE 보내기 안내). 예전에는 늘 '무료 번역 API가 요청을
+    // 일시적으로 거절했습니다' 였다 — 영어로 샌 답을 막은 것인데도(2026-11-23 메신저 한→베 '내일 만나요').
+    const whyText = builtinFailText(why, to);
+    if (whyText) {
+      if (!fail || fail.rateLimited) throw new RateLimited(whyText);
+      fail.message = `${whyText} (${fail.message})`;
     }
     throw fail || new RateLimited();
   }
@@ -1743,6 +1752,19 @@
   let builtinMissing = ''; // 내장 번역기에 없는 언어(안내용)
   let builtinUsedNotified = 0;
   let builtinDetector = null;
+  // 마지막 builtinTranslate 가 못 옮긴 까닭: 'english'(영어로 샌 답이라 버림) | 'missing'(내장 번역기에 없는 언어) |
+  // 'download'(언어 모델을 못 받음 — 인터넷) | ''(그 밖·누름 기다림). freeRaw 가 실패 안내에 쓴다.
+  let builtinWhy = '';
+  const builtinWhyOf = (e) => {
+    const m = String((e && e.message) || e || '');
+    return /english/i.test(m) ? 'english' : /받지 못|download/i.test(m) ? 'download' : '';
+  };
+  function builtinFailText(why, to) {
+    if (why === 'english') return `구글 번역이 막혀 크롬 내장 번역기로 옮겨 봤지만 ${builtinName(to)}가 아니라 영어로 나와 쓰지 않았습니다. 말을 조금 바꿔 다시 해 보세요`;
+    if (why === 'missing') return `구글 번역이 막혔고, 크롬 내장 번역기에는 ${builtinName(builtinMissing || to)}가 없습니다. 구글이 풀리면 다시 됩니다`;
+    if (why === 'download') return '구글 번역이 막혔고, 크롬 내장 번역기 언어 모델을 받지 못했습니다. 인터넷 연결을 확인해 주세요';
+    return '';
+  }
   const builtinCode = (c) => {
     c = String(c || '');
     return c === 'yue' ? 'zh-TW' : c === 'iw' ? 'he' : c === 'fil' ? 'tl' : c;
@@ -1821,7 +1843,10 @@
         },
       });
     })()
-      .catch(() => null)
+      .catch((e) => {
+        builtinWhy = builtinWhyOf(e);
+        return null;
+      })
       .then((t) => {
         if (!t) builtinTr.delete(key);
         else if (builtinWant && builtinWant.from === from && builtinWant.to === to) builtinWant = null;
@@ -1831,16 +1856,21 @@
     return job;
   }
   async function builtinTranslate(text, from, to) {
+    builtinWhy = '';
     if (!BUILTIN_OK || !text || !String(text).trim()) return null;
     const src = builtinCode(await builtinSource(text, from));
     const dst = builtinCode(to);
     if (!src || !dst) return null;
     if (src === dst) return text;
     const t = await builtinGet(src, dst);
-    if (!t) return null;
+    if (!t) {
+      if (builtinNone.has(`${src}>${dst}`)) builtinWhy = 'missing';
+      return null;
+    }
     try {
       return await t.translate(src === 'ko' ? koPrep(text) : text);
-    } catch {
+    } catch (e) {
+      builtinWhy = builtinWhyOf(e);
       // 크롬은 새 언어 모델을 깔 때 번역 서비스를 다시 띄워 그 전에 만든 번역기가 고장 난다('Other generic failures occurred.',
       // 2026-11-23). 기억해 둔 번역기를 버려 다음에는 새로 만든다(확장은 background 가 그 자리에서 한 번 다시 만들어 본다).
       if (builtinTr.get(`${src}>${dst}`) && (await builtinTr.get(`${src}>${dst}`)) === t) builtinTr.delete(`${src}>${dst}`);

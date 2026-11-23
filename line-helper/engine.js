@@ -91,6 +91,123 @@ function installStubs(version) {
   };
   global.setInterval = () => 0;
   global.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  if (process.env.TH_MT_PIPE) installBridge(process.env.TH_MT_PIPE);
+}
+
+// ---------------------------------------------------------------------------
+// 크롬 내장 번역기 빌려 쓰기(번역 다리, 2026-11-23). 스크립트는 구글이 막히거나 인터넷이 안 되면 끝으로 크롬 내장 번역기
+// (Translator API)를 쓴다(freeRaw·freeTranslateMany). node 에는 그것이 없어 도우미는 구글만 썼다 — 구글이 막히면
+// LINE·화면 번역·자막이 함께 멈췄다(2026-10-27). 크롬이 켜져 있으면 '통합 번역' 확장이 도우미와 통로를 열어 두고
+// (background.js mtBridge → 크롬이 띄운 번역도우미.exe 가 이 사용자만 여는 named pipe — ChromeLink.cs MtBridge),
+// 도우미는 엔진을 띄울 때 그 이름을 TH_MT_PIPE 로 알려 준다. 여기서는 그 pipe 로 확장의 service worker 에 일을 맡기는
+// Translator·LanguageDetector 흉내를 둔다 — 스크립트의 내장 번역기 길(builtinGet·builtinSource)이 그대로 쓴다.
+// 확장 service worker 는 누름 없이 언어 모델을 받아 만든다(2026-11-23 크롬 157: 한↔태·영 모두, 처음 받기 약 9초) — 그래서
+// 'downloadable' 도 'available' 로 알린다. 크롬이 꺼져 있으면 'downloadable' — 스크립트는 그 쌍을 '없음' 으로 기억하지
+// 않고 다음에 다시 묻는다. 구글이 되는 동안에는 이 길을 쓰지 않아 pipe 에 붙지도 않는다.
+// ---------------------------------------------------------------------------
+function installBridge(pipeName) {
+  const net = require('net');
+  const PIPE = '\\\\.\\pipe\\' + pipeName;
+  let sock = null;
+  let connecting = null;
+  let downUntil = 0; // 크롬(통로)이 없으면 20초 동안은 다시 붙어 보지 않는다
+  let next = 0;
+  const wait = new Map();
+  function connect() {
+    if (sock) return Promise.resolve(sock);
+    if (Date.now() < downUntil) return Promise.resolve(null);
+    if (!connecting) {
+      connecting = new Promise((resolve) => {
+        const s = net.connect(PIPE);
+        let buf = '';
+        const timer = setTimeout(() => s.destroy(new Error('timeout')), 2000);
+        s.setEncoding('utf8');
+        s.once('connect', () => {
+          clearTimeout(timer);
+          sock = s;
+          s.unref(); // 이 통로 때문에 엔진이 끝나지 못하는 일이 없게
+          resolve(s);
+        });
+        s.on('data', (d) => {
+          buf += d;
+          let i;
+          while ((i = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, i);
+            buf = buf.slice(i + 1);
+            let r;
+            try {
+              r = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            const w = wait.get(r.id);
+            if (w) w(r);
+          }
+        });
+        s.on('error', () => {});
+        s.on('close', () => {
+          clearTimeout(timer);
+          if (sock !== s) {
+            downUntil = Date.now() + 20000;
+            resolve(null);
+            return;
+          }
+          sock = null; // 크롬이 꺼졌다 — 기다리던 것은 실패로
+          for (const w of [...wait.values()]) w(null);
+        });
+      }).finally(() => {
+        connecting = null;
+      });
+    }
+    return connecting;
+  }
+  async function call(msg, ms) {
+    const s = await connect();
+    if (!s) return null;
+    const id = ++next;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => done(null), ms);
+      function done(r) {
+        clearTimeout(timer);
+        wait.delete(id);
+        resolve(r && r.ok ? r : null);
+      }
+      wait.set(id, done);
+      s.write(JSON.stringify({ id, ...msg }) + '\n');
+    });
+  }
+  const avail = (r) => (!r ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+  global.Translator = {
+    availability: async ({ sourceLanguage: from, targetLanguage: to }) => avail(await call({ op: 'avail', from, to }, 5000)),
+    // 처음 쓰는 쌍은 크롬이 언어 모델을 받는다(10~20초)
+    create: async ({ sourceLanguage: from, targetLanguage: to }) => {
+      if (!(await call({ op: 'create', from, to }, 90000))) throw new Error('크롬 내장 번역기를 만들지 못했습니다');
+      return {
+        sourceLanguage: from,
+        targetLanguage: to,
+        // 통로가 끊겼다 다시 붙어도 그대로 쓰게 쌍만 들고 있는다(번역기는 확장 쪽에 있다)
+        translate: async (text) => {
+          const r = await call({ op: 'tr', from, to, text: String(text) }, 30000);
+          if (!r || typeof r.out !== 'string') throw new Error('크롬 내장 번역기가 답하지 않습니다');
+          return r.out;
+        },
+        destroy() {},
+      };
+    },
+  };
+  global.LanguageDetector = {
+    availability: async () => avail(await call({ op: 'avail-ld' }, 5000)),
+    create: async () => {
+      if (!(await call({ op: 'create-ld' }, 60000))) throw new Error('크롬 언어 알아보기를 만들지 못했습니다');
+      return {
+        detect: async (text) => {
+          const r = await call({ op: 'detect', text: String(text) }, 15000);
+          if (!r || !Array.isArray(r.list)) throw new Error('크롬 언어 알아보기가 답하지 않습니다');
+          return r.list;
+        },
+      };
+    },
+  };
 }
 
 const NAMES = [
@@ -111,7 +228,12 @@ const ready = (async () => {
   installStubs(version);
   const tail = src.lastIndexOf('})();');
   const exp = NAMES.map((n) => `${n}: typeof ${n} === 'undefined' ? null : ${n}`).join(', ');
-  src = src.slice(0, tail) + `globalThis.__t = { ${exp} };\n` + src.slice(tail);
+  // 화면 안내(toast)는 페이지에 글 상자를 만든다 — 여기에는 페이지가 없어 부르면 오류가 났고, 그 오류가 번역 결과를
+  // 버리게 했다(내장 번역기로 옮긴 뒤 '그렇게 했다' 는 안내에서). 엔진에서는 기록 한 줄로만 남긴다.
+  const quiet =
+    "if (typeof toast === 'function') toast = (m) => console.error('[알림] ' + String(m).split('\\n')[0].slice(0, 80));\n" +
+    "if (typeof toastAction === 'function') toastAction = (m) => toast(m);\n";
+  src = src.slice(0, tail) + quiet + `globalThis.__t = { ${exp} };\n` + src.slice(tail);
   const builtConfig = configText();
   eval(src);
   T = globalThis.__t;

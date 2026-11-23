@@ -33,7 +33,7 @@ static class Updater
     {
         dir = appDir;
         engine = e;
-        try { File.Delete(OldExe); } catch { } // 지난번에 갈아 끼우고 남은 판
+        ClearOld(); // 지난번에 갈아 끼우고 남은 판
         for (DirectoryInfo d = new DirectoryInfo(dir); d != null && !dev; d = d.Parent)
             dev = Directory.Exists(Path.Combine(d.FullName, ".git"));
         if (dev) { Log.Write("업데이트: 저장소 안의 개발판이라 스스로 바꾸지 않습니다"); return; }
@@ -72,6 +72,17 @@ static class Updater
 
     static string Exe { get { return Application.ExecutablePath; } }
     static string OldExe { get { return Path.Combine(Path.GetDirectoryName(Exe), Path.GetFileNameWithoutExtension(Exe) + ".old.exe"); } }
+
+    // .old.exe, .old-<시각>.exe — 아직 돌고 있는 것은 다음에
+    static void ClearOld()
+    {
+        try
+        {
+            foreach (string f in Directory.GetFiles(Path.GetDirectoryName(Exe), Path.GetFileNameWithoutExtension(Exe) + ".old*.exe"))
+                try { File.Delete(f); } catch { }
+        }
+        catch { }
+    }
 
     // manual: 트레이에서 누른 것 — 결과를 알린다.
     public static void Check(bool manual)
@@ -156,8 +167,12 @@ static class Updater
             foreach (string n in changed) if (n.EndsWith(".cs") || n == "build.ps1") try { File.Delete(Path.Combine(dir, n)); } catch { }
             throw;
         }
-        File.Delete(OldExe);
-        File.Move(Exe, OldExe);
+        // 지난 판이 아직 돌고 있으면(크롬이 띄운 번역 다리 — 크롬을 끌 때까지 남는다) 지울 수 없다. 예전에는 여기서 멈춰
+        // 받은 소스만 새것이고 exe 는 옛것인 채로 남았다(다음 확인 때는 '이미 새 판') — 그때는 다른 이름으로 비킨다.
+        string old = OldExe;
+        try { File.Delete(old); }
+        catch (Exception) { old = Path.Combine(dir, Path.GetFileNameWithoutExtension(Exe) + ".old-" + DateTime.Now.Ticks + ".exe"); }
+        File.Move(Exe, old);
         File.Move(fresh, Exe);
         Log.Write("업데이트: 새 exe 로 갈아 끼우고 다시 켭니다");
         Process.Start(Exe, "--wait --updated");

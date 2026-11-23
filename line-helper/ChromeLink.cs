@@ -40,28 +40,49 @@ static class ChromeLink
         return false;
     }
 
+    static Stream output;
+    static readonly object outLock = new object();
+
     public static void Run(string mutexName, string quitName)
     {
         Stream input = Console.OpenStandardInput();
-        Stream output = Console.OpenStandardOutput();
+        output = Console.OpenStandardOutput();
         while (true)
         {
             byte[] head = ReadExactly(input, 4);
             if (head == null) return;
             int n = BitConverter.ToInt32(head, 0);
-            if (n <= 0 || n > (1 << 20)) return;
+            if (n <= 0 || n > (8 << 20)) return;
             byte[] body = ReadExactly(input, n);
             if (body == null) return;
             Dictionary<string, object> req;
             try { req = json.Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(body)); }
             catch { req = new Dictionary<string, object>(); }
+            object t;
+            // 번역 다리: 크롬 내장 번역기의 답 — 기다리는 엔진에 돌려준다(MtBridge)
+            if (req.TryGetValue("t", out t) && Convert.ToString(t) == "mt-res") { MtBridge.FromChrome(req); continue; }
             Dictionary<string, object> res;
             try { res = Handle(req, mutexName, quitName); }
             catch (Exception e) { res = Reply(false, IsRunning(mutexName)); res["error"] = e.Message; }
-            byte[] o = Encoding.UTF8.GetBytes(json.Serialize(res));
-            output.Write(BitConverter.GetBytes(o.Length), 0, 4);
-            output.Write(o, 0, o.Length);
-            output.Flush();
+            Send(res);
+        }
+    }
+
+    // 크롬에 메시지 하나(번역 다리는 여러 스레드가 보낸다). 크롬은 한 번에 1MB 까지만 받는다.
+    public static bool Send(Dictionary<string, object> m)
+    {
+        byte[] o = Encoding.UTF8.GetBytes(json.Serialize(m));
+        if (o.Length > (1 << 20)) return false;
+        lock (outLock)
+        {
+            try
+            {
+                output.Write(BitConverter.GetBytes(o.Length), 0, 4);
+                output.Write(o, 0, o.Length);
+                output.Flush();
+                return true;
+            }
+            catch (IOException) { Environment.Exit(0); return false; } // 크롬이 통로를 닫았다
         }
     }
 
@@ -75,6 +96,20 @@ static class ChromeLink
         if (req.TryGetValue("lang", out v))
             MyLang.Save(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data"), Convert.ToString(v));
         if (cmd == "lang") return Reply(true, IsRunning(mutexName));
+        if (cmd == "mt-bridge")
+        {
+            // 확장이 열어 둔 통로(connectNative) — 이 프로세스는 크롬이 통로를 닫을 때까지 남아 엔진의 번역을 크롬에 잇는다.
+            // 트레이 앱이 꺼져 있으면 잇지 않는다(확장이 나중에 다시 연다).
+            bool on = IsRunning(mutexName);
+            if (on)
+            {
+                Log.FilePath = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "data", "line-helper.log");
+                if (MtBridge.Start(mutexName)) Log.Write("번역 다리: 크롬과 이었습니다(구글이 막히면 크롬 내장 번역기로)");
+            }
+            Dictionary<string, object> r = Reply(true, on);
+            r["bridge"] = 1;
+            return r;
+        }
         if (cmd == "cc-translate")
         {
             // 크롬 '실시간 번역' 켜기·끄기 — 확장이 크롬 설정(접근성)을 작은 창으로 열어 두면 그 단추를 눌러 준다
@@ -179,6 +214,174 @@ static class ChromeLink
                 using (RegistryKey k = Registry.CurrentUser.CreateSubKey(root + HostName)) k.SetValue("", file);
         }
         catch (Exception e) { Log.Write("크롬 확장 연결 등록 실패: " + e.Message); }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 번역 다리(2026-11-23) — 구글이 막히거나 인터넷이 안 될 때 엔진이 크롬 내장 번역기(이 PC 안에서 번역)를 빌려 쓴다.
+// 확장(background.js)이 크롬을 켤 때 connectNative 로 이 exe 를 띄워 두고 {"cmd":"mt-bridge"} 를 보내면, 이 사용자만 열 수 있는
+// named pipe(PipeName)를 연다. 트레이 앱의 엔진(engine.js installBridge)은 그 pipe 에 한 줄에 JSON 하나씩 묻고
+//   {"id":3,"op":"tr","from":"th","to":"ko","text":"สวัสดี"}  → {"id":3,"ok":true,"out":"안녕하세요"}
+// 여기서는 번호만 바꿔 크롬에 {"t":"mt",...} 로 보내고, 확장의 답 {"t":"mt-res",...} 을 물은 엔진에 돌려준다.
+// 일(op)은 avail·create·tr·avail-ld·create-ld·detect 만 — 확장도 그것만 한다. 트레이 앱이 30초 넘게 꺼져 있으면 끝난다
+// (작업 관리자에 혼자 남지 않게 — 업데이트로 다시 켜지는 몇 초는 기다린다). 크롬이 꺼지면 통로가 닫혀 같이 끝난다.
+// ---------------------------------------------------------------------------
+static class MtBridge
+{
+    // 엔진도 이 이름을 쓴다(Engine.Start 가 TH_MT_PIPE 로 넘긴다). 사용자마다 다르게(한 PC 를 여럿이 써도 남의 크롬에 붙지 않게).
+    public static string PipeName { get { return "th-korean-mt-" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value; } }
+    static readonly string[] Ops = { "avail", "create", "tr", "avail-ld", "create-ld", "detect" };
+    const int MaxLine = 256 * 1024;
+
+    class Client
+    {
+        public System.IO.Pipes.NamedPipeServerStream Pipe;
+        public readonly object Lk = new object();
+    }
+
+    static readonly object lk = new object();
+    static readonly Dictionary<int, KeyValuePair<Client, object>> wait = new Dictionary<int, KeyValuePair<Client, object>>();
+    static int next;
+    static bool started;
+    static readonly JavaScriptSerializer json = new JavaScriptSerializer();
+
+    // 처음 부를 때만 열고 true
+    public static bool Start(string trayMutex)
+    {
+        lock (lk)
+        {
+            if (started) return false;
+            started = true;
+        }
+        new Thread(Accept) { IsBackground = true }.Start();
+        new Thread(delegate ()
+        {
+            int gone = 0;
+            while (true)
+            {
+                Thread.Sleep(5000);
+                gone = ChromeLink.IsRunning(trayMutex) ? 0 : gone + 5;
+                if (gone >= 30) Environment.Exit(0);
+            }
+        }) { IsBackground = true }.Start();
+        return true;
+    }
+
+    static System.IO.Pipes.PipeSecurity Security()
+    {
+        System.IO.Pipes.PipeSecurity s = new System.IO.Pipes.PipeSecurity();
+        s.AddAccessRule(new System.IO.Pipes.PipeAccessRule(System.Security.Principal.WindowsIdentity.GetCurrent().User,
+            System.IO.Pipes.PipeAccessRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        // 다른 PC 에서 네트워크로 여는 것은 막는다
+        s.AddAccessRule(new System.IO.Pipes.PipeAccessRule(new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.NetworkSid, null),
+            System.IO.Pipes.PipeAccessRights.FullControl, System.Security.AccessControl.AccessControlType.Deny));
+        return s;
+    }
+
+    static void Accept()
+    {
+        int fails = 0;
+        while (true)
+        {
+            System.IO.Pipes.NamedPipeServerStream p;
+            try
+            {
+                p = new System.IO.Pipes.NamedPipeServerStream(PipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.NamedPipeServerStream.MaxAllowedServerInstances, System.IO.Pipes.PipeTransmissionMode.Byte,
+                    System.IO.Pipes.PipeOptions.Asynchronous, 65536, 65536, Security()); // 비동기: 읽기를 기다리는 동안에도 답을 쓸 수 있게(동기 통로는 읽기·쓰기를 한 줄로 세운다)
+                fails = 0;
+            }
+            catch (Exception e)
+            {
+                if (++fails == 1) Log.Write("번역 다리: 통로를 못 열었습니다 — " + e.Message);
+                Thread.Sleep(5000);
+                continue;
+            }
+            try { p.WaitForConnection(); }
+            catch { p.Dispose(); Thread.Sleep(1000); continue; }
+            Client c = new Client { Pipe = p };
+            new Thread(delegate () { Serve(c); }) { IsBackground = true }.Start();
+        }
+    }
+
+    static void Serve(Client c)
+    {
+        try
+        {
+            using (StreamReader r = new StreamReader(c.Pipe, new UTF8Encoding(false), false, 65536, true))
+            {
+                string line;
+                while ((line = r.ReadLine()) != null)
+                {
+                    if (line.Length == 0 || line.Length > MaxLine) continue;
+                    Dictionary<string, object> q;
+                    try { q = json.Deserialize<Dictionary<string, object>>(line); }
+                    catch { continue; }
+                    object id, op;
+                    if (q == null || !q.TryGetValue("id", out id) || !q.TryGetValue("op", out op) || Array.IndexOf(Ops, Convert.ToString(op)) < 0) continue;
+                    int g;
+                    lock (lk)
+                    {
+                        g = ++next;
+                        wait[g] = new KeyValuePair<Client, object>(c, id);
+                    }
+                    Dictionary<string, object> m = new Dictionary<string, object>();
+                    m["t"] = "mt";
+                    m["id"] = g;
+                    m["op"] = Convert.ToString(op);
+                    foreach (string k in new[] { "from", "to", "text" })
+                    {
+                        object v;
+                        if (q.TryGetValue(k, out v) && v is string) m[k] = v;
+                    }
+                    if (!ChromeLink.Send(m))
+                    {
+                        lock (lk) wait.Remove(g);
+                        Answer(c, new Dictionary<string, object> { { "id", id }, { "ok", false }, { "error", "too big" } });
+                    }
+                }
+            }
+        }
+        catch (Exception) { /* 엔진이 끊었다 */ }
+        finally
+        {
+            lock (lk)
+            {
+                List<int> mine = new List<int>();
+                foreach (KeyValuePair<int, KeyValuePair<Client, object>> w in wait) if (w.Value.Key == c) mine.Add(w.Key);
+                foreach (int g in mine) wait.Remove(g);
+            }
+            try { c.Pipe.Dispose(); } catch { }
+        }
+    }
+
+    // 확장의 답 → 물은 엔진에(그 엔진의 번호로)
+    public static void FromChrome(Dictionary<string, object> res)
+    {
+        object v;
+        if (!res.TryGetValue("id", out v)) return;
+        int g;
+        try { g = Convert.ToInt32(v); } catch { return; }
+        KeyValuePair<Client, object> w;
+        lock (lk)
+        {
+            if (!wait.TryGetValue(g, out w)) return;
+            wait.Remove(g);
+        }
+        Dictionary<string, object> a = new Dictionary<string, object>();
+        foreach (KeyValuePair<string, object> kv in res) if (kv.Key != "t" && kv.Key != "id") a[kv.Key] = kv.Value;
+        a["id"] = w.Value;
+        Answer(w.Key, a);
+    }
+
+    static void Answer(Client c, Dictionary<string, object> a)
+    {
+        byte[] b = new UTF8Encoding(false).GetBytes(json.Serialize(a) + "\n");
+        lock (c.Lk)
+        {
+            try { c.Pipe.Write(b, 0, b.Length); c.Pipe.Flush(); }
+            catch (Exception) { /* 엔진이 끊었다 */ }
+        }
     }
 }
 

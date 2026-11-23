@@ -375,6 +375,8 @@ class Engine
         psi.StandardOutputEncoding = Encoding.UTF8;
         psi.StandardErrorEncoding = Encoding.UTF8;
         psi.WorkingDirectory = dir;
+        // 구글이 막히면 크롬 내장 번역기를 빌려 쓸 통로 이름(ChromeLink.cs MtBridge — 크롬이 켜져 있을 때만 열려 있다)
+        try { psi.EnvironmentVariables["TH_MT_PIPE"] = MtBridge.PipeName; } catch (Exception e) { Log.Write("번역 다리 이름을 못 정했습니다: " + e.Message); }
         proc = Process.Start(psi);
         stdin = new StreamWriter(proc.StandardInput.BaseStream, new UTF8Encoding(false));
         stdin.AutoFlush = true;

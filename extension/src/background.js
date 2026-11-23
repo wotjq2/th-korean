@@ -7,6 +7,7 @@
 /* global chrome */
 
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  mtBridgeOpen(false); // 번역 다리가 닫혀 있으면 가끔(10분에 한 번) 다시 열어 본다
   if (m && m.t === 'gm-xhr') {
     gmXhr(m).then(reply);
     return true; // 답을 나중에 보낸다
@@ -18,7 +19,11 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m && m.t === 'helper') {
     // 사람이 창에서 끈 동안(크롬을 다시 켤 때까지)은 영상이 돌아도 저절로 다시 켜지 않는다(helper-auto).
     if (m.manual && (m.cmd === 'stop' || m.cmd === 'start')) chrome.storage.session.set({ helperUserStopped: m.cmd === 'stop' });
-    helperCall(m.cmd, m.manual).then(reply);
+    helperCall(m.cmd, m.manual).then((r) => {
+      if (r && r.running) mtBridgeOpen(true); // 켰다(또는 켜져 있다) — 번역 다리를 바로
+      else if (m.cmd === 'stop' && mtPort) mtClose(mtPort);
+      reply(r);
+    });
     return true;
   }
   if (m && m.t === 'helper-auto') {
@@ -119,11 +124,184 @@ async function ccSettings(msg, sender) {
 
 async function helperAutoStart() {
   const { helperAuto = true } = await chrome.storage.local.get('helperAuto');
-  if (helperAuto) await helperCall('start', false);
+  if (helperAuto) {
+    const r = await helperCall('start', false);
+    if (r && r.running) mtBridgeOpen(true);
+  }
 }
 
 chrome.runtime.onStartup.addListener(helperAutoStart);
 chrome.runtime.onInstalled.addListener(helperAutoStart);
+
+// ---------------------------------------------------------------------------
+// 번역 다리(1.36.0) — 번역 도우미(LINE·화면 번역·자막)가 구글이 막히거나 인터넷이 안 될 때 이 크롬의 내장 번역기를 빌려 쓴다.
+// 도우미의 엔진은 node 라 Translator 가 없어 구글만 썼다. 확장의 service worker 에서는 내장 번역기를 누름 없이 만들 수 있다
+// (2026-11-23 크롬 157: 한↔태·영 등, 사이트마다 누름이 필요한 페이지와 다르다. 처음 쓰는 쌍은 모델을 받는다 — 약 9초).
+// 도우미가 켜져 있으면 connectNative 로 통로를 열어 둔다 — 크롬이 번역도우미.exe 를 하나 띄우고, 그것이 이 PC 사용자만 여는
+// pipe 로 엔진의 물음을 넘긴다(ChromeLink.cs MtBridge). 통로가 열려 있는 동안은 이 service worker 가 잠들지 않는다.
+// 구글이 되는 동안에는 물음이 오지 않는다. 도우미가 꺼져 있거나 없으면 10분에 한 번만 다시 본다(그 사이 켜면 바로).
+// 받는 일: avail·create·tr(번역), avail-ld·create-ld·detect(언어 알아보기) — 언어 코드와 글 길이를 본다.
+// ---------------------------------------------------------------------------
+
+let mtPort = null;
+let mtNextTry = 0; // 이 시각 전에는 다시 열어 보지 않는다(service worker 가 다시 떠도 이어지게 storage.session 에도)
+const MT_RETRY = 10 * 60 * 1000;
+const MT_LANG = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
+const MT_MAX_TEXT = 20000;
+const mtTr = new Map(); // '쌍' → { p: 번역기 약속, used }
+let mtLd = null; // { p, used }
+let mtSweep = 0;
+
+async function mtBridgeOpen(force) {
+  if (mtPort) return;
+  const now = Date.now();
+  if (!force) {
+    if (now < mtNextTry) return;
+    const s = await chrome.storage.session.get('mtNextTry').catch(() => ({}));
+    if (s.mtNextTry && now < s.mtNextTry) {
+      mtNextTry = s.mtNextTry;
+      return;
+    }
+  }
+  const lang = await myLang();
+  if (mtPort) return; // 기다리는 사이 다른 쪽이 열었다
+  mtRetryAt(now + MT_RETRY);
+  let port;
+  try {
+    port = chrome.runtime.connectNative(HELPER_HOST);
+  } catch {
+    return;
+  }
+  mtPort = port;
+  let up = 0; // 이은 때
+  port.onMessage.addListener((m) => {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'mt') {
+      mtHandle(m).then((r) => {
+        try {
+          port.postMessage({ t: 'mt-res', id: m.id, ...r });
+        } catch {
+          /* 통로가 닫혔다 */
+        }
+      });
+      return;
+    }
+    if (m.bridge === 1) {
+      if (m.running) up = Date.now();
+      else mtClose(port); // 도우미 트레이가 꺼져 있다 — 10분 뒤 또는 켤 때 다시
+      return;
+    }
+    if ('running' in m) {
+      // 다리를 모르는 옛 도우미 — 스스로 새 판으로 바뀔 때까지(6시간마다 본다) 열지 않는다
+      mtRetryAt(Date.now() + 6 * 3600 * 1000);
+      mtClose(port);
+    }
+  });
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError; // 'Specified native messaging host not found.' = 도우미가 없다
+    const wasUp = up && mtPort === port;
+    mtClose(port);
+    // 쓰다가 끊겼다(도우미를 다시 깔았다 등) — 조금 뒤 한 번 더
+    if (wasUp) setTimeout(() => mtBridgeOpen(true), 15000);
+  });
+  try {
+    port.postMessage({ cmd: 'mt-bridge', lang });
+  } catch {
+    mtClose(port);
+  }
+}
+
+function mtRetryAt(t) {
+  mtNextTry = t;
+  chrome.storage.session.set({ mtNextTry: t }).catch(() => {});
+}
+
+function mtClose(port) {
+  if (mtPort !== port) return;
+  mtPort = null;
+  try {
+    port.disconnect();
+  } catch {
+    /* 이미 닫혔다 */
+  }
+  for (const v of mtTr.values()) v.p.then((t) => t && t.destroy && t.destroy(), () => {});
+  mtTr.clear();
+  if (mtLd) mtLd.p.then((d) => d && d.destroy && d.destroy(), () => {});
+  mtLd = null;
+  clearInterval(mtSweep);
+  mtSweep = 0;
+}
+
+// 10분 동안 안 쓴 번역기는 내려놓는다(언어 모델이 메모리를 차지한다)
+function mtSweepSoon() {
+  if (mtSweep) return;
+  mtSweep = setInterval(() => {
+    const old = Date.now() - 10 * 60 * 1000;
+    for (const [k, v] of mtTr) {
+      if (v.used < old) {
+        mtTr.delete(k);
+        v.p.then((t) => t && t.destroy && t.destroy(), () => {});
+      }
+    }
+    if (mtLd && mtLd.used < old) {
+      mtLd.p.then((d) => d && d.destroy && d.destroy(), () => {});
+      mtLd = null;
+    }
+  }, 60 * 1000);
+}
+
+function mtTranslator(from, to) {
+  const k = `${from}>${to}`;
+  let v = mtTr.get(k);
+  if (!v) {
+    v = { p: Translator.create({ sourceLanguage: from, targetLanguage: to }), used: 0 };
+    v.p.catch(() => mtTr.get(k) === v && mtTr.delete(k)); // 못 만들었으면 다음에 다시
+    mtTr.set(k, v);
+    mtSweepSoon();
+  }
+  v.used = Date.now();
+  return v.p;
+}
+
+function mtDetector() {
+  if (!mtLd) {
+    const v = { p: LanguageDetector.create(), used: 0 };
+    v.p.catch(() => mtLd === v && (mtLd = null));
+    mtLd = v;
+    mtSweepSoon();
+  }
+  mtLd.used = Date.now();
+  return mtLd.p;
+}
+
+async function mtHandle(m) {
+  try {
+    const op = m.op;
+    const text = typeof m.text === 'string' ? m.text : '';
+    if (text.length > MT_MAX_TEXT) return { ok: false, error: 'too long' };
+    if (op === 'avail' || op === 'create' || op === 'tr') {
+      if (!MT_LANG.test(String(m.from)) || !MT_LANG.test(String(m.to))) return { ok: false, error: 'lang' };
+      if (typeof Translator === 'undefined') return op === 'avail' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no Translator' };
+      if (op === 'avail') return { ok: true, avail: await Translator.availability({ sourceLanguage: m.from, targetLanguage: m.to }) };
+      const t = await mtTranslator(m.from, m.to);
+      if (op === 'create') return { ok: true };
+      return { ok: true, out: await t.translate(text) };
+    }
+    if (op === 'avail-ld' || op === 'create-ld' || op === 'detect') {
+      if (typeof LanguageDetector === 'undefined') return op === 'avail-ld' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no LanguageDetector' };
+      if (op === 'avail-ld') return { ok: true, avail: await LanguageDetector.availability() };
+      const d = await mtDetector();
+      if (op === 'create-ld') return { ok: true };
+      const list = (await d.detect(text)).slice(0, 3).map((x) => ({ detectedLanguage: x.detectedLanguage, confidence: x.confidence }));
+      return { ok: true, list };
+    }
+    return { ok: false, error: 'op' };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e).slice(0, 200) };
+  }
+}
+
+mtBridgeOpen(false);
 
 async function gmXhr(m) {
   const ctl = new AbortController();

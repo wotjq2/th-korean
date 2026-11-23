@@ -290,6 +290,89 @@ function GM_chromeLiveReset() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 크롬 내장 번역기(1.36.0) — 구글이 막히거나 인터넷이 안 될 때 스크립트가 쓰는 Translator·LanguageDetector 를 background.js 에
+// 맡긴다. 이 탭(페이지)에서 만들면 크롬이 사이트마다 '누름' 이 있어야 언어 쌍을 켜 줬다(개인정보 보호 — 1.35.4~1.35.9 는 막힘
+// 안내를 눌러야 했다). 확장 service worker 에서는 누름 없이 만든다(2026-11-23 크롬 157 시험) — 번역 도우미가 빌려 쓰는 것과 같은 곳
+// (background.js mtHandle). 그래서 'downloadable'(이 사이트에서 아직 안 켬·아직 안 받음)도 'available' 로 알린다. 처음 쓰는 쌍은
+// 크롬이 모델을 받는다(10~20초) — 받는 정도를 background 가 이 탭에 알려 주어(mt-progress) 스크립트의 '받는 중 n%' 안내가 그대로
+// 뜬다. 이 크롬에 내장 번역기가 없으면(138 전) 아무것도 바꾸지 않는다. 몽키에서는 예전처럼 페이지의 것을 쓴다.
+// ---------------------------------------------------------------------------
+const gmMtWatch = new Map(); // 받는 중 알림 번호 → 스크립트가 monitor 로 받은 EventTarget
+let gmMtNext = 0;
+
+function gmMt(msg) {
+  if (!gmAlive()) return Promise.resolve(null);
+  try {
+    return chrome.runtime.sendMessage({ t: 'mt', ...msg }).then(
+      (r) => (r && r.ok ? r : null),
+      () => null
+    );
+  } catch {
+    gmAlive();
+    return Promise.resolve(null);
+  }
+}
+
+// 답이 없으면(확장이 잠깐 안 받음) 'downloadable' — 스크립트는 그 쌍을 '없음' 으로 기억하지 않는다
+const gmMtAvail = (r) => (!r ? 'downloadable' : r.avail === 'unavailable' ? 'unavailable' : 'available');
+
+function gmMtMonitor(monitor) {
+  if (typeof monitor !== 'function') return 0;
+  const watch = ++gmMtNext;
+  const target = new EventTarget();
+  gmMtWatch.set(watch, target);
+  try {
+    monitor(target);
+  } catch {
+    /* 스크립트 쪽 오류 — 받기는 그대로 */
+  }
+  return watch;
+}
+
+if (typeof Translator !== 'undefined') {
+  globalThis.Translator = {
+    availability: async ({ sourceLanguage: from, targetLanguage: to } = {}) => gmMtAvail(await gmMt({ op: 'avail', from, to })),
+    create: async ({ sourceLanguage: from, targetLanguage: to, monitor } = {}) => {
+      const watch = gmMtMonitor(monitor);
+      const r = await gmMt({ op: 'create', from, to, watch });
+      gmMtWatch.delete(watch);
+      if (!r) throw new DOMException('크롬 내장 번역기를 만들지 못했습니다', 'NotSupportedError');
+      return {
+        sourceLanguage: from,
+        targetLanguage: to,
+        // 번역기는 background 에 있다 — 여기는 쌍만 들고 있어 service worker 가 다시 떠도 그대로 쓴다
+        translate: async (text) => {
+          const a = await gmMt({ op: 'tr', from, to, text: String(text) });
+          if (!a || typeof a.out !== 'string') throw new DOMException('크롬 내장 번역기가 답하지 않습니다', 'OperationError');
+          return a.out;
+        },
+        destroy() {},
+      };
+    },
+  };
+}
+
+if (typeof LanguageDetector !== 'undefined') {
+  globalThis.LanguageDetector = {
+    availability: async () => gmMtAvail(await gmMt({ op: 'avail-ld' })),
+    create: async ({ monitor } = {}) => {
+      const watch = gmMtMonitor(monitor);
+      const r = await gmMt({ op: 'create-ld', watch });
+      gmMtWatch.delete(watch);
+      if (!r) throw new DOMException('크롬 언어 알아보기를 만들지 못했습니다', 'NotSupportedError');
+      return {
+        detect: async (text) => {
+          const a = await gmMt({ op: 'detect', text: String(text) });
+          if (!a || !Array.isArray(a.list)) throw new DOMException('크롬 언어 알아보기가 답하지 않습니다', 'OperationError');
+          return a.list;
+        },
+        destroy() {},
+      };
+    },
+  };
+}
+
 // 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;
@@ -304,6 +387,14 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (!m) return;
   if (m.t === 'gm-menu-list') {
     reply([...gmMenu].map(([id, c]) => ({ id, name: c.name })));
+  } else if (m.t === 'mt-progress') {
+    // 크롬 내장 번역기 모델을 받는 정도(background.js) → 스크립트의 monitor 로
+    const w = gmMtWatch.get(m.watch);
+    if (w) {
+      const e = new Event('downloadprogress');
+      e.loaded = Number(m.loaded) || 0;
+      w.dispatchEvent(e);
+    }
   } else if (m.t === 'gm-menu-run') {
     const c = gmMenu.get(m.id);
     if (c) setTimeout(() => c.fn(), 0);

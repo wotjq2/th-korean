@@ -108,6 +108,12 @@ if (TEST_PRELUDE && !TEST_OUT) {
   console.error('--test-prelude 는 --test-out 과 함께만 씁니다');
   process.exit(1);
 }
+// --test-bg-prelude=<파일> : 시험용 빌드에서만 — background.js 맨 앞에 붙인다(예: service worker 의 크롬 내장 번역기 흉내).
+const TEST_BG_PRELUDE = (process.argv.find((a) => a.startsWith('--test-bg-prelude=')) || '').slice('--test-bg-prelude='.length);
+if (TEST_BG_PRELUDE && !TEST_OUT) {
+  console.error('--test-bg-prelude 는 --test-out 과 함께만 씁니다');
+  process.exit(1);
+}
 // 압축해제로 불러와도 확장 id 가 폴더 위치와 상관없이 늘 같게(agcbmglciepeobcgkniefahkaiigjkjk).
 // 번역 도우미(line-helper/ChromeLink.cs)가 이 id 만 받아 준다. 웹스토어에 올릴 때는 이 줄을 빼고
 // 스토어가 준 id 를 ChromeLink.Origins 에 더한다.
@@ -217,6 +223,9 @@ async function main() {
   }
 
   for (const f of ['background.js', 'popup.html', 'popup.js', 'yt-main.js', 'tt-main.js']) fs.copyFileSync(path.join(SRC, f), path.join(OUT, f));
+  if (TEST_BG_PRELUDE) {
+    fs.writeFileSync(path.join(OUT, 'background.js'), fs.readFileSync(path.resolve(TEST_BG_PRELUDE), 'utf8') + '\n' + fs.readFileSync(path.join(SRC, 'background.js'), 'utf8'));
+  }
   const icons = {};
   for (const s of [16, 32, 48, 128]) {
     fs.copyFileSync(path.join(ICONS, `icon${s}.png`), path.join(OUT, `icon${s}.png`));

@@ -48,6 +48,11 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     ccSettings({ cmd: 'cc-reset' }, sender).then(reply);
     return true;
   }
+  if (m && m.t === 'mt') {
+    // 이 확장 탭의 크롬 내장 번역기(gm.js) — 페이지에서는 사이트마다 누름이 필요해 여기서 만든다(1.36.0)
+    mtHandle(m, sender).then(reply);
+    return true;
+  }
   if (m && m.t === 'tm-load') {
     tmLoad().then(reply, () => reply(null));
     return true;
@@ -141,6 +146,8 @@ chrome.runtime.onInstalled.addListener(helperAutoStart);
 // pipe 로 엔진의 물음을 넘긴다(ChromeLink.cs MtBridge). 통로가 열려 있는 동안은 이 service worker 가 잠들지 않는다.
 // 구글이 되는 동안에는 물음이 오지 않는다. 도우미가 꺼져 있거나 없으면 10분에 한 번만 다시 본다(그 사이 켜면 바로).
 // 받는 일: avail·create·tr(번역), avail-ld·create-ld·detect(언어 알아보기) — 언어 코드와 글 길이를 본다.
+// 이 확장의 탭(gm.js 의 Translator·LanguageDetector)도 같은 일을 여기에 맡긴다({t:'mt'}) — 페이지에서는 크롬이 사이트마다
+// 누름이 있어야 언어 쌍을 켜 줘서 막힘 안내를 눌러야 했다. 모델을 받는 정도는 그 탭에 알린다(mt-progress).
 // ---------------------------------------------------------------------------
 
 let mtPort = null;
@@ -250,47 +257,75 @@ function mtSweepSoon() {
   }, 60 * 1000);
 }
 
-function mtTranslator(from, to) {
+// 모델을 받는 동안의 정도(0~1)를 기다리는 쪽(탭)에 알린다 — watchers
+function mtEntry(make) {
+  const v = { p: null, used: 0, watchers: new Set() };
+  v.p = make((mon) => mon.addEventListener('downloadprogress', (e) => {
+    for (const cb of v.watchers) {
+      try {
+        cb(e.loaded);
+      } catch {
+        /* 탭이 닫혔다 */
+      }
+    }
+  }));
+  return v;
+}
+
+function mtWatch(v, onProgress) {
+  v.used = Date.now();
+  if (!onProgress) return v.p;
+  v.watchers.add(onProgress);
+  return v.p.finally(() => v.watchers.delete(onProgress));
+}
+
+function mtTranslator(from, to, onProgress) {
   const k = `${from}>${to}`;
   let v = mtTr.get(k);
   if (!v) {
-    v = { p: Translator.create({ sourceLanguage: from, targetLanguage: to }), used: 0 };
-    v.p.catch(() => mtTr.get(k) === v && mtTr.delete(k)); // 못 만들었으면 다음에 다시
+    v = mtEntry((monitor) => Translator.create({ sourceLanguage: from, targetLanguage: to, monitor }));
+    const mine = v;
+    v.p.catch(() => mtTr.get(k) === mine && mtTr.delete(k)); // 못 만들었으면 다음에 다시
     mtTr.set(k, v);
     mtSweepSoon();
   }
-  v.used = Date.now();
-  return v.p;
+  return mtWatch(v, onProgress);
 }
 
-function mtDetector() {
+function mtDetector(onProgress) {
   if (!mtLd) {
-    const v = { p: LanguageDetector.create(), used: 0 };
+    const v = mtEntry((monitor) => LanguageDetector.create({ monitor }));
     v.p.catch(() => mtLd === v && (mtLd = null));
     mtLd = v;
     mtSweepSoon();
   }
-  mtLd.used = Date.now();
-  return mtLd.p;
+  return mtWatch(mtLd, onProgress);
 }
 
-async function mtHandle(m) {
+// m: 번역 도우미(번역 다리)의 물음 또는 이 확장 탭(gm.js)의 물음. sender 는 탭일 때만 — 모델을 받는 정도를 그 탭에 알린다.
+async function mtHandle(m, sender) {
   try {
     const op = m.op;
+    const tab = sender && sender.tab;
+    const watch = Number(m.watch) || 0;
+    const onProgress =
+      tab && watch
+        ? (loaded) => chrome.tabs.sendMessage(tab.id, { t: 'mt-progress', watch, loaded }, { frameId: sender.frameId || 0 }).catch(() => {})
+        : null;
     const text = typeof m.text === 'string' ? m.text : '';
     if (text.length > MT_MAX_TEXT) return { ok: false, error: 'too long' };
     if (op === 'avail' || op === 'create' || op === 'tr') {
       if (!MT_LANG.test(String(m.from)) || !MT_LANG.test(String(m.to))) return { ok: false, error: 'lang' };
       if (typeof Translator === 'undefined') return op === 'avail' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no Translator' };
       if (op === 'avail') return { ok: true, avail: await Translator.availability({ sourceLanguage: m.from, targetLanguage: m.to }) };
-      const t = await mtTranslator(m.from, m.to);
+      const t = await mtTranslator(m.from, m.to, op === 'create' ? onProgress : null);
       if (op === 'create') return { ok: true };
       return { ok: true, out: await t.translate(text) };
     }
     if (op === 'avail-ld' || op === 'create-ld' || op === 'detect') {
       if (typeof LanguageDetector === 'undefined') return op === 'avail-ld' ? { ok: true, avail: 'unavailable' } : { ok: false, error: 'no LanguageDetector' };
       if (op === 'avail-ld') return { ok: true, avail: await LanguageDetector.availability() };
-      const d = await mtDetector();
+      const d = await mtDetector(op === 'create-ld' ? onProgress : null);
       if (op === 'create-ld') return { ok: true };
       const list = (await d.detect(text)).slice(0, 3).map((x) => ({ detectedLanguage: x.detectedLanguage, confidence: x.confidence }));
       return { ok: true, list };

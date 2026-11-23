@@ -1,5 +1,6 @@
-// 2단계(4번, 1.35.4): 구글이 두 주소 다 막혔을 때(429) — 크롬 내장 번역기(흉내: lib/fake-translator.js)로 이어 가는지.
-// 진짜 크롬과 같게, 이 사이트에서 안 켠 쌍은 누름이 있어야 켜진다(안내 누르기 · 검색칸 Enter).
+// 2단계(4번, 1.35.4 → 1.36.0): 구글이 두 주소 다 막혔을 때(429) — 크롬 내장 번역기(흉내: lib/fake-translator-sw.js, 확장
+// service worker 안)로 이어 가는지. 1.36.0 부터 탭의 번역기는 background 에 맡겨(gm.js) 사이트마다 누를 필요가 없다 — 진짜 크롬처럼
+// service worker 는 누름 없이 만들고, 처음 쓰는 쌍은 모델을 받는 정도를 알린다('받는 중' 안내).
 'use strict';
 const path = require('path');
 const { describe, test, before, after } = require('node:test');
@@ -18,7 +19,7 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
   const allItemsStartWith = (p) => `[...document.querySelectorAll('#app li')].length === 4 && [...document.querySelectorAll('#app li')].every((e) => e.innerText.startsWith(${JSON.stringify(p)}))`;
 
   before(async () => {
-    S = await open({ pages: PAGES, glossary: GLOSSARY, prelude: path.join(__dirname, 'lib/fake-translator.js') });
+    S = await open({ pages: PAGES, glossary: GLOSSARY, bgPrelude: path.join(__dirname, 'lib/fake-translator-sw.js') });
     S.fake.opts.blockMt = true;
     await S.setMyLang('ko');
     t = await S.chrome.tab();
@@ -27,17 +28,25 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     if (S) await S.close();
   });
 
-  test('태국 쇼피: 막힘 안내를 누르면 크롬 내장 번역기로 상품 글을 옮긴다', T, async () => {
+  test('태국 쇼피: 아무것도 누르지 않아도 크롬 내장 번역기로 상품 글을 옮긴다(처음 받는 정도도 보인다)', T, async () => {
+    assert.ok(ITEMS['shopee.co.th'].every((x) => !x.startsWith('내장:')));
     await t.go('https://shopee.co.th/');
-    await t.until(`/여기를 누르면 크롬 내장 번역기로/.test((document.getElementById('lzk-toast') || {}).textContent || '')`, 15000, '누를 안내');
-    assert.deepEqual(await t.ev(`[...document.querySelectorAll('#app li')].map((e) => e.innerText)`), ITEMS['shopee.co.th'], '누르기 전인데 바뀜');
-    assert.doesNotMatch(await toast(), /Groq/);
-    await t.click('#lzk-toast'); // 진짜 누름 — 크롬의 '사용자 동작'
-    await t.until(allItemsStartWith('내장:'), 15000, '상품 글이 내장 번역기로');
+    const seen = new Set();
+    const end = Date.now() + 15000;
+    let done = false;
+    while (!done && Date.now() < end) {
+      seen.add(await toast());
+      done = await t.ev(allItemsStartWith('내장:'));
+      if (!done) await sleep(150);
+    }
+    const toasts = [...seen].filter(Boolean);
+    assert.ok(done, `상품 글이 내장 번역기로 안 바뀜 — 안내: ${toasts.join(' | ')}`);
+    assert.ok(toasts.some((x) => /크롬 내장 번역기를 받는 중 \(.+ → .+\) \d+%/.test(x)), `받는 정도 안내 없음: ${toasts.join(' | ')}`);
+    assert.ok(!toasts.some((x) => /여기를 누르면/.test(x)), `누르라는 안내가 남음: ${toasts.join(' | ')}`);
     assert.ok(S.fake.mt.length > 0, '구글을 먼저 써 보지 않음');
   });
 
-  test('태국 쇼피 검색: 용어집 말은 그대로, 없는 말은 Enter(누름)로 내장 번역기를 켜서 옮긴다', T, async () => {
+  test('태국 쇼피 검색: 용어집 말은 그대로, 없는 말은 내장 번역기로 옮긴다', T, async () => {
     await t.go('https://shopee.co.th/');
     await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
     await t.typeIn('input[name="keyword"]', '무선 이어폰');

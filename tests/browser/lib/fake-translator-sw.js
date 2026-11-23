@@ -3,17 +3,25 @@
 // service worker 에서는 누름 없이 만들 수 있고, 아직 안 받은 쌍(downloadable)은 1.5초 동안 받는 정도(downloadprogress)를 알린 뒤 된다.
 // 답: 한국어로는 '내장:원문', 다른 말로는 '[BI-언어]' + 원문(한글은 'k글자수' 로 — 진짜 번역처럼 한글이 남지 않게).
 // 언어 알아보기는 '없음' 으로 둔다(진짜를 부르면 모델을 받으려다 멈춘다).
+// state 를 'hang' 으로 두면 인터넷이 끊겼을 때의 진짜처럼 만들기가 끝없이 기다린다(받는 정도 0) — background 의 멈춤 시계를
+// 시험에서는 짧게(1.5초, 다시 해 보기 3초).
+self.__mtStallMs = 1500;
+self.__mtStallPauseMs = 3000;
 (() => {
-  const state = { 'th>ko': 'downloadable', 'ko>th': 'downloadable', 'vi>ko': 'downloadable', 'ko>vi': 'downloadable' };
+  const state = { 'th>ko': 'downloadable', 'ko>th': 'downloadable', 'vi>ko': 'downloadable', 'ko>vi': 'downloadable', 'ko>en': 'hang' };
   const calls = [];
   self.__fakeTranslator = { state, calls };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   self.Translator = {
-    availability: async ({ sourceLanguage: s, targetLanguage: t }) => state[`${s}>${t}`] || 'unavailable',
+    availability: async ({ sourceLanguage: s, targetLanguage: t }) => {
+      const v = state[`${s}>${t}`];
+      return v === 'hang' ? 'downloadable' : v || 'unavailable';
+    },
     create: async ({ sourceLanguage: s, targetLanguage: t, monitor }) => {
       const k = `${s}>${t}`;
       if (!state[k]) throw new DOMException('Unable to create translator for the given source and target language.', 'NotSupportedError');
       calls.push(`create ${k}`);
+      if (state[k] === 'hang') await new Promise(() => {});
       if (state[k] !== 'available') {
         const mon = new EventTarget();
         if (monitor) monitor(mon);

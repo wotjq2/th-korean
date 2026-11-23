@@ -68,6 +68,35 @@ describe('구글이 막혔을 때 (진짜 크롬 + 확장 + 내장 번역기 흉
     assert.match(await toast(), /Enter/);
   });
 
+  test('인터넷이 끊겨 모델을 못 받으면(크롬은 끝없이 기다린다) 잠깐 뒤 실패로 알린다 — 말없이 멈추지 않는다', T, async () => {
+    await t.go('https://shopee.sg/');
+    await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+    await t.typeIn('input[name="keyword"]', '고양이 사료');
+    const t0 = Date.now();
+    await t.enter();
+    const failed = async (from) => {
+      const seen = new Set();
+      while (Date.now() - from < 15000) {
+        const m = await toast();
+        seen.add(m);
+        if (/검색어 번역 실패/.test(m)) return Date.now() - from;
+        await sleep(100);
+      }
+      assert.fail(`'검색어 번역 실패' 안내가 안 뜸(멈춤?): ${[...seen].filter(Boolean).join(' | ')}`);
+    };
+    const ms = await failed(t0);
+    // 멈춤 시계(시험 1.5초)만큼은 기다렸다 — 다른 까닭의 실패가 아니다
+    assert.ok(ms >= 1300 && ms < 8000, `실패까지 ${ms} ms`);
+    assert.equal(await t.ev(`document.querySelector('input[name=keyword]').value`), '고양이 사료');
+    // 곧바로 다시 해도 또 기다리지 않는다(멈춘 쌍은 잠시 바로 실패)
+    await t.ev(`(document.getElementById('lzk-toast') || { remove() {} }).remove(), 1`);
+    const t1 = Date.now();
+    await t.typeIn('input[name="keyword"]', '고양이 사료');
+    await t.enter();
+    const ms2 = await failed(t1);
+    assert.ok(ms2 < 1300, `두 번째도 기다림 ${ms2} ms`);
+  });
+
   test('확장 오류 0건', T, async () => {
     await sleep(300);
     assert.deepEqual(t.errors(), []);

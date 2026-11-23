@@ -155,8 +155,7 @@ let mtNextTry = 0; // 이 시각 전에는 다시 열어 보지 않는다(servic
 const MT_RETRY = 10 * 60 * 1000;
 const MT_LANG = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
 const MT_MAX_TEXT = 20000;
-const mtTr = new Map(); // '쌍' → { p: 번역기 약속, used }
-let mtLd = null; // { p, used }
+const mtTr = new Map(); // '쌍' → { p: 번역기 약속, used, … } (mtEntry)
 let mtSweep = 0;
 
 async function mtBridgeOpen(force) {
@@ -231,12 +230,7 @@ function mtClose(port) {
   } catch {
     /* 이미 닫혔다 */
   }
-  for (const v of mtTr.values()) v.p.then((t) => t && t.destroy && t.destroy(), () => {});
-  mtTr.clear();
-  if (mtLd) mtLd.p.then((d) => d && d.destroy && d.destroy(), () => {});
-  mtLd = null;
-  clearInterval(mtSweep);
-  mtSweep = 0;
+  // 번역기는 내려놓지 않는다 — 이 확장의 탭도 같이 쓴다(쓰던 번역이 끊긴다). 안 쓰면 mtSweepSoon 이 치운다.
 }
 
 // 10분 동안 안 쓴 번역기는 내려놓는다(언어 모델이 메모리를 차지한다)
@@ -244,23 +238,30 @@ function mtSweepSoon() {
   if (mtSweep) return;
   mtSweep = setInterval(() => {
     const old = Date.now() - 10 * 60 * 1000;
-    for (const [k, v] of mtTr) {
-      if (v.used < old) {
-        mtTr.delete(k);
-        v.p.then((t) => t && t.destroy && t.destroy(), () => {});
+    for (const map of [mtTr, mtLdMap]) {
+      for (const [k, v] of map) {
+        if (v.used < old) {
+          map.delete(k);
+          v.p.then((t) => t && t.destroy && t.destroy(), () => {});
+        }
       }
-    }
-    if (mtLd && mtLd.used < old) {
-      mtLd.p.then((d) => d && d.destroy && d.destroy(), () => {});
-      mtLd = null;
     }
   }, 60 * 1000);
 }
 
-// 모델을 받는 동안의 정도(0~1)를 기다리는 쪽(탭)에 알린다 — watchers
+// 인터넷이 끊겨 모델을 못 받으면 크롬은 실패하지 않고 끝없이 기다린다(2026-11-23 크롬 157: 받은 적 없는 쌍, 60초 넘게 진척 0).
+// 그대로 두면 검색어 바꾸기가 말없이 멈추고, 메신저 말풍선은 '번역 중' 으로 남아 인터넷이 돌아와도 다시 옮기지 않았다.
+// 그래서 받는 정도가 MT_STALL 동안 그대로면 기다리던 쪽은 실패로 끝내고(스크립트는 구글 막힘 안내로 간다), 그 쌍은 1분 동안
+// 새로 만들지 않고 바로 실패한다. 1분 뒤 다시 물으면 새로 만들어 본다(인터넷이 돌아왔으면 받는다).
+const MT_STALL = self.__mtStallMs || 30000; // __mtStallMs: 2단계 시험만(tests/browser/lib/fake-translator-sw.js)
+const MT_STALL_PAUSE = self.__mtStallPauseMs || 60000;
+const mtStalled = new Map(); // 쌍 → 멈춘 것으로 본 때
+
+// 모델을 받는 동안의 정도(0~1)를 기다리는 쪽(탭)에 알린다 — watchers. kicks = 기다리는 쪽마다 멈춤 시계를 다시 맞춘다.
 function mtEntry(make) {
-  const v = { p: null, used: 0, watchers: new Set() };
+  const v = { p: null, used: 0, done: false, watchers: new Set(), kicks: new Set() };
   v.p = make((mon) => mon.addEventListener('downloadprogress', (e) => {
+    for (const kick of v.kicks) kick();
     for (const cb of v.watchers) {
       try {
         cb(e.loaded);
@@ -269,37 +270,64 @@ function mtEntry(make) {
       }
     }
   }));
+  v.p.then(() => (v.done = true), () => {});
   return v;
 }
 
-function mtWatch(v, onProgress) {
+function mtWatch(key, map, v, onProgress) {
   v.used = Date.now();
-  if (!onProgress) return v.p;
-  v.watchers.add(onProgress);
-  return v.p.finally(() => v.watchers.delete(onProgress));
+  if (v.done) return v.p;
+  if (onProgress) v.watchers.add(onProgress);
+  return new Promise((resolve, reject) => {
+    let timer = 0;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        mtStalled.set(key, Date.now());
+        if (map.get(key) === v) map.delete(key); // 멈춘 받기는 버린다(1분 뒤 새로)
+        reject(new Error('크롬 내장 번역기 언어 모델을 받지 못합니다(인터넷 연결 확인)'));
+      }, MT_STALL);
+    };
+    v.kicks.add(arm);
+    arm();
+    v.p.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      v.kicks.delete(arm);
+      if (onProgress) v.watchers.delete(onProgress);
+    });
+  });
+}
+
+function mtGetEntry(key, map, make) {
+  let v = map.get(key);
+  if (!v) {
+    const at = mtStalled.get(key);
+    if (at && Date.now() - at < MT_STALL_PAUSE) return null;
+    mtStalled.delete(key);
+    v = mtEntry(make);
+    const mine = v;
+    v.p.then(
+      (t) => map.get(key) !== mine && t && t.destroy && t.destroy(), // 멈춤으로 버린 받기가 나중에 끝났다 — 안 쓰니 내려놓는다
+      () => map.get(key) === mine && map.delete(key) // 못 만들었으면 다음에 다시
+    );
+    map.set(key, v);
+    mtSweepSoon();
+  }
+  return v;
 }
 
 function mtTranslator(from, to, onProgress) {
   const k = `${from}>${to}`;
-  let v = mtTr.get(k);
-  if (!v) {
-    v = mtEntry((monitor) => Translator.create({ sourceLanguage: from, targetLanguage: to, monitor }));
-    const mine = v;
-    v.p.catch(() => mtTr.get(k) === mine && mtTr.delete(k)); // 못 만들었으면 다음에 다시
-    mtTr.set(k, v);
-    mtSweepSoon();
-  }
-  return mtWatch(v, onProgress);
+  const v = mtGetEntry(k, mtTr, (monitor) => Translator.create({ sourceLanguage: from, targetLanguage: to, monitor }));
+  if (!v) return Promise.reject(new Error('크롬 내장 번역기 언어 모델을 받지 못했습니다 — 잠시 뒤 다시'));
+  return mtWatch(k, mtTr, v, onProgress);
 }
 
+const mtLdMap = new Map(); // 언어 알아보기는 하나뿐 — 같은 멈춤 규칙을 쓰려고 칸 하나짜리 표로
 function mtDetector(onProgress) {
-  if (!mtLd) {
-    const v = mtEntry((monitor) => LanguageDetector.create({ monitor }));
-    v.p.catch(() => mtLd === v && (mtLd = null));
-    mtLd = v;
-    mtSweepSoon();
-  }
-  return mtWatch(mtLd, onProgress);
+  const v = mtGetEntry('ld', mtLdMap, (monitor) => LanguageDetector.create({ monitor }));
+  if (!v) return Promise.reject(new Error('크롬 언어 알아보기 모델을 받지 못했습니다 — 잠시 뒤 다시'));
+  return mtWatch('ld', mtLdMap, v, onProgress);
 }
 
 // m: 번역 도우미(번역 다리)의 물음 또는 이 확장 탭(gm.js)의 물음. sender 는 탭일 때만 — 모델을 받는 정도를 그 탭에 알린다.

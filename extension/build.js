@@ -192,6 +192,18 @@ async function main() {
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(OUT, { recursive: true });
 
+  // 사진 글자 읽기 엔진(tesseract.min.js, 66 KB)은 쇼핑몰에만 넣는다 — 사진 읽기(installImageUI)는 쇼핑몰 init 에서만 켜진다.
+  // 예전에는 모든 페이지에 넣어 한국어 뉴스 한 장에도 7.6 ms(컴파일 1.9 + 실행 5.7)를 썼다(2026-11-23 크롬 추적 — 확장이 쓰는
+  // 시간의 30%). 쇼핑몰 주소는 스크립트의 SHOP_MARKETS 를 그대로 읽는다(목록은 한 곳). config.json shops 로 원격으로 더한 쇼핑몰은
+  // 이 목록에 없어 무료 사진 읽기를 못 한다(Vision 키는 된다) — 그런 쇼핑몰이 생기면 SHOP_MARKETS 에 넣고 새 판으로.
+  const shopHosts = (() => {
+    const m = script.match(/const SHOP_MARKETS = \{([\s\S]*?)\n {2}\};/);
+    if (!m) throw new Error('스크립트에서 SHOP_MARKETS 를 못 찾음 — 사진 읽기 엔진을 넣을 쇼핑몰 주소를 모른다');
+    const hs = [...m[1].matchAll(/'([a-z0-9-]+(?:\.[a-z0-9-]+)+)'\s*:/g)].map((x) => x[1]);
+    if (hs.length < 10) throw new Error(`SHOP_MARKETS 주소가 너무 적음(${hs.length})`);
+    return hs;
+  })();
+
   const vendored = [];
   for (const url of h.require) {
     const file = await vendorFile(url);
@@ -249,10 +261,21 @@ async function main() {
     permissions: ['storage', 'unlimitedStorage', 'nativeMessaging', 'downloads'],
     host_permissions: hosts,
     content_scripts: [
+      ...(vendored.length
+        ? [
+            {
+              // 사진 글자 읽기 엔진 — 쇼핑몰에만(위 shopHosts). content.js 는 쓸 때(사진에 마우스를 올릴 때) 찾는다.
+              matches: shopHosts.flatMap((d) => [`https://${d}/*`, `https://*.${d}/*`]),
+              js: vendored,
+              run_at: 'document_start',
+              all_frames: false,
+            },
+          ]
+        : []),
       {
         // 스크립트의 @match 에 '*://*/*' 가 있다 — 어느 사이트든 태국어가 보이면 켜진다(genericInit).
         matches: ['http://*/*', 'https://*/*'],
-        js: [...vendored, 'content.js'],
+        js: ['content.js'],
         run_at: 'document_start',
         all_frames: false, // @noframes
       },

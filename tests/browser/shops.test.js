@@ -134,6 +134,19 @@ describe('쇼핑몰 (진짜 크롬 + 확장)', () => {
     assert.equal(await t.evIso(`gmStore.has('remoteGlossary')`), true, '쇼핑몰에서 용어집을 안 읽음');
   });
 
+  test('사진 글자 읽기 엔진(tesseract.min.js)은 쇼핑몰에만 — 뉴스 페이지에는 안 넣는다(1.36.3)', T, async () => {
+    // 예전에는 모든 페이지에 넣어 한국어 뉴스 한 장에도 7.6 ms 를 썼다(확장이 쓰는 시간의 30%)
+    await t.go('https://news.example.com/');
+    await t.until(`document.readyState === 'complete'`, 10000, '페이지');
+    await sleep(500);
+    assert.equal(await t.evIso(`typeof Tesseract`), 'undefined', '뉴스 페이지에 사진 읽기 엔진이 들어감');
+    for (const u of ['https://shopee.co.th/', 'https://shopee.vn/', 'https://www.lazada.vn/']) {
+      await t.go(u);
+      await t.until(`document.getElementById('lzk-fab')`, 10000, "'한' 단추");
+      assert.equal(await t.evIso(`typeof Tesseract.createWorker`), 'function', `${u} 에 사진 읽기 엔진이 없음`);
+    }
+  });
+
   test('용어집 업데이트: 탭에 미리 안 읽어도, 사본이 오래됐으면 GitHub 에서 새로 받아 새 단어를 쓴다', T, async () => {
     const ver = await S.popup.ev('chrome.runtime.getManifest().version');
     await S.setStore({ 'gm:remoteGlossary': { text: OLD_GLOSSARY, at: Date.now() - 2 * 60 * 60 * 1000, ver, etag: null } });

@@ -56,5 +56,6 @@ test('빌드가 복사하는 확장 파일이 다 있다', () => {
   const list = (build.match(/for \(const f of \[([^\]]+)\]\) fs\.copyFileSync\(path\.join\(SRC/) || [])[1];
   assert.ok(list, 'build.js 의 복사 목록을 못 찾음');
   for (const f of list.match(/'[^']+'/g).map((x) => x.slice(1, -1))) assert.ok(fs.existsSync(p('extension/src', f)), f);
-  for (const m of build.matchAll(/js: \['([^']+)'\]/g)) assert.ok(fs.existsSync(p('extension/src', m[1])), m[1]);
+  // content.js 는 복사하지 않고 빌드가 만든다(gm.js + 스크립트) — 1.36.3 부터 따로 된 content_scripts 칸에 있다
+  for (const m of build.matchAll(/js: \['([^']+)'\]/g)) if (m[1] !== 'content.js') assert.ok(fs.existsSync(p('extension/src', m[1])), m[1]);
 });

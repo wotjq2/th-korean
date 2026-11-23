@@ -101,3 +101,14 @@ test('줄 가르기(hsLineBands): 틈 없이 붙은 두 줄은 센 줄 수만큼
   const one = Array.from({ length: 100 }, (_, y) => (y < 10 || y >= 90 ? 0 : 30 + (y % 7)));
   assert.equal(c6.hsLineBands(one, [0, 100], 2).length, 1);
 });
+
+// 2026-11-23: 큰 글자 두 줄 자막에서 아랫줄을 다시 읽을 때(hsReadAs)는 깐깐하게 — 노란 자막 아랫줄의 뒤범벅 'ngay :aygl! .' 가
+// 받아들여져 붙었다. 낱말 앞뒤의 여러 언어 문장부호는 괜찮다.
+test('아랫줄 다시 읽기의 깐깐한 글 기준(hsRetryClean): 정상 문장은 받고 뒤범벅은 거른다', () => {
+  const c = vm.createContext({});
+  vm.runInContext(`${cut('hsRetryClean')}\nthis.f = hsRetryClean;`, c);
+  for (const t of ['ngay bây giờ.', '¿Qué haces aquí?', '«Hola», dijo.', "I'm fine, thanks!", 'مرحبا، كيف حالك؟', 'मैं ठीक हूँ।', '5 phút nữa', 'เราต้องไปแล้ว']) {
+    assert.equal(c.f(t), true, t);
+  }
+  for (const t of ['ngay :aygl! .', 'ngay | bây', '', '. .']) assert.equal(c.f(t), false, t);
+});

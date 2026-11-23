@@ -1482,6 +1482,10 @@ const HS_SCRIPT = {
 };
 // 낱말 사이를 띄지 않는 글자(빈칸은 구절 사이에만) — 낱말 상자 사이가 벌어진 곳에만 빈칸을 둔다.
 const HS_NOSPACE = new Set(['th', 'khmr', 'laoo', 'mymr', 'ja']);
+// 아랫줄을 못 받았을 때 칸 위쪽을 이만큼(칸 높이의 비율) 잘라 다시 읽는다(hsReadAs). clip = 덩어리 걸러내기 없이 잘라 내기만.
+// 시험용으로 환경 변수로 바꿔 볼 수 있다(HS_RETRY_CUT=0.15,0.3 HS_RETRY_CLIP=1).
+const HS_RETRY_CUT = (process.env.HS_RETRY_CUT || '0.15,0.3').split(',').map(Number).filter((x) => x > 0 && x < 0.6);
+const HS_RETRY_CLIP = process.env.HS_RETRY_CLIP === '1'; // 기본은 걸러내기 그대로(2026-11-23 채점: 잘라 내기만 하면 못 살렸다)
 
 const hsCount = (s, re) => (String(s).match(new RegExp(re.source, re.flags.replace('g', '') + 'g')) || []).length; // u 깃발(p{L})을 살린다
 // 읽은 글이 그 언어의 자막인가. 자막이 아닌 곳(흰 간판·옷 무늬)을 읽으면 확신도가 낮거나 다른 글자·기호가 섞인다.
@@ -1597,9 +1601,22 @@ async function hsReadAs(view, lang) {
   // 박은 영화에서 태국어 모델이 중국어 줄을 부스러기('ร1แทาพเศแนแพ')로 읽어 붙였다(2026-11-19 ifiV89ROboY).
   if (whole.bands.length > 1) {
     const parts = [];
-    for (const r of whole.bands) {
+    for (let bi = 0; bi < whole.bands.length; bi++) {
+      const r = whole.bands[bi];
       const one = kind === 'han' ? view.han(r) : view.wide(false, r);
-      parts.push(await hsReadLine(one, model, kind, lang));
+      let got = await hsReadLine(one, model, kind, lang);
+      if (bi && kind !== 'han' && got.ok && !hsRetryClean(got.text)) got = { ...got, ok: false }; // 아랫줄은 깐깐하게(아래)
+      // 아랫줄을 못 받았으면 칸 위쪽을 조금 잘라 한 번 더(2026-11-23): 큰 글자 두 줄에서 윗줄 꼬리(p·y)가 아랫줄 글자(b)에 맞붙어
+      // 한 덩어리가 되면 떼어 낼 수 없다 — 그 덩어리가 아랫줄을 통째로 버리게 했다(베트남어 'ngay bây giờ.' 를 세 색 모두 놓침).
+      // 위 부호 일부를 잃더라도 줄을 잃는 것보다 낫다.
+      for (const f of HS_RETRY_CUT) {
+        if (got.ok || !bi || kind === 'han') break;
+        const cut = [r[0] + Math.round((r[1] - r[0]) * f), r[1]];
+        const again = await hsReadLine(view.wide(false, cut, HS_RETRY_CLIP), model, kind, lang);
+        if (process.env.TH_HS_DEBUG) console.error(`[hs] ${lang} 아랫줄 다시(위 ${f}) ${again.conf} ${again.ok ? 'ok' : '--'} ${again.text}`);
+        if (again.ok && hsRetryClean(again.text)) got = again;
+      }
+      parts.push(got);
     }
     const good = parts.filter((p) => p.ok);
     if (!good.length) {
@@ -1650,6 +1667,18 @@ async function hsReadLine(v, model, kind, lang) {
   const ok = (hsOk(text, conf, kind) || (agree && hsOk(text, 100, kind))) && hsPlausible(text, conf);
   if (kind === 'mymr') text = hsMyFix(text);
   return { text, conf, lang, ok };
+}
+
+// 아랫줄 다시 읽기(hsReadAs)는 더 깐깐하게: 낱말 속이나 홀로 선 기호(: ; ! | 등)가 있으면 뒤범벅으로 본다 — 노란 두 줄 자막을
+// 다시 읽은 'ngay :aygl! .' 가 받아들여져 붙었다(2026-11-23). 낱말 앞뒤에 붙는 문장부호(¿¡ «» 따옴표, 끝의 . , ? ! … : ;
+// 아랍 ، ؟ 우르두 ۔ 힌디 । 일본 、。)는 괜찮고, 낱말 속 기호나 기호만 있는 조각은 안 된다.
+function hsRetryClean(t) {
+  const words = String(t || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  return words.every((w) => {
+    const core = w.replace(/^[¿¡"«'“‘(\[]+/u, '').replace(/[.,?!…"»'”’)\]:;،؟۔।॥、。！？]+$/u, '');
+    return core.length > 0 && /^[\p{L}\p{M}\p{N}'’-]+$/u.test(core);
+  });
 }
 
 // 글다움(크메르·라오·미얀마): 다른 글자 자막을 이 모델로 읽은 뒤범벅은 짧은 조각('ເພ ຟັ.')이거나 숫자가 섞였다('ပ ၉4 ပါ').
@@ -1707,14 +1736,15 @@ async function hardsub(text) {
       return native(r || band, Math.max(2, Math.round(lh1 * 0.3)), !!r); // r = 여러 줄 중 한 줄
     },
     // 다른 글자: 띠 한 줄이 40 화소 아래면 키우고, 그림 전체(가나·한글은 띠만) + 흰 여백 0.4줄
-    wide: (coreOnly, r) => {
+    // clip: 여러 줄 중 한 줄을 자르되 덩어리 걸러내기(split) 없이 범위 밖만 잘라 낸다(아랫줄 다시 읽기 — hsReadAs)
+    wide: (coreOnly, r, clip) => {
       if (!big) {
         const u = lh1 < 40 ? Math.min(3, 48 / lh1) : 1;
         const up = u > 1 ? hsUpscale(px, w, h, u) : { px, w, h };
         const core = span(j.core, u, up.h);
         big = { u, H: up.h, core, bin: hsBinarize(up.px, up.w, up.h, span(j.rows, u, up.h) || [0, up.h], vh * u, core, lh1 * u * 0.4, n) };
       }
-      const got = big.bin(r || (coreOnly && big.core ? big.core : [0, big.H]), 0, !!r);
+      const got = big.bin(r || (coreOnly && big.core ? big.core : [0, big.H]), 0, !!r && !clip); // r(칸)은 이미 키운 그림 기준
       return { ...got, em: lh1 * big.u };
     },
   };

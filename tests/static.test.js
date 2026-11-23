@@ -78,7 +78,7 @@ test('확장 이름·설명 언어별 글이 웹스토어 한도 안이다', () 
   const all = JSON.parse(fs.readFileSync(p('extension/locales.json'), 'utf8'));
   const locs = Object.keys(all).filter((k) => k !== '_');
   assert.ok(locs.length >= 20, `언어 ${locs.length}개뿐`);
-  assert.equal(all.ko.name, '통합 번역');
+  assert.equal(all.ko.name, '멀티 번역기');
   for (const l of locs) {
     assert.ok(all[l].name && all[l].name.length <= 75, `${l} 이름 ${all[l].name.length}`);
     assert.ok(all[l].desc && all[l].desc.length <= 132, `${l} 설명 ${all[l].desc.length}`);

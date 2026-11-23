@@ -158,7 +158,7 @@ static class Log
 }
 
 // node engine.js 와 한 줄씩 JSON 을 주고받는다. 죽으면 다음 요청 때 다시 띄운다.
-// '내 언어'(2026-11-05): 크롬 '통합 번역' 창에서 고른 기준 언어(구글 번역 코드). 확장이 도우미를 부를 때마다 같이
+// '내 언어'(2026-11-05): 크롬 '멀티 번역기' 창에서 고른 기준 언어(구글 번역 코드). 확장이 도우미를 부를 때마다 같이
 // 보내고(background.js → ChromeLink.Handle → Save) data\mylang.txt 에 둔다. 'ko' 면 예전과 똑같다. 다른 언어면 엔진이
 // 같은 파일을 읽어 LINE 말풍선·화면 번역·자막을 그 언어로 옮기고(engine.js), 이 프로그램의 메뉴·알림 글도 T() 로 옮긴다.
 static class MyLang
@@ -1285,7 +1285,7 @@ static class App
             if (args[i] == "--target") target = args[i + 1];
             if (args[i] == "--screen") screenTest = args[i + 1];
         }
-        // 크롬 '통합 번역' 확장이 켜기·끄기·상태를 물으러 부른 것 — 트레이 앱을 띄우지 않고 답만 한다(ChromeLink.cs).
+        // 크롬 '멀티 번역기' 확장이 켜기·끄기·상태를 물으러 부른 것 — 트레이 앱을 띄우지 않고 답만 한다(ChromeLink.cs).
         if (ChromeLink.IsHostCall(args)) { ChromeLink.Run(MutexName, QuitName); return; }
         if (Array.IndexOf(args, "--register-chrome") >= 0) { ChromeLink.Register(); return; }
         // 업데이터가 새 판을 켤 때: 이전 판이 끝나기를 기다렸다 켜지고, 바뀌었다고 알린다.
@@ -1365,7 +1365,7 @@ static class App
             new Thread(delegate ()
             {
                 if (!quitSignal.WaitOne()) return;
-                Log.Write("크롬 '통합 번역' 에서 끔");
+                Log.Write("크롬 '멀티 번역기' 에서 끔");
                 Quit();
             }) { IsBackground = true }.Start();
             ClipWatcher clip = new ClipWatcher();
@@ -1391,7 +1391,7 @@ static class App
     static string PingName { get { return "Local\\th-korean-line-helper-ping-" + target; } }
     // 하나만 켜지게 하는 잠금. 크롬 확장이 켜져 있는지 볼 때도 이것을 본다(ChromeLink.IsRunning).
     static string MutexName { get { return "Local\\th-korean-line-helper-" + target; } }
-    // 크롬 '통합 번역' 의 [끄기] 가 보내는 신호.
+    // 크롬 '멀티 번역기' 의 [끄기] 가 보내는 신호.
     public static string QuitName { get { return "Local\\th-korean-line-helper-quit-" + target; } }
 
     static void LoadSettings()
@@ -1456,7 +1456,7 @@ static class App
         return id;
     }
 
-    // 크롬 '통합 번역' 에서 내 언어를 바꿨다(MyLang.Poll) — 엔진을 다시 띄워(스크립트가 새 값으로 뜬다) 말풍선을 새로 옮기고
+    // 크롬 '멀티 번역기' 에서 내 언어를 바꿨다(MyLang.Poll) — 엔진을 다시 띄워(스크립트가 새 값으로 뜬다) 말풍선을 새로 옮기고
     // 메뉴·막대 글을 바꾼다.
     static void OnMyLangChanged()
     {

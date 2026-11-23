@@ -1,4 +1,4 @@
-// 도구 막대의 '통합 번역' 단추 — 몽키 메뉴 대신 지금 탭의 번역 메뉴를 보여 주고, 설정을 옮긴다.
+// 도구 막대의 '멀티 번역기' 단추 — 몽키 메뉴 대신 지금 탭의 번역 메뉴를 보여 주고, 설정을 옮긴다.
 
 /* global chrome */
 
@@ -48,8 +48,27 @@ const myLangReady = chrome.storage.local.get('gm:myLang').then((v) => {
   sel.value = MY;
   // 옵션 글은 이미 각 언어로 썼다 — 화면 글 옮기기에서 뺀다.
   sel.dataset.noi18n = '';
-  localize();
+  showAppName().finally(localize);
 });
+
+// 확장 이름을 내 언어로(1.36.5) — 크롬이 확장 관리·스토어에 보이는 이름(_locales/<언어>/messages.json)과 같은 글.
+// 한국어 제목을 구글로 옮기면 'Traductor múltiple' 처럼 스토어 이름('Multitraductor')과 달라진다. 그 언어 파일이 없으면 영어.
+const LOCALE_OF = { 'zh-CN': 'zh_CN', 'zh-TW': 'zh_TW', pt: 'pt_BR', tl: 'fil' };
+async function showAppName() {
+  for (const loc of [LOCALE_OF[MY] || MY, 'en']) {
+    try {
+      const r = await fetch(chrome.runtime.getURL(`_locales/${loc}/messages.json`));
+      if (!r.ok) continue;
+      const name = (await r.json()).appName.message;
+      if (!name) continue;
+      $('header h1').textContent = name;
+      document.title = name;
+      return;
+    } catch {
+      // 그 언어 파일이 없다 — 다음(영어)
+    }
+  }
+}
 
 $('#lang').addEventListener('change', async (e) => {
   const v = e.target.value;
@@ -430,7 +449,7 @@ function reportBuild() {
     reportSafe($('#rwhat').value.trim()) || '(안 적음)',
     '',
     '### 환경',
-    `- 통합 번역 ${chrome.runtime.getManifest().version} (크롬 확장 창에서 보냄)`,
+    `- 멀티 번역기 ${chrome.runtime.getManifest().version} (크롬 확장 창에서 보냄)`,
     `- 브라우저: ${reportBrowser()} · 브라우저 언어 ${navigator.language || '?'}`,
     `- 내 언어: ${MY}`,
     `- 원격 설정: ${rc && rc.at ? reportDate(rc.at) + ' 받음' : '기본값(아직 받지 못함)'}`,

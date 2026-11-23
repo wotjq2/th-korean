@@ -127,7 +127,7 @@ describe('문제 알리기 (진짜 크롬 + 확장)', () => {
     await S.popup.ev(`(() => { const w = document.getElementById('rwhat'); w.value = '번역 도우미가 안 켜져요'; w.dispatchEvent(new Event('input')); return 1; })()`);
     const body = await S.popup.ev(`document.getElementById('rbody').value`);
     const ver = await S.popup.ev(`chrome.runtime.getManifest().version`);
-    for (const want of ['번역 도우미가 안 켜져요', `- 통합 번역 ${ver}`, '- 내 언어: ko', '검색어 번역 실패: HTTP 429']) {
+    for (const want of ['번역 도우미가 안 켜져요', `- 멀티 번역기 ${ver}`, '- 내 언어: ko', '검색어 번역 실패: HTTP 429']) {
       assert.ok(body.includes(want), `확장 창 글에 '${want}'\n${body}`);
     }
     // 시험 확장은 도우미와 이어지지 않는다: 도우미가 없는 PC 는 'not found', 깔린 PC 는 'forbidden'(이 확장 id 를 안 받음)

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.36.4
+// @version      1.36.5
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -47,16 +47,17 @@
   // 상수
   // ---------------------------------------------------------------------------
 
-  // 보이는 이름. 2026-11-21 사용자: 이제 태국어 중심이 아니라 30개 언어 모두가 기준 — 확장 이름(통합 번역)과 같게.
+  // 보이는 이름. 2026-11-21 사용자: 이제 태국어 중심이 아니라 30개 언어 모두가 기준 — 확장 이름(멀티 번역기)과 같게.
   // 몽키의 @name 은 업데이트 고리라 그대로 둔다(위 ★).
-  const APP_NAME = '통합 번역';
+  // 2026-11-23 사용자: 이름을 '멀티 번역기' 로(여러 언어 번역기로 보이게).
+  const APP_NAME = '멀티 번역기';
 
   const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
   const THAI = /[฀-๿]/;
   const LATIN_WORD = /[A-Za-z]{2,}/;
 
   // ---- 내 언어 (2026-11-05, 1.29.0) ----
-  // '통합 번역' 창(도구 막대)에서 고른 기준 언어. 'ko' 면 지금까지와 똑같다(한국어 용어집·말투 다듬기·한글 알아보기).
+  // '멀티 번역기' 창(도구 막대)에서 고른 기준 언어. 'ko' 면 지금까지와 똑같다(한국어 용어집·말투 다듬기·한글 알아보기).
   // 다른 언어면: 외국어 페이지·메신저·영상·사진 글을 그 언어로 보여 주고, 입력칸에 그 언어로 쓴 말을 고른 외국어로
   // 바꾸며(구글 번역 — 용어집은 한국어 것뿐이라 쓰지 않는다), '한' 창 같은 화면 글도 그 언어로 옮겨 보인다(uiLocalize).
   // 값은 구글 번역 언어 코드(zh-CN 처럼). 열려 있는 페이지도 1초 안에 따라 바뀐다(watchMyLang → applyMyLang) —
@@ -167,7 +168,7 @@
     const v = problemPending || GM_getValue(PROBLEM_KEY, []);
     return Array.isArray(v) ? v.filter((e) => e && typeof e.msg === 'string') : [];
   }
-  // console.warn 과 같고, 문제 기록에도 남긴다(앞의 '[통합 번역]' 은 뺀다).
+  // console.warn 과 같고, 문제 기록에도 남긴다(앞의 '[멀티 번역기]' 는 뺀다).
   function warnNote(...args) {
     console.warn(...args);
     problemNote(
@@ -363,7 +364,7 @@
   }
   uiEnsure();
 
-  // 다른 탭·통합 번역 창에서 내 언어를 바꾸면 이 페이지도 따른다(1초마다·창으로 돌아올 때 본다 — 저장소 값 읽기라 가볍다).
+  // 다른 탭·멀티 번역기 창에서 내 언어를 바꾸면 이 페이지도 따른다(1초마다·창으로 돌아올 때 본다 — 저장소 값 읽기라 가볍다).
   function watchMyLang() {
     const check = () => {
       const v = readMyLang();
@@ -1164,7 +1165,7 @@
     return { map, mods, curated };
   }
 
-  // 확장(통합 번역)에서는 용어집 사본(몇 MB)을 탭마다 미리 읽지 않고 처음 쓸 때 읽는다(GM_lazyGet — extension/src/gm.js).
+  // 확장(멀티 번역기)에서는 용어집 사본(몇 MB)을 탭마다 미리 읽지 않고 처음 쓸 때 읽는다(GM_lazyGet — extension/src/gm.js).
   // 2026-11-21 잰 것: 저장값 전체를 탭마다 읽어 한국어 뉴스 같은 탭 하나도 15~25MB 를 더 썼다. 몽키·번역 도우미에는
   // GM_lazyGet 이 없어서 예전처럼 바로 읽는다. 용어집을 쓰기 전에는 glossaryStoreLoad() 를 기다린다(ensureGlossary 가 한다).
   const gmLazyGet = (k, d) => (typeof GM_lazyGet === 'function' ? GM_lazyGet(k, d) : Promise.resolve(GM_getValue(k, d)));
@@ -1292,7 +1293,7 @@
   const GITHUB_TOKEN_URL =
     'https://github.com/settings/personal-access-tokens/new' +
     `?name=${encodeURIComponent('th-korean 용어집')}` +
-    `&description=${encodeURIComponent('통합 번역 - 설정 패널에서 용어집 저장')}` +
+    `&description=${encodeURIComponent('멀티 번역기 - 설정 패널에서 용어집 저장')}` +
     `&target_name=${GLOSSARY_REPO.split('/')[0]}&contents=write`;
 
   // 번역 도우미(line-helper/, 윈도우 프로그램 — LINE PC·아무 창 Ctrl+Alt+K 화면 번역). 크롬은 PC 에 프로그램을
@@ -3229,7 +3230,7 @@
       trNote('검색어', value, thai, via);
 
       const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
-      // 통합 번역 아이콘 화면에서도 바꿀 수 있어서, 열려 있는 페이지도 바로 따르게 쓸 때마다 다시 읽는다.
+      // 멀티 번역기 아이콘 화면에서도 바꿀 수 있어서, 열려 있는 페이지도 바로 따르게 쓸 때마다 다시 읽는다.
       cfg.confirmSearch = GM_getValue('confirmSearch', cfg.confirmSearch);
       if (cfg.confirmSearch) {
         awaitingConfirm = true;
@@ -4098,7 +4099,7 @@
   }
 
   async function makeOcrWorker() {
-    // 확장(통합 번역)은 엔진과 태국어 자료를 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다.
+    // 확장(멀티 번역기)은 엔진과 태국어 자료를 확장 안에 넣었다 — 크롬 웹스토어는 밖에서 받은 코드를 못 돌리게 한다.
     // 그래서 확장은 넣어 둔 tha 를 읽고, 다른 언어는 모델 자료만 받아 넘긴다(config.json 의 ocr.lang 은 몽키판 태국어에만). 몽키판은 CDN.
     const local = typeof GM_extensionURL === 'function';
     const code = ocrModel();

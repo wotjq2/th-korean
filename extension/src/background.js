@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// 통합 번역 — 뒤에서 도는 부분(service worker).
+// 멀티 번역기 — 뒤에서 도는 부분(service worker).
 // 번역 스크립트의 인터넷 요청(GM_xmlhttpRequest)을 대신 보낸다. 페이지 안에서는 다른 사이트 주소가
 // 막히지만(CORS), 확장은 manifest 의 host_permissions 에 적은 주소에 그대로 닿는다.
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
 const HELPER_HOST = 'com.th_korean.helper';
 let helperAutoAt = 0;
 
-// 모든 부름에 '내 언어'(통합 번역 창에서 고른 기준 언어)를 같이 보낸다 — 도우미가 바뀌었으면 받아 두고
+// 모든 부름에 '내 언어'(멀티 번역기 창에서 고른 기준 언어)를 같이 보낸다 — 도우미가 바뀌었으면 받아 두고
 // LINE·화면 번역·자막을 그 언어로 옮기고 자기 화면 글도 그 언어로 바꾼다(ChromeLink.cs SaveMyLang). 옛 도우미는 무시한다.
 async function myLang() {
   const v = (await chrome.storage.local.get('gm:myLang'))['gm:myLang'];
@@ -593,7 +593,7 @@ function tmSaveSoon() {
   tmTimer = setTimeout(() => {
     tmTimer = 0;
     const v = tmMem;
-    if (v) tmIdb('readwrite', (s) => s.put(v, TM_KEY)).catch((e) => console.warn('[통합 번역] 번역 캐시 저장 실패:', e && e.message));
+    if (v) tmIdb('readwrite', (s) => s.put(v, TM_KEY)).catch((e) => console.warn('[멀티 번역기] 번역 캐시 저장 실패:', e && e.message));
   }, 500);
 }
 

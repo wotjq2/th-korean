@@ -10,10 +10,10 @@ const { sleep } = require('./lib/chrome');
 const T = { timeout: 60000 };
 // [크롬 언어, 고를 '내 언어', 크롬이 보여 줄 확장 이름(extension/locales.json → _locales)]
 const CASES = [
-  ['es', 'es', 'Traductor todo en uno'],
-  ['en-US', 'en', 'All-in-One Translator'],
-  ['zh-TW', 'zh-TW', '全能翻譯'],
-  ['ko', 'ko', '통합 번역'],
+  ['es', 'es', 'Multitraductor'],
+  ['en-US', 'en', 'Multi Translator'],
+  ['zh-TW', 'zh-TW', '多語翻譯'],
+  ['ko', 'ko', '멀티 번역기'],
 ];
 
 describe("처음 설치 때 '내 언어' (크롬 언어별)", () => {
@@ -32,6 +32,9 @@ describe("처음 설치 때 '내 언어' (크롬 언어별)", () => {
         assert.equal(man[0], name);
         assert.equal(man[2], name);
         assert.ok(man[1] && !man[1].startsWith('__MSG_'), man[1]);
+        // 확장 창 제목도 같은 이름(1.36.5 — 구글로 옮기지 않고 _locales 의 글 그대로)
+        await S.popup.reload();
+        await S.popup.until(`document.querySelector('header h1').textContent === ${JSON.stringify(name)} && document.title === ${JSON.stringify(name)}`, 15000, '확장 창 제목');
         if (want !== 'ko') {
           // 확장 창도 그 언어로(한국어 조각을 옮겨 보인다) — 도우미 칸 제목 줄
           await S.popup.reload();

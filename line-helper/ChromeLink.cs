@@ -1,4 +1,4 @@
-// 크롬 '통합 번역' 확장과 잇기 — 크롬의 네이티브 메시징.
+// 크롬 '멀티 번역기' 확장과 잇기 — 크롬의 네이티브 메시징.
 // 확장이 chrome.runtime.sendNativeMessage 로 부르면 크롬이 이 exe 를 "chrome-extension://<id>/" 인자로 켠다.
 // 그때는 트레이 앱이 아니라 이 짧은 모드로 돌아, 받은 명령을 처리해 답하고 끝난다(크롬이 통로를 닫으면 끝).
 //   {"cmd":"status"}               → 켜져 있는지
@@ -21,7 +21,7 @@ using Microsoft.Win32;
 static class ChromeLink
 {
     public const string HostName = "com.th_korean.helper";
-    // 이 exe 를 부를 수 있는 확장. 압축해제로 불러온 통합 번역(extension/build.js 의 DEV_KEY 로 고정한 id)과,
+    // 이 exe 를 부를 수 있는 확장. 압축해제로 불러온 멀티 번역기(extension/build.js 의 DEV_KEY 로 고정한 id)와,
     // 원격 설정(config.json 의 helper.extensionIds)에 적은 id — 웹스토어가 준 id 는 그 파일에 적는다(이 코드는 그대로).
     const string DevId = "agcbmglciepeobcgkniefahkaiigjkjk";
     static readonly JavaScriptSerializer json = new JavaScriptSerializer();
@@ -205,7 +205,7 @@ static class ChromeLink
             string file = Path.Combine(Path.GetDirectoryName(exe), HostName + ".json");
             Dictionary<string, object> m = new Dictionary<string, object>();
             m["name"] = HostName;
-            m["description"] = "번역 도우미 — 통합 번역 확장에서 켜고 끄기";
+            m["description"] = "번역 도우미 — 멀티 번역기 확장에서 켜고 끄기";
             m["path"] = exe;
             m["type"] = "stdio";
             m["allowed_origins"] = Origins();
@@ -520,14 +520,14 @@ static class RemoteConfig
 // 설정 창이 뜰 때까지 timeoutMs 동안 다시 본다. 돌려주는 것: 누른 뒤 상태 "on"/"off", 못 찾으면 "".
 static class ChromeCaptionSwitch
 {
-    // '실시간 번역'(통합 번역 창의 '크롬 실시간 번역' 칸 — 사용자 2026-11-03: 한국어 영상만 볼 때 끄고, 외국어 영상에서 켜고 싶다).
+    // '실시간 번역'(멀티 번역기 창의 '크롬 실시간 번역' 칸 — 사용자 2026-11-03: 한국어 영상만 볼 때 끄고, 외국어 영상에서 켜고 싶다).
     public static string SetTranslate(bool on, int timeoutMs)
     {
         TogglePattern t = Find(RemoteConfig.LiveTranslateNames(), timeoutMs);
         return t == null ? "" : Flip(t, on);
     }
 
-    // '실시간 자막' 을 껐다 켠다(통합 번역 창의 '크롬 실시간 자막 고치기'). 크롬은 끌 때 자막 창을 치우고 켤 때 새로 만든다
+    // '실시간 자막' 을 껐다 켠다(멀티 번역기 창의 '크롬 실시간 자막 고치기'). 크롬은 끌 때 자막 창을 치우고 켤 때 새로 만든다
     // (2026-11-04 시험 크롬) — 닫혀 버린 자막 창이 되살아난다. 돌려주는 것: 다시 켠 뒤 상태, 못 찾으면 "".
     public static string ResetCaption(int timeoutMs)
     {
@@ -587,7 +587,7 @@ static class Report
     // 대화·화면 글·창 제목이 드는 줄 — 오류여도 넣지 않는다('입력칸 바꾸기 실패 [보낼 말] → 번역' 은 번역이 괄호 밖에 있다)
     static readonly System.Text.RegularExpressions.Regex Private = new System.Text.RegularExpressions.Regex(
         @"보냄 \[|받음 \[|말풍선|입력칸 바꾸기 실패|창이 바뀌어|화면 글줄|화면 번역 켬|화면 번역: 뗌|다른 창으로|\[평가\]|\[화면\]|\[hs\]|클립보드");
-    static readonly System.Text.RegularExpressions.Regex Bracket = new System.Text.RegularExpressions.Regex(@"\[(?!엔진\]|통합 번역\])[^\]\r\n]{0,400}\]");
+    static readonly System.Text.RegularExpressions.Regex Bracket = new System.Text.RegularExpressions.Regex(@"\[(?!엔진\]|통합 번역\]|멀티 번역기\])[^\]\r\n]{0,400}\]");
     static readonly System.Text.RegularExpressions.Regex Stamp = new System.Text.RegularExpressions.Regex(@"^(\d\d-\d\d \d\d:\d\d):\d\d\.\d{3} ");
 
     // 기록 끝쪽에서 오류 줄을 골라 가린다. 같은 말이 잇따르면 한 줄(×횟수).

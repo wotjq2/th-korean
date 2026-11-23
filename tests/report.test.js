@@ -30,7 +30,7 @@ test('실패 안내·경고는 문제 기록에 남는다 — 같은 말은 횟�
   assert.equal(list()[19].msg, '다른 실패 29');
 });
 
-test('토스트: 실패를 알리는 것만 기록, 경고(warnNote)는 앞의 [통합 번역] 을 빼고 오류 글로', () => {
+test('토스트: 실패를 알리는 것만 기록, 경고(warnNote)는 앞의 [멀티 번역기] 를 빼고 오류 글로', () => {
   const s = load({ host: 'www.lazada.co.th' });
   const toast = s.peek('toast');
   toast('"가방" → "กระเป๋า"  (용어집)');
@@ -40,7 +40,7 @@ test('토스트: 실패를 알리는 것만 기록, 경고(warnNote)는 앞의 [
   const origWarn = console.warn;
   console.warn = () => {};
   try {
-    s.peek('warnNote')('[통합 번역] 용어집 받기 실패 (https://x):', new Error('timeout'));
+    s.peek('warnNote')('[멀티 번역기] 용어집 받기 실패 (https://x):', new Error('timeout'));
   } finally {
     console.warn = origWarn;
   }
@@ -80,7 +80,7 @@ test('보낼 글: 판·내 언어·사이트 이름·설정(키는 있음/없음
   for (const secret of ['SECRET', 'keyword', '/search', '%EB']) assert.ok(!body.includes(secret), `보낼 글에 '${secret}' 가 없어야`);
   for (const want of [
     '### 이상했던 번역', '- 어디서: 검색어', '- 원문: 고양이 사료', '- 나온 번역: อาหารสุนัข (용어집)', '- 바라는 뜻: 고양이 밥',
-    '통합 번역 test', '- 내 언어: ko', '- 사이트: shopee.co.th', 'GitHub 연결 있음', 'Vision 키 있음', 'Groq 키 있음',
+    '멀티 번역기 test', '- 내 언어: ko', '- 사이트: shopee.co.th', 'GitHub 연결 있음', 'Vision 키 있음', 'Groq 키 있음',
     '- 번역 도우미: 켜짐', '검색어 번역 실패: HTTP 429',
   ]) assert.ok(body.includes(want), `'${want}' 가 있어야\n${body}`);
   assert.ok(body.includes('@​someone') && body.includes('@​octocat'), "GitHub '@이름' 알림이 가지 않게");

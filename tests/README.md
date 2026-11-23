@@ -67,7 +67,7 @@ node --test "tests/browser/*.test.js"
 | `browser/hardsub-color.test.js` | 화면에 박힌 자막의 색(1.35.6) — 직접 만든 배경에 흰·노랑·호박색 자막(4개 언어 × 3 모양)을 그려 지금 스크립트의 hsFind 로 모두 찾기, 빈 장면·노란 물체 장면은 안 잡기, 번역 도우미 엔진이 노란 자막을 흰 자막만큼 읽기(이 PC 에 Tesseract·글자 모델이 있을 때만) |
 
 | `browser/report.test.js` | 문제 알리기(1.35.8, 내 언어 미리보기 1.35.9) — 내 언어가 영어면 보낼 글을 영어로 읽는 칸(보내는 글은 한국어 그대로) · 쇼피에서 바꾼 검색어를 확장 창 메뉴 → '한' 설정 창의 문제 알리기에서 골라 [GitHub 에 올리기] → 가짜 github.com 이 받은 제목·본문 = 보여 준 글(검색 주소 뒤쪽은 없음), 페이지 자신의 오류는 기록 안 함, 드래그 번역 창의 '번역이 이상해요' → 원문·번역이 채워짐, 확장 창(popup)의 문제 알리기(판·도우미·기록, 토큰 없음) |
-| `browser/first-run.test.js` | 처음 설치 때 '내 언어'(1.36.4) — 크롬 화면 언어(`--lang`)를 es·en-US·zh-TW·ko 로 바꿔 새 프로필에 넣으면 '내 언어' 가 es·en·zh-TW·ko 로 저장되고, 확장 이름이 그 언어(_locales — Traductor todo en uno·All-in-One Translator·全能翻譯·통합 번역), 한국어가 아니면 확장 창 글도 한국어가 아니다. 예전에는 늘 한국어로 시작했다 — 저장을 뺀 background 로 4개 모두 잡힘 |
+| `browser/first-run.test.js` | 처음 설치 때 '내 언어'(1.36.4) — 크롬 화면 언어(`--lang`)를 es·en-US·zh-TW·ko 로 바꿔 새 프로필에 넣으면 '내 언어' 가 es·en·zh-TW·ko 로 저장되고, 확장 이름이 그 언어(_locales — Multitraductor·Multi Translator·多語翻譯·멀티 번역기), 1.36.5: 확장 창 제목도 같은 이름(구글로 옮기지 않고 _locales 글) — 제목 넣기를 뺀 popup.js 로 3개 잡힘, 한국어가 아니면 확장 창 글도 한국어가 아니다. 예전에는 늘 한국어로 시작했다 — 저장을 뺀 background 로 4개 모두 잡힘 |
 
 | `browser/cache.test.js` | 번역 캐시(1.35.9) — 두 탭이 함께 번역해도 두 탭 번역이 모두 남는다(예전: 한쪽이 매번 사라짐), 아무것도 안 하는 탭에 큰 캐시가 가지 않는다(예전: 저장마다 0.5 MB), 옛 storage 캐시 7,000개를 IndexedDB 로 옮기고 지움, 다시 열면 구글에 다시 안 물음. 공유 캐시를 끈 사본으로 2개가 실패하는 것 확인 |
 

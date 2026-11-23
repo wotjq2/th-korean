@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// 통합 번역 확장 만들기 — node extension/build.js
+// 멀티 번역기 확장 만들기 — node extension/build.js
 //
 // 번역 스크립트(th-korean.user.js)는 하나만 둔다. 이 파일이 그것을 확장 꼴로 바꿔 extension/dist/ 에 쓴다.
 //   content.js  = src/gm.js(몽키 흉내) + 스크립트 (저장값을 다 읽은 뒤 시작)
@@ -19,7 +19,8 @@ const SRC = path.join(__dirname, 'src');
 const VENDOR = path.join(__dirname, 'vendor');
 const ICONS = path.join(__dirname, 'icons');
 
-const NAME = '통합 번역';
+// 2026-11-23 사용자: '통합 번역' → '멀티 번역기'(여러 언어 번역기로 보이게). 웹스토어 상품은 그대로(같은 id).
+const NAME = '멀티 번역기';
 // 1.36.4: 확장 이름·설명을 크롬 화면 언어마다(locales.json → _locales). 기본은 한국어(웹스토어 기본 등록 언어).
 // 예전 설명은 '한국어로' 만 말해 다른 나라 사람에게는 자기 것이 아닌 확장처럼 보였다.
 const LOCALES_FILE = path.join(__dirname, 'locales.json');
@@ -39,7 +40,7 @@ function readLocales() {
     out[loc] = { name, desc };
   }
   if (!out.ko || !out.en) throw new Error('locales.json: ko·en 은 꼭 있어야 한다');
-  if (out.ko.name !== NAME) throw new Error(`locales.json: ko 이름은 '${NAME}' 이어야 한다(스토어에 올라간 이름)`);
+  if (out.ko.name !== NAME) throw new Error(`locales.json: ko 이름은 '${NAME}' 이어야 한다(스크립트의 APP_NAME 과 같게)`);
   return out;
 }
 // @connect 에 없지만 스크립트가 확장 권한으로 부르는 주소(사진 글자 읽기 Vision).
@@ -97,11 +98,11 @@ function checkNoRemoteCode(dir) {
 // 인식기(worker.min.js) 맨 앞에서 이런 줄만 걸러낸다. 엔진(core)은 나중에 불려 와 console.warn 을 그때 묶으므로
 // 걸러내는 쪽을 쓴다. 다른 경고(엔진이 멈춘 Aborted 등)는 그대로 둔다.
 const OCR_QUIET =
-  '/* 통합 번역: 사진 글자 엔진이 늘 내는 안내 줄(설정 없음·해상도 짐작·빈 사진)만 숨긴다 — extension/build.js */\n' +
+  '/* 멀티 번역기: 사진 글자 엔진이 늘 내는 안내 줄(설정 없음·해상도 짐작·빈 사진)만 숨긴다 — extension/build.js */\n' +
   "(()=>{const w=console.warn,q=/^(Warning: Parameter not found:|Estimating resolution as |Detected \\d+ diacritics|Empty page!!|Too few characters|Warning\\. Invalid resolution|Image too small to scale|Line cannot be recognized)/;" +
   "console.warn=function(m,...r){if(typeof m==='string'&&q.test(m))return;return w.call(this,m,...r)}})();\n";
 // node extension/build.js --store : 웹스토어에 올릴 판. 개발용 고정 id 열쇠(key)를 빼고(스토어가 거부한다)
-// extension/store/통합번역-<판>.zip 을 만든다. 스토어가 준 id 는 config.json 의 helper.extensionIds 에 적으면
+// extension/store/멀티번역기-<판>.zip 을 만든다. 스토어가 준 id 는 config.json 의 helper.extensionIds 에 적으면
 // 번역 도우미가 받아 준다(도우미 코드는 고치지 않는다).
 const STORE = process.argv.includes('--store');
 // 웹스토어판은 따로 만든다 — dist 는 이 PC 크롬이 압축해제로 불러 쓰는 곳이라, key 없이 덮으면 확장 id 가 바뀌어
@@ -241,7 +242,7 @@ async function main() {
     '  .then(() => {',
     scrub('th-korean.user.js', script.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\r?\n/, '')),
     '  })',
-    `  .catch((e) => console.error('[통합 번역] 시작 실패:', e));`,
+    `  .catch((e) => console.error('[멀티 번역기] 시작 실패:', e));`,
     '',
   ].join('\n');
   fs.writeFileSync(path.join(OUT, 'content.js'), content);
@@ -331,13 +332,13 @@ async function main() {
   fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   checkNoRemoteCode(OUT);
 
-  console.log(`통합 번역 ${h.version} → ${OUT}${STORE ? ' (웹스토어판: 개발용 key 없음)' : ''}`);
+  console.log(`${NAME} ${h.version} → ${OUT}${STORE ? ' (웹스토어판: 개발용 key 없음)' : ''}`);
   console.log(`  content.js ${(Buffer.byteLength(content) / 1024).toFixed(0)} KB, 접속 주소 ${hosts.length}개, 함께 넣은 파일: ${vendored.join(', ') || '없음'}`);
   if (STORE) {
     // 윈도우 tar(bsdtar)는 -a 로 이름이 .zip 이면 zip 으로 묶는다.
     const dir = path.join(__dirname, 'store');
     fs.mkdirSync(dir, { recursive: true });
-    const zip = path.join(dir, `통합번역-${h.version}.zip`);
+    const zip = path.join(dir, `멀티번역기-${h.version}.zip`);
     fs.rmSync(zip, { force: true });
     // Git Bash 의 tar(GNU)는 'E:' 를 원격 주소로 읽어 실패했다 — 윈도우 tar.exe 를 직접 부른다.
     const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';

@@ -1,8 +1,8 @@
-# Privacy Policy — All-in-One Translator (통합 번역, Chrome extension)
+# Privacy Policy — Multi Translator (멀티 번역기, formerly 통합 번역; Chrome extension)
 
 Last updated: 2026-11-23 · 한국어: [PRIVACY.md](PRIVACY.md)
 
-All-in-One Translator is a Chrome extension that shows foreign websites, messengers and videos in your language (chosen in the extension window; on first install it follows your Chrome language). **The developer runs no server and does not collect, store or sell any user information.** There is no advertising or analytics code.
+Multi Translator is a Chrome extension that shows foreign websites, messengers and videos in your language (chosen in the extension window; on first install it follows your Chrome language). **The developer runs no server and does not collect, store or sell any user information.** There is no advertising or analytics code.
 
 ## 1. Text sent to other services for translation
 

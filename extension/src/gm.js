@@ -91,7 +91,7 @@ function gmDeadNotice() {
       'position:fixed;left:16px;bottom:16px;z-index:2147483647;max-width:360px;padding:10px 34px 10px 14px;' +
       'border-radius:8px;background:#202124;color:#fff;font:500 13px/1.5 system-ui,sans-serif;' +
       'box-shadow:0 4px 16px rgba(0,0,0,.35)';
-    box.textContent = '통합 번역이 새로 고쳐졌습니다. 이 탭을 새로 고침(F5)하면 다시 번역합니다.';
+    box.textContent = '멀티 번역기가 새로 고쳐졌습니다. 이 탭을 새로 고침(F5)하면 다시 번역합니다.';
     const x = document.createElement('button');
     x.textContent = '×';
     x.title = '닫기';
@@ -109,7 +109,7 @@ function GM_setValue(key, value) {
   if (!gmAlive()) return; // 끊긴 탭 — 이 탭 안에서만 기억한다
   try {
     chrome.storage.local.set({ [GM_PREFIX + key]: value }).catch((e) => {
-      if (gmAlive()) console.warn('[통합 번역] 저장 실패:', key, e && e.message);
+      if (gmAlive()) console.warn('[멀티 번역기] 저장 실패:', key, e && e.message);
     });
   } catch {
     gmAlive();
@@ -375,7 +375,7 @@ if (typeof LanguageDetector !== 'undefined') {
   };
 }
 
-// 몽키의 확장 메뉴 대신 — 도구 막대의 '통합 번역' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
+// 몽키의 확장 메뉴 대신 — 도구 막대의 '멀티 번역기' 단추(popup)가 이 목록을 보여 주고 누른 것을 실행한다.
 const gmMenu = new Map();
 let gmMenuId = 0;
 

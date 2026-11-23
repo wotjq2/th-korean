@@ -24,7 +24,7 @@ try {
 } catch {
   /* 처음 실행 */
 }
-// 내 언어(크롬 '통합 번역' 창에서 고른 기준 언어) — 도우미가 data\mylang.txt 에 받아 둔다(ChromeLink → MyLang.Save).
+// 내 언어(크롬 '멀티 번역기' 창에서 고른 기준 언어) — 도우미가 data\mylang.txt 에 받아 둔다(ChromeLink → MyLang.Save).
 // 스크립트는 띄울 때 GM_getValue('myLang') 로 한 번 읽으므로 바뀌면 도우미가 엔진을 다시 띄운다(MyLang.Poll).
 try {
   const my = fs.readFileSync(path.join(DATA, 'mylang.txt'), 'utf8').trim();
@@ -97,7 +97,7 @@ function installStubs(version) {
 // ---------------------------------------------------------------------------
 // 크롬 내장 번역기 빌려 쓰기(번역 다리, 2026-11-23). 스크립트는 구글이 막히거나 인터넷이 안 되면 끝으로 크롬 내장 번역기
 // (Translator API)를 쓴다(freeRaw·freeTranslateMany). node 에는 그것이 없어 도우미는 구글만 썼다 — 구글이 막히면
-// LINE·화면 번역·자막이 함께 멈췄다(2026-10-27). 크롬이 켜져 있으면 '통합 번역' 확장이 도우미와 통로를 열어 두고
+// LINE·화면 번역·자막이 함께 멈췄다(2026-10-27). 크롬이 켜져 있으면 '멀티 번역기' 확장이 도우미와 통로를 열어 두고
 // (background.js mtBridge → 크롬이 띄운 번역도우미.exe 가 이 사용자만 여는 named pipe — ChromeLink.cs MtBridge),
 // 도우미는 엔진을 띄울 때 그 이름을 TH_MT_PIPE 로 알려 준다. 여기서는 그 pipe 로 확장의 service worker 에 일을 맡기는
 // Translator·LanguageDetector 흉내를 둔다 — 스크립트의 내장 번역기 길(builtinGet·builtinSource)이 그대로 쓴다.

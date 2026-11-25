@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.36.6
+// @version      1.37.0
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -533,6 +533,42 @@
     // '문제 알리기' 가 여는 새 글 화면 — 주소 + 제목·본문을 넣을 칸 이름(GitHub 은 title·body, 구글 설문지는 entry.숫자,
     // 제목 칸이 없으면 titleParam ''). 다 채운 주소가 maxUrl 글자를 넘으면 본문은 복사해 두고 빈 글 화면만 연다.
     report: { url: 'https://github.com/wotjq2/th-korean/issues/new', titleParam: 'title', bodyParam: 'body', maxUrl: 7000 },
+    // 말투(1.37.0) — speechTranslate 위 설명. config.json speech 로 언어·신호·뗄 부름말을 바꾼다(심사 없이).
+    speech: {
+      female: {
+        cue: '(여자) ',
+        enCue: '(Woman) ',
+        langs: ['es', 'pt', 'fr', 'it', 'ru', 'pl', 'he', 'ar', 'hi', 'ur', 'mr'],
+        swap: { my: [['ကျွန်တော်', 'ကျွန်မ'], ['ခင်ဗျာ', 'ရှင်']], km: [['បាទ', 'ចាស']] },
+      },
+      // 높임·반말(2026-11-25 시험 200줄): 이 12개 언어는 신호를 붙이면 높임 틀림이 힌디어 27 → 3, 우르두어 30 → 5, 몽골어 22 → 1,
+      // 프랑스어 17 → 1, 러시아어 12 → 0줄. 구글은 이 언어들을 원래 영어를 거쳐 옮긴다(바로·영어 거쳐 결과가 같았다). 일본어는
+      // 한국어에서 바로가 뜻이 낫고(영어 거치면 0.43 → 0.34), 텔루구어·말레이어는 신호가 안 먹어서 뺐다.
+      polite: {
+        cue: 'Sir, ',
+        langs: ['hi', 'es', 'fr', 'bn', 'ru', 'ur', 'id', 'de', 'mr', 'mn', 'it', 'ta'],
+        strip: {
+          hi: ['सर'], es: ['Señor'], fr: ['Monsieur'], bn: ['স্যার'], ru: ['Сэр'], ur: ['جناب', 'سر'], id: ['Pak', 'Tuan'],
+          de: ['Mein Herr', 'Herr', 'Sir'], mr: ['साहेब', 'सर'], mn: ['Эрхэм ээ', 'Эрхэм'], it: ['Signore'], ta: ['ஐயா', 'சார்'],
+        },
+      },
+      casual: {
+        cue: 'Hey buddy, ',
+        langs: ['hi', 'es', 'fr', 'bn', 'ru', 'ur', 'id', 'de', 'mr', 'mn', 'it', 'ta'],
+        strip: {
+          hi: ['अरे दोस्त', 'अरे यार'], es: ['Hola amigo', 'Oye amigo', 'Hey amigo', 'Oye, amigo'], fr: ['Hé mon pote', 'Hey mon pote', 'Salut mon pote'],
+          bn: ['আরে দোস্ত', 'আরে বন্ধু', 'ওহে বন্ধু', 'ওরে দোস্ত'], ru: ['Эй, приятель', 'Привет, приятель'], ur: ['ارے دوست', 'ارے یار'],
+          id: ['Hai sobat', 'Hei sobat', 'Hei kawan', 'Hai kawan'], de: ['Hey Kumpel'], mr: ['अरे मित्रा', 'अहो मित्रा'],
+          mn: ['Хөөе найзаа', 'Хөөе, найз аа', 'Хөөе'], it: ['Ehi amico'], ta: ['ஏய் நண்பா', 'ஹாய் நண்பா', 'ஏய் நண்பரே', 'நண்பரே'],
+        },
+      },
+      // 웃음 ㅋㅋ·ㅎㅎ → 그 언어 사람들이 치는 웃음. 태국어는 대화 엔진이 따로(하하 → 555). 없는 언어는 예전처럼(하하 → 구글)
+      laugh: {
+        en: 'lol', es: 'jajaja', pt: 'kkkk', fr: 'mdr', it: 'ahah', de: 'haha', ru: 'ахах', pl: 'haha', tr: 'ahah',
+        ja: 'www', zh: '哈哈', 'zh-TW': '哈哈', yue: '哈哈', id: 'wkwk', ms: 'haha', vi: 'haha', tl: 'haha', lo: '555',
+        ar: 'ههههه', he: 'חחח', mn: 'хаха',
+      },
+    },
   };
 
   // 자막(영상 자막 파일·화면에 박힌 자막)을 구글에 넘기기 전에 바꿔 둘 말 — 언어(구글 코드 앞부분)마다 [찾을 말(정규식), 바꿀 말].
@@ -638,6 +674,7 @@
         glossary: rcStr(l.glossary, '', /^[\w.-]{1,60}\.txt$/),
         reverse: rcStr(l.reverse, '', /^[\w.-]{1,60}\.txt$/), // 그 언어 → 한국어 거꾸로 표(언어 교차). 지우면 심사 없이 꺼진다
         reverseKo: rcStr(l.reverseKo, '', /^[\w.-]{1,60}\.txt$/), // 한국어 쪽 뜻이 여럿인 낱말 — 한국어로 옮길 때만
+        glossaryF: rcStr(l.glossaryF, '', /^[\w.-]{1,60}\.txt$/), // 여자 말투 값(내 성별 = 여자일 때 glossary 보다 먼저)
         toKo: l.toKo !== false, // false 면 그 언어 → 한국어는 구글로. 영어는 구글이 더 나았다(2026-11-09 사전 4 : 구글 9)
       });
     }
@@ -750,6 +787,41 @@
       subPrep: rcSubPrep(j.subPrep),
       koPrep: rcKoPrep(j.koPrep),
       report: rcReport(j.report),
+      speech: rcSpeech(j.speech),
+    };
+  }
+
+  // 말투 칸: 신호는 짧은 글, 언어는 코드 목록, 바꿀 말·뗄 부름말은 짧은 글 목록만. 틀린 칸은 그 칸만 기본값으로.
+  function rcSpeech(s) {
+    const D = RC_DEFAULT.speech;
+    const o = s && typeof s === 'object' && !Array.isArray(s) ? s : {};
+    const str = (x, d) => (typeof x === 'string' && x.length <= 24 && !/[\n<>]/.test(x) ? x : d);
+    const langs = (x, d) => (Array.isArray(x) ? x.filter((c) => typeof c === 'string' && RC_LANG.test(c)).slice(0, 40) : d);
+    const words = (x) => (Array.isArray(x) ? x.filter((w) => typeof w === 'string' && w && w.length <= 40).slice(0, 12) : null);
+    const pairs = (x) =>
+      Array.isArray(x) ? x.filter((p) => Array.isArray(p) && typeof p[0] === 'string' && p[0] && p[0].length <= 40 && typeof p[1] === 'string' && p[1].length <= 40).slice(0, 20) : null;
+    const byLang = (x, d, fn) => {
+      if (!x || typeof x !== 'object' || Array.isArray(x)) return d;
+      const out = {};
+      for (const [k, v] of Object.entries(x)) {
+        const w = RC_LANG.test(k) && fn(v);
+        if (w && w.length) out[k] = w;
+      }
+      return out;
+    };
+    const f = o.female && typeof o.female === 'object' ? o.female : {};
+    const p = o.polite && typeof o.polite === 'object' ? o.polite : {};
+    const c = o.casual && typeof o.casual === 'object' ? o.casual : {};
+    return {
+      female: {
+        cue: str(f.cue, D.female.cue),
+        enCue: str(f.enCue, D.female.enCue),
+        langs: langs(f.langs, D.female.langs),
+        swap: byLang(f.swap, D.female.swap, pairs),
+      },
+      polite: { cue: str(p.cue, D.polite.cue), langs: langs(p.langs, D.polite.langs), strip: byLang(p.strip, D.polite.strip, words) },
+      casual: { cue: str(c.cue, D.casual.cue), langs: langs(c.langs, D.casual.langs), strip: byLang(c.strip, D.casual.strip, words) },
+      laugh: byLang(o.laugh, D.laugh, (w) => (typeof w === 'string' && w.length <= 12 && !/[\n<>]/.test(w) ? w : null)),
     };
   }
 
@@ -5654,13 +5726,13 @@
       <div class="lzk-check">
         <input type="checkbox" id="lzk-chat-translate"><span>메신저: 외국어 메시지 밑에 ${MY_KO ? '한국어' : '내 언어'} 표시 (30개 언어)</span>
       </div>
-      <label>메신저: 내 성별 (존댓말 끝말)</label>
+      <label>내 성별 (말투 — 메신저·입력칸, 30개 언어)</label>
       <select id="lzk-chat-particle">
-        <option value="ครับ">남자 — 태국어 ครับ (크랍)</option>
-        <option value="ค่ะ">여자 — 태국어 ค่ะ / คะ (카)</option>
+        <option value="ครับ">남자 — 태국어 ครับ (크랍) · 남자 말투</option>
+        <option value="ค่ะ">여자 — 태국어 ค่ะ / คะ (카) · 여자 말투</option>
         <option value="">정하지 않음 — 붙이지 않음</option>
       </select>
-      <div class="lzk-hint">메신저에서 ~요·~니다로 쳤을 때, 말끝에 남녀가 갈리는 존댓말을 붙이는 언어(태국어)에서 성별에 맞춰 붙입니다. 다른 언어는 존댓말을 번역이 맞춥니다. 반말에는 붙이지 않습니다.</div>
+      <div class="lzk-hint">태국어는 ~요·~니다로 쳤을 때 끝말(ครับ/ค่ะ)을 성별에 맞춰 붙입니다. 나에 대한 말이 남녀로 갈리는 언어(스페인어·프랑스어·러시아어·힌디어·아랍어·히브리어 …)는 여자로 고르면 여자 말로 옮깁니다(피곤해 → estoy cansada · я устала). 미얀마어·크메르어는 여자 존댓말 낱말로 바꿉니다.</div>
       <div class="lzk-check">
         <input type="checkbox" id="lzk-selection"><span>글자를 드래그하면 '한국어로' 버튼 표시</span>
       </div>
@@ -6747,6 +6819,7 @@
           store = { text: String(text || ''), at: Date.now() };
           GM_setValue(key, store);
           langGlossaryMaps.delete(file);
+          phraseRevs.delete(file); // 문장 교차 표도 새 사본으로(phraseCross)
         }
       } catch {
         if (!store) return null; // 처음인데 못 받았다 — 이번엔 구글 번역만
@@ -6792,7 +6865,87 @@
   const CROSS_MAX_LEN = 40;
   async function crossLookupNow(text, from, to) {
     const src = TYPE_LANGS.find((l) => l.id === from);
-    if (!src || !src.reverse || from === to || /[?？؟]\s*$/.test(text)) return '';
+    if (!src || from === to) return '';
+    const word = await wordCross(text, src, from, to);
+    if (word) return word;
+    // 태국어 용어집 키는 붙여 쓴 꼴이 많아(무선이어폰) 한국어로 보여 주기에 맞지 않다 — 받은 태국어는 예전 길
+    if (from === 'th') return '';
+    return phraseCross(text, src, to);
+  }
+
+  // 문장 교차(1.37.0): 언어별 용어집 '직접 고른 말' 의 값(그 언어 문장 — 대화 라운드 16만 줄, Tatoeba 는 사람이 옮긴 짝) →
+  // 한국어 키 → 한국어로 보여 주거나 다른 언어 값으로. 낱말 표에 없을 때만. 받은 말(그 언어 → 한국어)과 한국어가 아닌
+  // 사용자(내 언어 → 상대 언어)에 쓴다. 같은 값이 한국어 여럿에 이어지면(Danke = 고마워·감사합니다) 한국어로는 파일에서 먼저
+  // 나온 키(기본 말 칸이 맨 위), 다른 언어로는 건너갈 값이 모두 같을 때만. 태국어로는 한국어 키를 태국어 엔진(koreanToThai)에
+  // 넣어 용어집으로 옮겨질 때만(한국 사용자가 쳤을 때와 같은 태국어). 표는 처음 쓸 때 그 파일 사본으로 만든다.
+  const PHRASE_MAX_LEN = 120;
+  const phraseRevs = new Map(); // 파일 → Promise<Map(phraseNorm(값) → [한국어 키…])>
+  const phraseNorm = (s) =>
+    String(s || '')
+      .normalize('NFC')
+      .toLowerCase()
+      .replace(/[​-‍﻿­ً-ْٰ]/g, '')
+      .replace(/[\s.,!?¡¿~…。、，！？؟،"'“”‘’«»()\-–—:;]+/gu, '');
+  function phraseRev(file) {
+    if (!phraseRevs.has(file)) {
+      const made = (async () => {
+        await langGlossaryMap(file); // 사본 받기(1시간마다)는 언어별 용어집과 같은 길
+        const store = await gmLazyGet(`langGlossary:${file}`, null);
+        const rev = new Map();
+        let inCurated = false;
+        for (const line of String((store && store.text) || '').split('\n')) {
+          const t = line.trim();
+          if (t.startsWith('#')) {
+            if (/^#\s*===.*직접 고른 말/.test(t)) inCurated = true;
+            continue;
+          }
+          const i = t.indexOf('=');
+          if (!inCurated || i <= 0) continue;
+          const k = normKey(t.slice(0, i));
+          const v = phraseNorm(t.slice(i + 1));
+          if (!k || !v || !HANGUL.test(k)) continue;
+          const list = rev.get(v);
+          if (!list) rev.set(v, [k]);
+          else if (list.length < 8 && !list.includes(k)) list.push(k);
+        }
+        return rev;
+      })().catch(() => new Map());
+      phraseRevs.set(file, made);
+    }
+    return phraseRevs.get(file);
+  }
+  async function phraseCross(text, src, to) {
+    if (!src.glossary || [...text].length > PHRASE_MAX_LEN) return '';
+    const v = phraseNorm(text);
+    if (!v) return '';
+    const [rev, m] = await Promise.all([phraseRev(src.glossary), langGlossaryMap(src.glossary)]);
+    // 같은 한국어가 아래에서 다른 값으로 바뀐 줄(아래 것이 이긴다)은 뺀다
+    const keys = ((rev && rev.get(v)) || []).filter((k) => m && phraseNorm(m.get(squash(k)) || '') === v);
+    if (!keys.length) return '';
+    const q = /[?？؟]\s*$/.test(text);
+    if (to === 'ko') return keys[0] + (q && !/[?？]$/.test(keys[0]) ? '?' : '');
+    if (to === 'th') {
+      await ensureGlossary();
+      const outs = [];
+      for (const k of keys.slice(0, 3)) {
+        const r = await koreanToThai(q ? `${k}?` : k);
+        if (!r || !r.thai || !/용어집/.test(r.via || '')) return '';
+        outs.push(r.thai);
+      }
+      return new Set(outs.map((s) => phraseNorm(s).replace(/(ครับ|ค่ะ|คะ)$/, ''))).size === 1 ? outs[0] : '';
+    }
+    const dst = TYPE_LANGS.find((l) => l.id === to);
+    if (!dst || !dst.glossary) return '';
+    const there = await langGlossaryMap(dst.glossary);
+    const vals = keys.map((k) => there && there.get(squash(k))).filter(Boolean);
+    if (!vals.length || new Set(vals.map(phraseNorm)).size !== 1) return '';
+    if (q && !/[?？؟]\s*$/.test(vals[0])) return '';
+    return vals[0];
+  }
+
+  // 낱말 표(reverse-xx.txt, 한국어기초사전) — 1.37.0 전의 crossLookupNow 그대로
+  async function wordCross(text, src, from, to) {
+    if (!src.reverse || /[?？؟]\s*$/.test(text)) return '';
     if (to === 'ko' && src.toKo === false) return '';
     const word = text.replace(/[\s.!~,。！…]+$/, '').replace(/^[¡¿\s]+/, '');
     if (!word || [...word].length > CROSS_MAX_LEN) return '';
@@ -6840,11 +6993,109 @@
       await ensureGlossary();
       return koreanToThai(value);
     }
+    // 쇼핑 검색어는 말투와 상관없다 — 예전 길 그대로
+    const talk = !opt.shop;
+    // 웃음(ㅋㅋ·ㅎㅎ)은 떼고 옮긴 뒤 그 언어 웃음으로 붙인다(jajaja·kkkk·www·哈哈·wkwk…) — 뗀 나머지가 용어집에 맞기도 한다
+    const laugh = talk && RC.speech.laugh[lang.id];
+    if (laugh && /^[\sㅋㅎ]+$/.test(value) && /[ㅋㅎ]{2}/.test(value)) return { thai: laugh, via: '용어집' };
+    if (laugh) {
+      const head = /^\s*[ㅋㅎ]{2,}[ㅋㅎ\s]*/.exec(value);
+      const tail = /[\sㅋㅎ]*[ㅋㅎ]{2,}\s*$/.exec(value);
+      const core = (head || tail) && value.slice(head ? head[0].length : 0, tail ? value.length - tail[0].length : value.length).trim();
+      if (core && HANGUL.test(core)) {
+        const r = await koreanToLang(core, lang, opt);
+        return { ...r, thai: r.thai && `${head ? laugh + ' ' : ''}${r.thai}${tail ? ' ' + laugh : ''}` };
+      }
+    }
+    if (talk && speakerFemale() && lang.glossaryF) {
+      const f = await langGlossaryLookup(value, { glossary: lang.glossaryF }).catch(() => '');
+      if (f) return { thai: speechSwap(f, lang), via: '용어집' };
+    }
     const own = await langGlossaryLookup(value, lang, { curatedOnly: !!opt.shop }).catch(() => '');
-    if (own) return { thai: own, via: '용어집' };
+    if (own) return { thai: talk ? speechSwap(own, lang) : own, via: '용어집' };
     const hit = (lang.id === 'en' || lang.id === 'zh') && koEnZhLookup(value, lang.id);
     if (hit) return { thai: hit, via: '용어집' };
-    return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: freeLabel('번역') };
+    if (!talk) return { thai: await freeTranslateOne(value, 'ko', lang.mt), via: freeLabel('번역') };
+    return { thai: await speechTranslate(value, lang), via: freeLabel('번역') };
+  }
+
+  // 말투(1.37.0, 2026-11-25 잰 것). 내 성별은 설정 '내 성별'(태국어 끝말 ครับ/ค่ะ 와 같은 칸 cfg.chatParticle)을 모든 언어에 쓴다.
+  //  - 여자: 남녀가 갈리는 언어(RC.speech.female.langs)는 구글에 '(여자) ' 를 붙여 묻고 앞 괄호를 뗀다 — 구글이 '(Mujer) Estoy
+  //    cansada.' 처럼 괄호까지 옮긴다(스페인어·러시아어·프랑스어·히브리어·포르투갈어·폴란드어 36줄). 그냥 물으면 피곤해 → cansado ·
+  //    устал · थक गया(모두 남자 말). 묻는 말·너/당신이 든 말은 상대를 여자로 만들 수 있어 붙이지 않는다. 미얀마·크메르어는 남녀가
+  //    갈리는 낱말을 바꾼다(swap: ကျွန်တော် → ကျွန်မ). 언어별 용어집은 여자 말투 값(glossaryF)이 있으면 그것을 먼저.
+  //  - 높임·반말: ~요·~ㅂ니다로 쓴 말을 반말(du·tu·ты·तुम)로, 반말을 높임(Sie·vous·вы·आप)으로 옮기는 언어(RC.speech.polite /
+  //    casual .langs)는 영어로 옮긴 뒤 'Sir, ' / 'Hey buddy, ' 를 붙여 옮기고 부름말(Herr, · Hey Kumpel, …)을 뗀다. 독일어 높임
+  //    12줄: 바로 10줄이 du → 12/12 Sie. 부름말을 못 떼면(목록에 없는 꼴) 예전처럼 바로 옮긴다. '(존댓말)' 괄호는 효과가 없었다.
+  const speakerFemale = () => cfg.chatParticle === 'ค่ะ';
+  const KO_YOU = /(^|[\s,.!?])(너|네가|니가|널|너를|너한테|너랑|너도|너는|너의|당신|당신은|당신이|자기야)(?=[\s,.!?~]|$)/;
+  const KO_INTIMATE = /(^|\s)(너|네가|니가|널|너를|너한테|너랑|너도|너는|너의)(\s|$)/;
+  const PAREN_HEAD = /^\s*[(（[][^)）\]\n]{1,30}[)）\]]\s*/;
+  // 말끝(마지막 문장): 'P' 높임 / 'C' 반말 / '' 모름. 니다·니까는 앞 글자 받침이 ㅂ 일 때만 높임(갑니다 — 아니라니까 는 반말).
+  // 너·네가 에 ~요 를 붙인 말('네가 필요해요')은 가까운 사이라 높임으로 치지 않는다. 너희·여러분(여럿)은 모름.
+  function koSpeechKind(value) {
+    const s0 = String(value || '').trim();
+    if (/(너희|니네|여러분|얘들아)/.test(s0)) return '';
+    const s = (s0.split(/(?<=[.!?？！~])\s+/).pop() || '').replace(/[\s.!?~,…ㅋㅎㅠㅜ？！]+$/, '');
+    if ((s.match(/[가-힣]/g) || []).length < 2) return '';
+    const bieup = (ch) => !!ch && ch >= '가' && ch <= '힣' && (ch.charCodeAt(0) - 0xac00) % 28 === 17;
+    if (/(니다|니까)$/.test(s)) return bieup(s[s.length - 3]) ? (KO_INTIMATE.test(s0) ? '' : 'P') : 'C';
+    if (/(요|세요|십시오|죠)$/.test(s)) return KO_INTIMATE.test(s0) ? '' : 'P';
+    if (/(어|아|야|지|니|냐|자|라|해|줘|봐|래|네|군|구나|거든|잖아)$/.test(s)) return 'C';
+    return '';
+  }
+  function speechSwap(text, lang) {
+    const list = speakerFemale() && RC.speech.female.swap[lang.id];
+    if (!list || !text) return text;
+    let t = String(text);
+    for (const [a, b] of list) t = t.split(a).join(b);
+    return t;
+  }
+  // 부름말 떼기 — 앞(쉼표가 없어도: 'ارے یار آپ…')이나 끝('…, mein Herr?'). 못 떼면 ''.
+  function stripVocative(out, words) {
+    const t = String(out || '').trim();
+    for (const w of words || []) {
+      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const head = new RegExp(`^${esc}(?![\\p{L}\\p{M}])\\s*[,،、，!]?\\s*`, 'iu');
+      if (head.test(t)) {
+        const r = t.replace(head, '');
+        return r && /^\p{Ll}/u.test(r) ? r.charAt(0).toUpperCase() + r.slice(1) : r;
+      }
+      const tail = new RegExp(`\\s*[,،、，]\\s*${esc}\\s*([?？!！.。؟।]*)$`, 'iu');
+      if (tail.test(t)) return t.replace(tail, '$1');
+    }
+    return '';
+  }
+  async function speechTranslate(value, lang) {
+    const mt = lang.mt || lang.id;
+    const S = RC.speech;
+    const fem = speakerFemale() && S.female.langs.includes(lang.id) && !/[?？]\s*$/.test(value) && !KO_YOU.test(value);
+    const kind = koSpeechKind(value);
+    const reg = kind === 'P' ? S.polite : kind === 'C' ? S.casual : null;
+    if (reg && reg.langs.includes(lang.id) && reg.strip[lang.id]) {
+      try {
+        const en = String(await freeTranslateOne(value, 'ko', 'en')).trim();
+        if (en && !HANGUL.test(en)) {
+          const lead = /^(I|I'\w+|OK|Okay)\b/.test(en) ? en : en.charAt(0).toLowerCase() + en.slice(1);
+          let out = String(await freeTranslateOne((fem ? S.female.enCue : '') + reg.cue + lead, 'en', mt)).trim();
+          if (fem) out = PAREN_HEAD.test(out) ? out.replace(PAREN_HEAD, '') : '';
+          const t = out && stripVocative(out, reg.strip[lang.id]);
+          if (t) return speechSwap(t, lang);
+        }
+      } catch {
+        /* 아래 길로 */
+      }
+    }
+    if (fem) {
+      try {
+        const out = String(await freeTranslateOne(S.female.cue + value, 'ko', mt));
+        const t = PAREN_HEAD.test(out) ? out.replace(PAREN_HEAD, '').trim() : '';
+        if (t) return speechSwap(t, lang);
+      } catch {
+        /* 아래 길로 */
+      }
+    }
+    return speechSwap(await freeTranslateOne(value, 'ko', mt), lang);
   }
 
   // 사이트가 입력칸을 새 칸으로 바꿔 끼우는 일이 있다 — 위키백과는 검색칸을 처음 누르면 Vue 검색칸으로 바꾸며 그때 값을
@@ -12290,7 +12541,7 @@
     const to = MY_KO ? 'ko' : MY2;
     await Promise.all(
       lines
-        .filter((l) => [...l].length <= CROSS_MAX_LEN)
+        .filter((l) => [...l].length <= PHRASE_MAX_LEN) // 낱말 표는 40자, 문장 교차는 120자까지(crossLookupNow)
         .map(async (line) => {
           const from = chatScriptLang(line) || chatLangCache.get(line) || partner;
           const v = from ? await crossLookup(line, from, to) : '';

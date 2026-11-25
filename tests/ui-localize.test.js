@@ -46,3 +46,19 @@ test('글 노드: 옮긴 글에 한국어가 남아도 다시 옮기지 않는�
   for (let i = 0; i < 5; i++) fixText(node);
   assert.equal(node.nodeValue, '번역 Translate');
 });
+
+test('화면 글 표(1.37.0): ui-<내 언어>.txt 값이 구글 사본보다 먼저, 받으면 사본도 표 값으로', async () => {
+  const ui = '# === 화면 글 — 아래는 직접 고른 말 ===\n켜기=Turn on\n닫기=Close window\n';
+  const s = load({ myLang: 'es', store: { 'uiTr:es': { 닫기: 'cerca', 설정: 'Configuración' } }, glossaryFiles: { 'ui-es.txt': ui } });
+  const rep = s.peek('uiReplace');
+  rep('설정'); // 처음 부르면 표를 받기 시작한다
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(rep('켜기'), 'Turn on');
+  assert.equal(rep('닫기'), 'Close window'); // 구글 사본 'cerca'(가까이) 대신
+  assert.equal(rep('설정'), 'Configuración'); // 표에 없으면 사본
+  assert.equal(s.store['uiTr:es'].닫기, 'Close window');
+  // 내 언어가 한국어면 표를 받지 않는다
+  const k = load({ myLang: 'ko', glossaryFiles: { 'ui-ko.txt': ui } });
+  k.peek('uiTableLoad')();
+  assert.equal(k.requests.filter((u) => /ui-/.test(u)).length, 0);
+});

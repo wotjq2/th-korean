@@ -44,3 +44,13 @@ test('너무 긴 말·없는 말은 빈칸(구글로)', async () => {
   assert.equal(await cross('x'.repeat(130), 'de', 'ko'), '');
   assert.equal(await cross('Das habe ich nie gesagt', 'de', 'ko'), '');
 });
+
+test('한국어 키가 여럿이면 옛 맞춤법(읍니다)·문장 끝이 없는 말은 뒤로, 그다음 짧은 것', async () => {
+  const f = {
+    'glossary-zh.txt': CUR + '나는 준비됐읍니다=我准备好了\n준비됐어요=我准备好了\n초면=初次见面\n처음 뵙겠습니다=初次见面\n',
+  };
+  const t = load({ config, glossaryFiles: f, glossary: '' });
+  const c = t.peek('crossLookup');
+  assert.equal(await c('我准备好了。', 'zh', 'ko'), '준비됐어요');
+  assert.equal(await c('初次见面', 'zh', 'ko'), '처음 뵙겠습니다');
+});

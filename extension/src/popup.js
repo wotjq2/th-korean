@@ -123,9 +123,47 @@ async function uiTranslate(runs) {
   );
 }
 
+// 화면 글 표(1.37.0) — 스크립트 uiReplace 와 같은 ui-<내 언어>.txt(단어장 저장소). 페이지 쪽이 받아 둔 사본(gm:langGlossary:…)을
+// 먼저 쓰고, 없거나 하루 넘었으면 GitHub 에서 받는다(3초). 짧은 낱말을 뜻이 분명한 영어에서 옮긴 값이라 구글보다 먼저.
+let uiTable = null;
+const squashUi = (s) => s.replace(/\s+/g, '').toLowerCase();
+async function uiTableLoad() {
+  const key = `gm:langGlossary:ui-${MY}.txt`;
+  let store = (await chrome.storage.local.get(key))[key];
+  if (!store || !store.text || Date.now() - (store.at || 0) > 864e5) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 3000);
+      const r = await fetch(`https://raw.githubusercontent.com/wotjq2/th-korean-glossary/main/ui-${MY}.txt`, { signal: ctl.signal, credentials: 'omit' });
+      clearTimeout(t);
+      if (r.ok) {
+        store = { text: await r.text(), at: Date.now() };
+        chrome.storage.local.set({ [key]: store });
+      }
+    } catch {
+      /* 받지 못하면 구글만 */
+    }
+  }
+  if (!store || !store.text) return;
+  const m = new Map();
+  let on = false;
+  for (const line of store.text.split('\n')) {
+    const l = line.trim();
+    if (l.startsWith('#')) {
+      if (/^#\s*===.*직접 고른 말/.test(l)) on = true;
+      continue;
+    }
+    const i = l.indexOf('=');
+    if (on && i > 0) m.set(squashUi(l.slice(0, i)), l.slice(i + 1).trim());
+  }
+  if (m.size) uiTable = m;
+}
+
 function uiReplace(text) {
   let missing = false;
   const out = text.replace(UI_RUN, (run) => {
+    const t = uiTable && uiTable.get(squashUi(run));
+    if (t) return t;
     if (uiTr[run] != null) return uiTr[run];
     uiQueue.add(run);
     missing = true;
@@ -181,6 +219,7 @@ async function uiFlush() {
 async function localize() {
   if (MY === 'ko') return;
   uiTr = (await chrome.storage.local.get('gm:uiTr:' + MY))['gm:uiTr:' + MY] || {};
+  await uiTableLoad();
   uiWalk(document.body);
   new MutationObserver((list) => {
     for (const m of list) {

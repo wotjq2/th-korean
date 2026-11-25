@@ -162,3 +162,28 @@ test('말끝 가르기: ㅂ니다·ㅂ니까 는 높임, 아니라니까 는 반
   const want = { '감사합니다': 'P', '갑니까?': 'P', '바쁘세요?': 'P', '이건 농담이 아니라니까': 'C', '밥 먹었어?': 'C', '같이 가자': 'C', '자': '', '너희 어디야?': '', '네가 필요해요': '', '안녕. 잘 지내요?': 'P' };
   for (const [ko, kind] of Object.entries(want)) assert.equal(k(ko), kind, ko);
 });
+
+test('되돌려 보기: 구글로 옮긴 말만 내 언어로 다시 옮겨 안내 둘째 줄에 붙인다', async () => {
+  const g = google((q, sl, tl) => (tl === 'ko' ? '얼마예요?' : 'x'));
+  const s = load({ config: noReg, http: g.http });
+  const de = lang(s, 'de');
+  const msg = '"얼마예요?" → "Wie viel kostet das?"  (무료 API)';
+  s.peek('toast')(msg + '\n확인 후 Enter');
+  await s.peek('backCheck')('Wie viel kostet das?', de, '무료 API', msg);
+  assert.equal(s.attached.get('lzk-toast').textContent, msg + '\n↩ 얼마예요?\n확인 후 Enter');
+  assert.deepEqual(g.asked, [['de', 'ko', 'Wie viel kostet das?']]);
+  // 용어집 말은 묻지 않는다, 그새 다른 안내로 바뀌었으면 붙이지 않는다
+  const g2 = google(() => '뜻');
+  const s2 = load({ config: noReg, http: g2.http });
+  s2.peek('toast')(msg);
+  await s2.peek('backCheck')('Wie viel kostet das?', lang(s2, 'de'), '용어집', msg);
+  assert.equal(g2.asked.length, 0);
+  s2.peek('toast')('다른 안내');
+  await s2.peek('backCheck')('Wie viel kostet das?', lang(s2, 'de'), '무료 API', msg);
+  assert.equal(s2.attached.get('lzk-toast').textContent, '다른 안내');
+  // config speech.backCheck=false 면 끈다
+  const g3 = google(() => '뜻');
+  const s3 = load({ config: withSpeech({ backCheck: false }), http: g3.http });
+  await s3.peek('backCheck')('x', lang(s3, 'de'), '무료 API', msg);
+  assert.equal(g3.asked.length, 0);
+});

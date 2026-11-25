@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.37.0
+// @version      1.37.1
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -225,7 +225,35 @@
   let uiTimer = 0;
   let uiSaveTimer = 0;
 
+  // 화면 글 표(1.37.0): 단어장 저장소의 ui-<내 언어>.txt — 짧은 낱말을 뜻이 분명한 영어에서 옮긴 값(켜기 → es Encender;
+  // 구글에 한국어로 물으면 'En'·vi 'TRÊN'·ar 'على', 닫기 → es 'cerca' 가까이). 구글 사본(uiTr)보다 먼저. 언어별 용어집과 같은 길로
+  // 받는다(사본·1시간). 확장 창(popup.js)도 같은 사본(langGlossary:ui-…)을 쓴다.
+  let uiTable = null;
+  let uiTableAsked = false;
+  function uiTableLoad() {
+    if (uiTableAsked || MY_KO) return;
+    uiTableAsked = true;
+    try {
+      langGlossaryMap(`ui-${MY}.txt`)
+        .then((m) => {
+          if (!m || !m.size) return;
+          uiTable = m;
+          // 구글로 옮겨 둔 사본도 표 값으로 — 다음 페이지부터는 처음부터 표 값이 보인다
+          const tr = uiLoad();
+          let changed = false;
+          for (const k of Object.keys(tr)) {
+            const t = m.get(squash(k));
+            if (t && tr[k] !== t) (tr[k] = t), (changed = true);
+          }
+          if (changed) GM_setValue('uiTr:' + MY, tr);
+        })
+        .catch(() => {});
+    } catch {
+      uiTableAsked = false; // 스크립트가 아직 다 안 읽혔다(맨 처음) — 다음에 다시
+    }
+  }
   function uiLoad() {
+    uiTableLoad();
     if (uiTr) return uiTr;
     try {
       uiTr = GM_getValue('uiTr:' + MY, null) || {};
@@ -239,6 +267,8 @@
     const tr = uiLoad();
     let missing = false;
     const out = text.replace(UI_RUN, (run) => {
+      const t = uiTable && uiTable.get(squash(run));
+      if (t) return t;
       const v = tr[run];
       if (v != null) return v;
       uiQueue.add(run);
@@ -568,6 +598,8 @@
         ja: 'www', zh: '哈哈', 'zh-TW': '哈哈', yue: '哈哈', id: 'wkwk', ms: 'haha', vi: 'haha', tl: 'haha', lo: '555',
         ar: 'ههههه', he: 'חחח', mn: 'хаха',
       },
+      // 되돌려 보기(backCheck): 입력칸에서 구글로 옮긴 말을 내 언어로 다시 옮겨 안내에 붙인다
+      backCheck: true,
     },
   };
 
@@ -822,6 +854,7 @@
       polite: { cue: str(p.cue, D.polite.cue), langs: langs(p.langs, D.polite.langs), strip: byLang(p.strip, D.polite.strip, words) },
       casual: { cue: str(c.cue, D.casual.cue), langs: langs(c.langs, D.casual.langs), strip: byLang(c.strip, D.casual.strip, words) },
       laugh: byLang(o.laugh, D.laugh, (w) => (typeof w === 'string' && w.length <= 12 && !/[\n<>]/.test(w) ? w : null)),
+      backCheck: typeof o.backCheck === 'boolean' ? o.backCheck : D.backCheck,
     };
   }
 
@@ -6923,7 +6956,15 @@
     const keys = ((rev && rev.get(v)) || []).filter((k) => m && phraseNorm(m.get(squash(k)) || '') === v);
     if (!keys.length) return '';
     const q = /[?？؟]\s*$/.test(text);
-    if (to === 'ko') return keys[0] + (q && !/[?？]$/.test(keys[0]) ? '?' : '');
+    if (to === 'ko') {
+      // 한국어 키가 여럿이면: 옛 맞춤법(준비됐읍니다 — Tatoeba 문장)은 뒤로, 문장 끝(요·다·어…)이 없는 말(초면)도 뒤로, 그다음 짧은 것
+      const rank = (k) =>
+        (/읍니(다|까)/.test(k) ? 100 : 0) +
+        (/(요|다|어|아|야|지|니|냐|까|죠|네|래|자|라|해|줘|봐|워|와|돼|대|군|구나|거든|잖아|게|걸|데|고|나|가|세요)$/.test(k) ? 0 : 10) +
+        [...k].length / 100;
+      const best = keys.slice().sort((a, b) => rank(a) - rank(b))[0];
+      return best + (q && !/[?？]$/.test(best) ? '?' : '');
+    }
     if (to === 'th') {
       await ensureGlossary();
       const outs = [];
@@ -7140,15 +7181,19 @@
       } catch {
         /* 선택 범위를 못 쓰는 칸 */
       }
-      const msg = `"${value}" → "${thai}"  (${via})` + (note ? `\n${note}` : '');
+      const voice = voiceFor(lang.mt || lang.id);
+      const msg = `"${value}" → "${thai}"  (${via})` + (voice ? '  🔊' : '') + (note ? `\n${note}` : '');
+      // 누르면 그 언어 목소리로 읽어 준다(8번, 1.37.0) — 가게·택시에서 화면을 보여 주거나 들려줄 때
+      const say = () => speakText(thai, lang.mt || lang.id);
       // 설정 '검색 전 번역된 태국어 확인 (Enter 한 번 더)' 를 라자다·쇼피와 똑같이 따른다.
       cfg.confirmSearch = GM_getValue('confirmSearch', cfg.confirmSearch);
       if (cfg.confirmSearch) {
-        toast(`${msg}\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.`, note ? 9000 : 6000);
+        toastAction(`${msg}\n확인 후 Enter 를 다시 누르면 이 사이트에서 검색합니다. 직접 고쳐도 됩니다.`, note ? 9000 : 6000, say);
       } else {
-        toast(msg, note ? 8000 : 2500);
+        toastAction(msg, note ? 8000 : 2500, say);
         submitGeneric(input);
       }
+      backCheck(thai, lang, via, msg);
     } catch (e) {
       toast(`${MY_KO ? '한국어를 ' : ''}${langName(lang)}로 바꾸지 못했습니다: ${e.message || e}`, 4000);
     } finally {
@@ -7156,6 +7201,57 @@
       setBadge(null);
       updateGenericChip();
     }
+  }
+
+  // 되돌려 보기(7번, 1.37.0): 구글로 옮긴 말은 내 언어로 다시 옮긴 뜻을 안내 둘째 줄에 붙인다(↩ …) — 외국어를 모르는
+  // 사람이 보내기 전에 뜻이 맞는지 본다. 용어집·사전 말은 사람이 고른 값이라 묻지 않는다. config speech.backCheck=false 면 끈다.
+  async function backCheck(out, lang, via, msg) {
+    if (!RC.speech.backCheck || /용어집|사전/.test(via || '') || !out) return;
+    let back = '';
+    try {
+      back = String(await freeTranslateOne(out, lang.mt || lang.id, MY)).trim();
+    } catch {
+      return;
+    }
+    const el = document.getElementById('lzk-toast');
+    const head = msg.split('\n')[0];
+    if (!back || !el || !el.textContent.startsWith(head)) return; // 그새 다른 안내로 바뀌었다
+    const lines = el.textContent.split('\n');
+    lines.splice(1, 0, `↩ ${back}`);
+    el.textContent = lines.join('\n');
+    placeLzk();
+  }
+
+  // 소리로 읽기(8번): 브라우저에 든 그 언어 목소리(크롬은 Google 음성, 윈도우는 설치한 음성). 없으면 안내만.
+  function voiceFor(code) {
+    if (typeof speechSynthesis === 'undefined') return null;
+    const c = String(code || '').toLowerCase();
+    const base = c.split('-')[0];
+    const vs = speechSynthesis.getVoices() || [];
+    return vs.find((v) => String(v.lang || '').toLowerCase() === c) || vs.find((v) => String(v.lang || '').toLowerCase().split(/[-_]/)[0] === base) || null;
+  }
+  function speakText(text, code) {
+    const v = voiceFor(code);
+    if (!v) {
+      toast('이 PC 에는 이 언어 목소리가 없습니다 — 윈도우 설정 > 시간 및 언어 > 음성에서 더할 수 있습니다.', 5000);
+      return;
+    }
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(String(text));
+      u.voice = v;
+      u.lang = v.lang;
+      u.rate = 0.9;
+      speechSynthesis.speak(u);
+    } catch {
+      /* 목소리를 못 쓰는 곳 */
+    }
+  }
+  // 목소리 목록은 늦게 차기도 한다 — 처음에 한 번 불러 둔다
+  try {
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices();
+  } catch {
+    /* 없음 */
   }
 
   // 한국어가 든 입력칸 오른쪽에 '→ ไทย'. 누르면 Enter 와 같다(자동완성 목록이 Enter 를

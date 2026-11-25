@@ -1666,6 +1666,7 @@ async function hsReadLine(v, model, kind, lang) {
   if (c7 > conf) (text = t7), (conf = c7);
   const ok = (hsOk(text, conf, kind) || (agree && hsOk(text, 100, kind))) && hsPlausible(text, conf);
   if (kind === 'mymr') text = hsMyFix(text);
+  if (ok) text = await hsLmFix(text, kind); // 미얀마·라오: 단어장 글 모형으로 헷갈리는 글자 고침(13번)
   return { text, conf, lang, ok };
 }
 
@@ -1706,6 +1707,94 @@ function hsAgree(a, b) {
 // 미얀마 모델이 자주 틀리는 꼴: 'ော'·'ါ' 뒤의 'ံ'(U+1036)은 쓰지 않는 꼴 — 'ော်'·'ါ်'(U+103A)이다('တောံ' → 'တော်').
 function hsMyFix(t) {
   return String(t).replace(/(ော|ါ)ံ/g, '$1်');
+}
+
+// 미얀마·라오어 글자 고침(2026-11-25, 13번): 단어장 값(그 언어 문장 1만 줄 넘게)으로 만든 글자 3-gram 모형으로, 헷갈리는 글자
+// 후보 중 실제 글에 가까운 쪽을 고른다. 미얀마 ် ↔ ံ ↔ ိ (ဘယ် → ဘယံ), ွ ↔ ှ (သွား → သှား), 군더더기 ံ / 라오 성조 ່ ້ ໊ ໋ 서로·
+// 지움, 모음·자음 뒤 ້ ່ 넣기(ນີ້ → ນີ). 바꿀 때마다 벌점(pen) — 시험(ycrops 미얀마 9·라오 9줄, 단어장 90% 로 배우고 남은 10%
+// 깨끗한 줄 1,257·1,221줄): 글자 오류 미얀마 27 → 15(벌점 5), 라오 21 → 16(벌점 8), 나빠진 줄 0, 깨끗한 줄을 바꾼 것 1·1줄.
+const HS_LM_SET = {
+  mymr: { id: 'my', pen: 5, sub: [['်', 'ံ', 'ိ'], ['ွ', 'ှ']], del: ['ံ'], ins: [], after: null },
+  laoo: { id: 'lo', pen: 8, sub: [['່', '້', '໊', '໋']], del: ['່', '້', '໊', '໋'], ins: ['້', '່'], after: /[ກ-ຮິ-ືໍ]/ },
+};
+function hsLmTrain(lines) {
+  const tri = new Map(), bi = new Map(), uni = new Map(), bic = new Map();
+  let n = 0;
+  for (const l of lines) {
+    const s = [...('^^' + String(l).replace(/\s+/g, ' ') + '$')];
+    for (let i = 2; i < s.length; i++) {
+      const k = s[i - 2] + s[i - 1] + s[i];
+      tri.set(k, (tri.get(k) || 0) + 1);
+      bi.set(s[i - 2] + s[i - 1], (bi.get(s[i - 2] + s[i - 1]) || 0) + 1);
+      bic.set(s[i - 1] + s[i], (bic.get(s[i - 1] + s[i]) || 0) + 1);
+      uni.set(s[i], (uni.get(s[i]) || 0) + 1);
+      n++;
+    }
+  }
+  const v = uni.size + 1;
+  return (a, b, c) =>
+    Math.log(0.6 * ((tri.get(a + b + c) || 0) / ((bi.get(a + b) || 0) + 1)) + 0.3 * ((bic.get(b + c) || 0) / ((uni.get(b) || 0) + 1)) + 0.1 * (((uni.get(c) || 0) + 1) / (n + v)));
+}
+// 빔 검색: 글자마다 그대로 / 같은 묶음의 다른 글자 / 지움 / (뒤에) 성조 넣기
+function hsLmBest(lm, set, text) {
+  const ch = [...String(text)];
+  let beam = [{ out: ['^', '^'], lp: 0 }];
+  for (let i = 0; i <= ch.length; i++) {
+    const c = i < ch.length ? ch[i] : '$';
+    const next = [];
+    for (const h of beam) {
+      const a = h.out[h.out.length - 2], b = h.out[h.out.length - 1];
+      const opts = [[c, 0]];
+      if (c !== '$') {
+        for (const g of set.sub) if (g.includes(c)) for (const o of g) if (o !== c) opts.push([o, 1]);
+        if (set.del.includes(c)) opts.push(['', 1]);
+      }
+      for (const [o, e] of opts) {
+        if (!o) {
+          next.push({ out: h.out, lp: h.lp - set.pen });
+          continue;
+        }
+        const lp = h.lp + lm(a, b, o) - e * set.pen;
+        next.push({ out: [...h.out, o], lp });
+        if (set.ins.length && c !== '$' && set.after && set.after.test(o) && !(i + 1 < ch.length && /[່-໋]/.test(ch[i + 1]))) {
+          for (const t of set.ins) next.push({ out: [...h.out, o, t], lp: lp + lm(b, o, t) - set.pen });
+        }
+      }
+    }
+    const best = new Map();
+    for (const h of next) {
+      const k = h.out.slice(-2).join('') + '|' + h.out.length;
+      if (!best.has(k) || best.get(k).lp < h.lp) best.set(k, h);
+    }
+    beam = [...best.values()].sort((x, y) => y.lp - x.lp).slice(0, 24);
+  }
+  return beam[0].out.slice(2, -1).join('');
+}
+const hsLms = new Map(); // kind → { text: 배운 단어장 글, lm }
+async function hsLmFix(text, kind) {
+  const set = HS_LM_SET[kind];
+  if (!set || !text || !T || !T.langGlossaryMap) return text;
+  try {
+    let file = `glossary-${set.id}.txt`;
+    try {
+      const l = (JSON.parse(configText()).languages || []).find((x) => x.id === set.id);
+      if (l && l.glossary) file = l.glossary;
+    } catch {
+      /* 설정 사본이 없으면 기본 이름 */
+    }
+    await T.langGlossaryMap(file);
+    const st = store[`langGlossary:${file}`];
+    if (!st || !st.text) return text;
+    let m = hsLms.get(kind);
+    if (!m || m.text !== st.text) {
+      const lines = st.text.split('\n').filter((l) => !l.startsWith('#') && l.includes('=')).map((l) => l.slice(l.indexOf('=') + 1).trim());
+      m = { text: st.text, lm: hsLmTrain(lines) };
+      hsLms.set(kind, m);
+    }
+    return hsLmBest(m.lm, set, text);
+  } catch {
+    return text;
+  }
 }
 
 // text = JSON {w, h, vh(줄을 자른 그림 기준 영상 높이), rows:[줄 위, 줄 아래], core?:[띠 위, 띠 아래], n?: 글줄 수,

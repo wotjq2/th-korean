@@ -112,3 +112,20 @@ test('아랫줄 다시 읽기의 깐깐한 글 기준(hsRetryClean): 정상 문�
   }
   for (const t of ['ngay :aygl! .', 'ngay | bây', '', '. .']) assert.equal(c.f(t), false, t);
 });
+
+test('미얀마·라오 글자 고침(13번, 2026-11-25): 단어장 글 모형으로 헷갈리는 글자만 바로잡고 멀쩡한 줄은 그대로', () => {
+  const set = (src.match(/^const HS_LM_SET = \{[\s\S]*?^\};$/m) || [])[0];
+  assert.ok(set, 'HS_LM_SET 이 engine.js 에 없음');
+  const c = vm.createContext({});
+  vm.runInContext(`${set}\n${cut('hsLmTrain')}\n${cut('hsLmBest')}\nthis.S = HS_LM_SET; this.train = hsLmTrain; this.best = hsLmBest;`, c);
+  const my = ['သူဘယ်သွားလဲ', 'ကျွန်တော်မသိဘူး', 'ဘယ်သွားမလဲ', 'မသွားသေးနဲ့', 'သူ ဘယ်မှာလဲ', 'ကျွန်တော် သွားမယ်'];
+  const lmMy = c.train([...my, ...my, ...my]);
+  assert.equal(c.best(lmMy, c.S.mymr, 'သူဘယံသှားလဲ'), 'သူဘယ်သွားလဲ'); // ် 를 ံ 로, ွ 를 ှ 로 읽은 것
+  for (const ok of my) assert.equal(c.best(lmMy, c.S.mymr, ok), ok, ok);
+  const lo = ['ບ່ອນນີ້ດຽວນີ້', 'ຂ້ອຍບໍ່ຮູ້', 'ຢູ່ນີ້', 'ມື້ນີ້', 'ນີ້ແມ່ນຫຍັງ'];
+  // 시험 글이 작아 증거가 적다 — 벌점만 낮춘 같은 표(진짜 벌점 8 은 단어장 1만 줄에 맞춘 값)
+  const lmLo = c.train(Array(10).fill(lo).flat());
+  const laoo = { ...c.S.laoo, pen: 3 };
+  assert.equal(c.best(lmLo, laoo, 'ບ່ອນນີດຽວນີ້'), 'ບ່ອນນີ້ດຽວນີ້'); // 빠진 성조 ້
+  for (const ok of lo) assert.equal(c.best(lmLo, laoo, ok), ok, ok);
+});

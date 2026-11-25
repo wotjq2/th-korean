@@ -82,3 +82,17 @@ test('유튜브: 내 언어가 다른 언어여도 같은 규칙', () => {
   assert.equal(spoken('ms')(['id:asr'], null, ['']), 'ms'); // 말레이어 사용자는 인도네시아어 말도 알아듣는다
   assert.equal(spoken('he')(['iw:asr'], null, ['']), 'iw'); // 유튜브는 히브리어를 iw 로 쓴다
 });
+
+// 1.37.3 사람이 만든 내 언어 자막이 있으면 그것을 그대로(사용자 2026-11-26: 유튜브 중국 영화의 한국어 자막과 우리 자막이
+// 너무 달랐다 — 우리는 영상에 박힌 중국어를 읽어 기계 번역했다). 틱톡도 만든 사람이 올린 내 언어 자막을 먼저.
+test('틱톡: 만든 사람이 올린 한국어 자막 > 원래 말 자막(자동) > 틱톡이 옮긴 한국어, 한국어 영상은 띄우지 않음', () => {
+  const s = require('./lib/load').load({ myLang: 'ko' });
+  const pick = s.peek('ttPick');
+  const zhAuto = { lang: 'zh-Hans', raw: 'cmn-Hans-CN', urls: ['a'], auto: true, orig: true, tr: '0' };
+  const koHuman = { lang: 'ko', raw: 'kor-KR', urls: ['b'], auto: false, orig: false, tr: '0' };
+  const koMt = { lang: 'ko', raw: 'kor-KR', urls: ['c'], auto: false, orig: false, tr: '1' };
+  assert.equal(pick({ caps: [zhAuto, koMt, koHuman] }).urls[0], 'b'); // 사람이 올린 한국어
+  assert.equal(pick({ caps: [zhAuto, koMt] }).urls[0], 'a'); // 틱톡 기계 번역 한국어보다 원래 말을 우리가 옮긴다(예전 그대로)
+  assert.equal(pick({ caps: [{ ...zhAuto, lang: 'ko', raw: 'kor-KR' }, koHuman] }), null); // 한국어로 말하는 영상
+  assert.equal(pick({ caps: [koMt] }).urls[0], 'c'); // 틱톡이 옮긴 것만 있으면 내 언어 것을 그대로(예전 그대로)
+});

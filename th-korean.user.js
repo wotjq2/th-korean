@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.37.2
+// @version      1.37.3
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -7509,7 +7509,7 @@
   const YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
   const DUB_KEY = 'videoDub'; // { videoVol, dubVol, subs, voice }
   // 한국어 자막이 기본이고 목소리(더빙)는 고를 때만(사용자 요청 2026-11-01). autoSubs: 외국어 영상이면
-  // 사람이 만든 한국어 자막이 없을 때 우리 한국어 자막을 저절로 켠다.
+  // 우리 한국어 자막을 저절로 켠다(사람이 만든 한국어 자막이 있으면 그것을 그대로 — 1.37.3).
   // maxSpeed: 목소리를 보통의 몇 배까지 빠르게 할지(알아들을 수 있는 한도, 창에서 1~2.5배).
   // subScale: 자막 글씨 크기(창에서 50~150%).
   const DUB_DEFAULTS = {
@@ -8159,7 +8159,12 @@
   function ttPick(it) {
     const caps = (it && it.caps) || [];
     const orig = caps.find((c) => c.orig) || caps.find((c) => c.tr === '0') || null;
-    if (orig) return ttMine(ttLang(orig)) ? null : orig;
+    if (orig && ttMine(ttLang(orig))) return null;
+    // 만든 사람이 올린 내 언어 자막(자동 생성·틱톡 번역이 아닌 것)이 있으면 그것을 그대로 — 유튜브와 같은 까닭(1.37.3):
+    // 사람이 쓴 자막을 두고 기계 번역을 띄우면 뜻이 달라진다.
+    const human = caps.find((c) => !c.auto && !c.orig && c.tr === '0' && ttMine(ttLang(c)));
+    if (human) return human;
+    if (orig) return orig;
     // 틱톡이 옮겨 둔 자막만 있으면 내 언어 것을 그대로(번역 없이), 아니면 아무것이나 옮긴다.
     return caps.find((c) => ttMine(ttLang(c))) || caps[0] || null;
   }
@@ -8588,7 +8593,10 @@
           d.status = KO_VIDEO;
           return null;
         }
-        if (d.auto && YT_MY_RE.test(spoken)) return null; // 사람이 만든 한국어 자막이 있는 외국어 영상 — 유튜브 CC 로 보면 된다
+        // 사람이 만든 한국어(내 언어) 자막이 있는 외국어 영상은 그 자막을 그대로 우리 자막으로 띄운다(옮기지 않음).
+        // 예전에는 저절로 켤 때 '유튜브 CC 로 보면 된다' 며 비켜 섰는데, 그 사이 화면 글자 읽기(hsTick)가 영상에 박힌 중국어
+        // 자막을 읽어 기계 번역한 한국어를 띄워, 사람이 만든 유튜브 한국어 자막과 크게 달랐다(사용자 2026-11-26, 중국 영화
+        // 51yBVKEvYB0 — 한국어 등 12개 언어 자막이 있는 영상). 우리 자막을 띄우면 유튜브 자막 칸은 감추므로 두 번 보이지 않는다.
         const tries = [];
         if (!YT_MY_RE.test(spoken) && has(YT_MY, '')) tries.push([YT_MY, '']);
         if (asr && has(spoken, '')) tries.push([spoken, '']);
@@ -8601,8 +8609,6 @@
           const cues = await asked[k];
           if (d !== dub) return null;
           if (cues && cues.length) {
-            // 사람이 만든 한국어 자막이 있는 영상 — 저절로는 켜지 않는다(유튜브 CC 로 보면 된다).
-            if (d.auto && lang === YT_MY) return null;
             d.lang = lang.split('-')[0].toLowerCase(); // 앞 두 글자만 자르면 fil → fi(핀란드어), yue → yu 가 됐다
             d.asr = kind === 'asr'; // 자동 자막 — 화면에 박힌 자막이 있으면 그쪽을 보인다(hsTick)
             if (d.lang !== YT_MY) d.koFallback = async () => (await get(mk(base, lang, kind, YT_TLANG))) || [];
@@ -8871,7 +8877,7 @@
       // 크롬 설정의 '실시간 번역'(사용자 2026-11-03: 이 창에서 껐다 켜게). 상태는 도우미가 읽은 크롬 설정(liveCc.tr).
       check("크롬 '실시간 번역' (끄면 한국어 영상엔 자막을 안 띄우고, 외국어는 단어집으로 옮김)", 'chromeTr', chromeLiveTranslate),
       // 다른 사이트는 '한국어 자막 켜기' 자체가 자동(켜 두면 영상마다)이라 따로 두지 않는다.
-      ...(YOUTUBE ? [check('외국어 영상은 한국어 자막 자동으로 (한국어 CC 없을 때)', 'autoSubs')] : [])
+      ...(YOUTUBE ? [check('외국어 영상은 한국어 자막 자동으로 (사람이 만든 한국어 CC 가 있으면 그것을)', 'autoSubs')] : [])
     );
     // 창 안의 클릭·키가 영상(재생·멈춤, 화살표 = 앞뒤로 감기)으로 새지 않게.
     for (const t of ['click', 'mousedown', 'keydown', 'keyup', 'wheel']) p.addEventListener(t, (e) => e.stopPropagation());

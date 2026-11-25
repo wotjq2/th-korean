@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         태국 사이트 한국어
 // @namespace    https://github.com/local/th-korean
-// @version      1.37.1
+// @version      1.37.2
 // @description  외국어 사이트·메신저·영상을 내 언어(기본 한국어)로 읽고, 내 언어로 쓴 말을 30개 언어로 바꿉니다. 지원: 라자다·쇼피 여러 나라(그 나라 말로 검색, 상품 이름·사진 글자), 아무 사이트 입력칸(외국어 페이지는 그 페이지 언어로), 페이스북 메신저(어느 언어든 ↔ 내 언어), 유튜브·웹 영상 자막(외국어 영상은 자동) + 목소리 더빙(선택)
 // @author       local
 // @match        https://www.lazada.co.th/*
@@ -512,7 +512,8 @@
       { id: 'mn', label: '몽', name: '몽골어', mt: 'mn', chip: '→ МОН', glossary: 'glossary-mn.txt', reverse: 'reverse-mn.txt', reverseKo: 'reverse-mn-ko.txt' },
     ],
     // 무료 번역 주소를 써 보는 차례: gtx(translate_a/single), dict(translate_a/t)
-    translate: { order: ['gtx', 'dict'] },
+    // near: 구글이 막혔고 크롬 내장 번역기에 그 언어가 없을 때 내가 쓴 말을 대신 옮길 가까운 언어(1.37.2)
+    translate: { order: ['gtx', 'dict'], near: { ms: 'id', yue: 'zh-TW', lo: 'th', ur: 'en', mn: 'en', tl: 'en', km: 'en', my: 'en' } },
     video: {
       liveMaxChars: 60, // 실시간 자막을 영상 위에 보일 때 끝에서 이만큼(글자)
       liveMaxAgeMs: 6000, // 이만큼 새 말이 없으면 실시간 자막을 내린다
@@ -795,7 +796,7 @@
       : [];
     return {
       languages: rcLanguages(j.languages),
-      translate: { order: order.length ? order : D.translate.order },
+      translate: { order: order.length ? order : D.translate.order, near: rcNear(j.translate && j.translate.near) },
       video: Object.fromEntries(Object.entries(D.video).map(([k, d]) => [k, rcNum(v[k], d, ...RC_VIDEO_RANGE[k])])),
       hardsub: {
         fallback: Array.isArray(j.hardsub && j.hardsub.fallback)
@@ -821,6 +822,14 @@
       report: rcReport(j.report),
       speech: rcSpeech(j.speech),
     };
+  }
+
+  // 가까운 언어 표: { 언어 코드: 언어 코드 } 만. 칸이 없거나 틀리면 기본 표, {} 면 끈다.
+  function rcNear(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return { ...RC_DEFAULT.translate.near };
+    const out = {};
+    for (const [k, v] of Object.entries(o)) if (RC_LANG.test(k) && typeof v === 'string' && RC_LANG.test(v) && k !== v) out[k.toLowerCase()] = v;
+    return out;
   }
 
   // 말투 칸: 신호는 짧은 글, 언어는 코드 목록, 바꿀 말·뗄 부름말은 짧은 글 목록만. 틀린 칸은 그 칸만 기본값으로.
@@ -1820,6 +1829,21 @@
           return out;
         }
         why = builtinWhy;
+        // 가까운 말(1.37.2, 사용자 2026-11-25 "네, 넣어 줘"): 크롬 내장 번역기에 옮길 언어가 없으면(우르두·광둥·몽골·말레이·필리핀·
+        // 크메르·라오·미얀마 — 2026-11-25 크롬에 물어본 것) 가까운 언어로(말레이 → 인도네시아, 광둥 → 번체 중국어, 라오 → 태국,
+        // 나머지 → 영어). 상대가 받는 언어가 바뀌므로 내가 쓴 말을 옮길 때(opt.near — koreanToLang)만, 그리고 알린다.
+        // 페이지·자막 번역은 결과를 캐시에 그 언어로 남기므로 쓰지 않는다.
+        const near = opt.near && why === 'missing' && RC.translate.near[String(to).toLowerCase()];
+        if (near) {
+          const out2 = await builtinTranslate(text, from, near);
+          if (out2 != null) {
+            freeLastWay = 'near';
+            freeNearTo = near;
+            noteNearUsed(to, near);
+            return out2;
+          }
+          why = 'missing';
+        }
         continue;
       }
       if (fail && !fail.rateLimited) continue; // 인터넷이 안 되면 다른 구글 주소도 안 된다 — 내장 번역기만 본다
@@ -1892,7 +1916,16 @@
   }
   // 마지막 무료 번역이 어느 길이었나 — 검색 안내 '(…)' 에 그대로 보인다(내장 번역기였으면 그렇다고).
   let freeLastWay = '';
-  const freeLabel = (google = '무료 API') => (freeLastWay === 'builtin' ? '크롬 내장 번역기' : google);
+  let freeNearTo = ''; // freeLastWay === 'near' 일 때 대신 옮긴 언어
+  const freeLabel = (google = '무료 API') =>
+    freeLastWay === 'builtin' ? '크롬 내장 번역기' : freeLastWay === 'near' ? `크롬 내장 번역기 · ${builtinName(freeNearTo)}로` : google;
+  let nearNotified = 0;
+  function noteNearUsed(to, near) {
+    const now = Date.now();
+    if (now - nearNotified < 60000) return;
+    nearNotified = now;
+    toast(`구글 번역이 막혀 있고 크롬 내장 번역기에 ${builtinName(to)}가 없어 ${builtinName(near)}로 옮겼습니다.\n상대가 읽을 수 있는지 확인해 주세요. 구글이 풀리면 저절로 ${builtinName(to)}로 돌아갑니다.`, 7000);
+  }
   // 원문 언어. 'auto' 면 글자로(태·일·한·중·히브리·크메르…), 로마자면 크롬 언어 알아보기(받아 둔 때만), 그래도 모르면 페이지 언어.
   async function builtinSource(text, from, usePageLang = true) {
     if (from && from !== 'auto') return from;
@@ -2054,8 +2087,9 @@
     return first;
   }
 
-  async function freeTranslateOne(text, from, to) {
-    return freeRaw(text, from, to);
+  // opt.near: 내장 번역기에 그 언어가 없으면 가까운 언어로(freeRaw — 내가 쓴 말을 옮길 때만)
+  async function freeTranslateOne(text, from, to, opt) {
+    return freeRaw(text, from, to, undefined, opt || {});
   }
 
   // 여러 줄을 한 번에 — dict-chrome-ex 는 q 를 여러 개 받아 같은 차례의 배열로 돌려준다(sl=auto 면 [["번역", "th"], …]).
@@ -7028,7 +7062,7 @@
     if (!MY_KO) {
       const crossed = await crossLookup(value, MY2, lang.id);
       if (crossed) return { thai: crossed, via: '사전' };
-      return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id), via: freeLabel('번역') };
+      return { thai: await freeTranslateOne(value, 'auto', lang.mt || lang.id, { near: true }), via: freeLabel('번역') };
     }
     if (lang.id === 'th') {
       await ensureGlossary();
@@ -7136,7 +7170,7 @@
         /* 아래 길로 */
       }
     }
-    return speechSwap(await freeTranslateOne(value, 'ko', mt), lang);
+    return speechSwap(await freeTranslateOne(value, 'ko', mt, { near: true }), lang);
   }
 
   // 사이트가 입력칸을 새 칸으로 바꿔 끼우는 일이 있다 — 위키백과는 검색칸을 처음 누르면 Vue 검색칸으로 바꾸며 그때 값을

@@ -130,3 +130,30 @@ test('내장 번역기도 못 옮긴 까닭을 실패 안내에: 영어로 샘·
   const s4 = load({ mt: 'blocked' });
   await assert.rejects(free(s4)('안녕하세요', 'ko', 'th'), (e) => /무료 번역 API가 요청을 일시적으로 거절했습니다/.test(e.message));
 });
+
+// 1.37.2 가까운 말(사용자 2026-11-25 "네, 넣어 줘"): 구글이 막혔고 내장 번역기에 그 언어가 없으면(말레이·라오·광둥 …)
+// 내가 쓴 말은 가까운 언어로(말레이 → 인도네시아, 라오 → 태국, 광둥 → 번체 중국어, 나머지 → 영어) — 알리고, 페이지 번역은 그대로.
+test('가까운 말: 내가 쓴 말은 내장 번역기에 없는 언어 대신 가까운 언어로, 알린다', async () => {
+  const fsx = require('fs');
+  const config = fsx.readFileSync(require('path').join(require('./lib/load').ROOT, 'config.json'), 'utf8');
+  const s = load({ config, mt: 'blocked', translator: { 'ko>id': 'available', 'ko>th': 'available', 'ko>en': 'available' } });
+  const lang = (id) => s.peek('TYPE_LANGS').find((l) => l.id === id);
+  const k2l = s.peek('koreanToLang');
+  const ms = await k2l('내일 공항에서 만나자', lang('ms'));
+  assert.equal(ms.thai, '내장(ko>id):내일 공항에서 만나자');
+  assert.match(ms.via, /인도네시아어로/);
+  assert.ok(s.toasts.some((t) => /말레이어가 없어 인도네시아어로/.test(t)), `안내 없음: ${s.toasts.join(' | ')}`);
+  assert.equal((await k2l('내일 공항에서 만나자', lang('lo'))).thai, '내장(ko>th):내일 공항에서 만나자');
+  assert.equal((await k2l('내일 공항에서 만나자', lang('km'))).thai, '내장(ko>en):내일 공항에서 만나자');
+  // 페이지·자막처럼 캐시에 남는 번역(freeTranslateOne 에 near 없음)은 예전처럼 실패
+  await assert.rejects(free(s)('내일 공항에서 만나자', 'ko', 'ms'));
+});
+
+test('가까운 말: config translate.near 로 바꾸거나 {} 로 끈다', async () => {
+  const fsx = require('fs');
+  const base = JSON.parse(fsx.readFileSync(require('path').join(require('./lib/load').ROOT, 'config.json'), 'utf8'));
+  const off = load({ config: JSON.stringify({ ...base, translate: { ...(base.translate || {}), near: {} } }), mt: 'blocked', translator: { 'ko>id': 'available' } });
+  await assert.rejects(off.peek('koreanToLang')('내일 공항에서 만나자', off.peek('TYPE_LANGS').find((l) => l.id === 'ms')));
+  const en = load({ config: JSON.stringify({ ...base, translate: { ...(base.translate || {}), near: { ms: 'en' } } }), mt: 'blocked', translator: { 'ko>en': 'available' } });
+  assert.equal((await en.peek('koreanToLang')('내일 공항에서 만나자', en.peek('TYPE_LANGS').find((l) => l.id === 'ms'))).thai, '내장(ko>en):내일 공항에서 만나자');
+});

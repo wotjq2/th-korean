@@ -66,6 +66,25 @@ test('용어집 찾기에는 쓰지 않는다(용어집 키는 사용자가 친 
   assert.deepEqual(sent(s), []);
 });
 
+test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 en·vi·ja 에 넣어 보고 고름)', () => {
+  const p = load({ config: require('../config.json') }).peek('koPrep');
+  assert.equal(p('ㄱㅊ 나 혼자 갈게'), '괜찮아 나 혼자 갈게'); // 구글: 'ㄱㅊ I'll go alone'
+  assert.equal(p('아 킹받네'), '아 짜증 나네'); // 'Ah, you get king.'
+  assert.equal(p('나 지금 개킹받았어'), '나 지금 정말 짜증 났어'); // 'I'm fucked now'
+  assert.equal(p('오늘 칼퇴했어'), '오늘 정시 퇴근했어'); // 'I quit my job today'
+  assert.equal(p('생파 언제야'), '생일 파티 언제야'); // 'fresh green onions'
+  assert.equal(p('나 그거 시러'), '나 그거 싫어'); // 'I'm going to buy that'
+  assert.equal(p('마자 마자'), '맞아 맞아'); // 'As soon as soon'
+  assert.equal(p('나 읽씹당했어'), '걔가 내 메시지 읽고 답장을 안 했어'); // 'I was read and fucked'
+  assert.equal(p('왜 읽씹해'), '왜 읽고 답장 안 해');
+  assert.equal(p('담주에 보자'), '다음 주에 보자');
+  assert.equal(p('솔까말 별로야'), '솔직히 말해서 별로야');
+  // 다른 말은 그대로
+  for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
+    assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);
+  }
+});
+
 test('config.json koPrep 은 뒤에 붙고, 틀린 정규식·모르는 자리는 버린다', () => {
   const p = load({ config: { koPrep: [['ㅂㄹ', ' 별로 ', 'jamo'], ['(', 'x'], ['겁나', '정말'], ['a', 'b', 'nowhere']] } }).peek('koPrep');
   assert.equal(p('ㅂㄹ 맛없어'), '별로 맛없어');

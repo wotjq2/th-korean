@@ -53,6 +53,26 @@ test('config.json: 광둥어 화면 자막 글자 인식 실수를 고치고, �
   }
 });
 
+test('config.json: 중국 드라마 관용구·호칭을 구글이 아는 말로, 다른 뜻은 그대로(2026-11-26)', () => {
+  const cfg = require('../config.json');
+  const sub = load({ config: cfg }).peek('subPrep');
+  assert.equal(sub('现在外面风声那么紧', 'zh-CN'), '现在外面形势那么紧张');
+  assert.equal(sub('現在外面風聲很緊', 'zh-TW'), '現在外面形势很紧张');
+  assert.equal(sub('马光良你个杀千刀的', 'zh-CN'), '马光良你个该死的');
+  assert.equal(sub('他这是黄鼠狼给鸡拜年，没安好心', 'zh-CN'), '他这是不怀好意');
+  assert.equal(sub('有没有对象啊', 'zh-CN'), '有没有恋人啊');
+  assert.equal(sub('我对象被接到运输队了', 'zh-CN'), '我恋人被接到运输队了');
+  assert.equal(sub('是不是告我状了', 'zh-CN'), '是不是说我的坏话了');
+  assert.equal(sub('你告诉我我找他算账去', 'zh-CN'), '你告诉我我找他理论去');
+  assert.equal(sub('朱老大的媳妇周英子', 'zh-CN'), '朱老大的妻子周英子');
+  assert.equal(sub('她小叔子来了', 'zh-CN'), '她丈夫的弟弟来了');
+  assert.equal(sub('你是听不懂人话？', 'zh-CN'), '你是听不懂话？');
+  // 다른 뜻의 같은 글자는 그대로
+  for (const s of ['这是我们的研究对象', '所有对象都要检查', '我对象棋没兴趣', '他对象征意义很敏感', '我媳妇怀孕了', '小姨来了', '你娶媳妇了吗', '我们去吃饭吧']) {
+    assert.equal(sub(s, 'zh-CN'), s, s);
+  }
+});
+
 // ytSpokenFrom(자막 목록, 영상 정보, 변형 목록) → 말 언어. 내 언어면 YT_MY 를 돌려준다(그러면 번역 자막을 안 띄운다).
 const spoken = (myLang) => load({ myLang }).peek('ytSpokenFrom');
 

@@ -79,6 +79,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('왜 읽씹해'), '왜 읽고 답장 안 해');
   assert.equal(p('담주에 보자'), '다음 주에 보자');
   assert.equal(p('솔까말 별로야'), '솔직히 말해서 별로야');
+  assert.equal(p('이거 좀 느끼하다'), '이거 좀 기름지다'); // 'I feel a bit like this'
+  assert.equal(p('걔 정들었어요'), '걔 많이 친해지고 정이 들었어요'); // 'He made love'
+  assert.equal(p('배가 출출해'), '배가 조금 고파');
+  assert.equal(p('오랫만이야'), '오랜만이야');
+  assert.equal(p('애정 들었어'), '애정 들었어'); // 낱말 속 '정' 은 그대로
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

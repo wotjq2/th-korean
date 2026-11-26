@@ -91,6 +91,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('조심히 들어가세요'), '집에 조심히 가세요'); // 'Go in carefully'
   assert.equal(p('걔 이제 철 들었어'), '걔 이제 어른스러워졌어'); // 일본어 '鉄を聞いた'
   for (const s of ['철도 들었어', '눈이 높게 쌓였어', '그냥 그래서 그랬어']) assert.equal(p(s), s, s);
+  assert.equal(p('어제 바람맞았어'), '어제 약속했는데 상대가 안 나왔어'); // 'I got caught in the wind'
+  assert.equal(p('간 떨어질 뻔했어'), '너무 놀라서 심장이 멎을 뻔했어'); // 'I almost lost my liver'
+  assert.equal(p('발등에 불 떨어졌어'), '급한 일이 생겼어'); // 'My feet are on fire'
+  assert.equal(p('누워서 떡 먹기지'), '아주 쉬운 일이지'); // 'Lie down and eat rice cake'
+  for (const s of ['손이 많이 가는 일', '간이 커서 병원 갔어']) assert.equal(p(s), s, s); // 글자 그대로·꾸미는 꼴은 그대로
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

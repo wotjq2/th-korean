@@ -190,6 +190,9 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('재수해'), '대학 입시를 한 번 더 준비해'); // 'Flood again'
   assert.equal(p('학식 먹자'), '학교 식당 밥 먹자'); // 'Let's eat knowledge'
   for (const s of ['재수 없어', '야자수 아래', '우리 집안 족보', '학식이 풍부해']) assert.equal(p(s), s, s);
+  assert.equal(p('대리 불러'), '대리운전 기사 불러'); // 'call the assistant manager'
+  assert.equal(p('김 대리 불러'), '김 대리 불러'); // 사람(대리님)은 그대로
+  assert.equal(p('말년 병장이야'), '제대 직전 병장이야'); // 'He's a late sergeant.'(죽은)
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

@@ -54,7 +54,10 @@ describe('번역 캐시 (진짜 크롬 + 확장)', () => {
 
   test('아무것도 안 하는 탭에 큰 캐시가 가지 않는다(옮기며 지운 알림 한 번뿐)', T, async () => {
     const chg = await idle.evIso(`window.__chg`);
-    const big = chg.filter(([, n]) => n > 20000);
+    // 원격 설정(config.json)은 1시간에 한 번 저장되고 한국어 다듬기·자막 규칙이 계속 늘어나므로 따로 넉넉히 둔다(2026-11-28).
+    // 다른 값(번역 캐시 등)은 20,000자 — 저장할 때마다 0.5 MB 가 모든 탭에 가던 문제를 막는 기준.
+    const limit = (k) => (k === 'gm:remoteConfig' ? 200000 : 20000);
+    const big = chg.filter(([k, n]) => n > limit(k));
     assert.deepEqual(big, [], `큰 바뀜 알림: ${JSON.stringify(big)}`);
   });
 

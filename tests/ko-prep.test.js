@@ -151,6 +151,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('쌍수 했어'), '쌍꺼풀 수술 했어'); // 'I double-wielded'
   assert.equal(p('개이득'), '완전 이득'); // 'dog gain'
   for (const s of ['당근 사 왔어', '당근 케이크', '공구 상자', '쌍수 들고 환영', '멍이 들었어']) assert.equal(p(s), s, s);
+  // 말머리·감탄 — 칭찬하는 '미쳤다' 만, 욕은 그대로
+  assert.equal(p('몰겠다'), '모르겠다'); // 'I will drive'
+  assert.equal(p('아 참 그거 샀어?'), '아 그런데 그거 샀어?'); // 'did you really buy that?'
+  assert.equal(p('이 집 맛 미쳤어'), '이 집 맛 정말 대단해'); // 태국어 'บ้า'(미쳤다, 나쁜 뜻)
+  for (const s of ['내가 차 몰겠다', '참 좋다', '너 미쳤어?', '걔 미쳤어']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

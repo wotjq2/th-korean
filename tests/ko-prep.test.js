@@ -162,6 +162,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('빛 좋은 개살구네'), '겉만 좋고 실속이 없네'); // 일본어 '光の良い犬肉'
   assert.equal(p('코끝이 찡해'), '감동해서 눈물이 날 것 같아'); // 'The tip of my nose stings'
   assert.equal(p('짠하게 건배'), '짠하게 건배');
+  // 사자성어·몸 관용구 3
+  assert.equal(p('자업자득이지'), '자기가 한 일의 결과야'); // 'It's a blessing to be self-employed'
+  assert.equal(p('유유상종이네'), '비슷한 사람끼리 모이네'); // 'It's a species of oil.'
+  assert.equal(p('적반하장도 유분수지'), '잘못한 사람이 오히려 화를 내네'); // 'It's a red flag.'
+  assert.equal(p('그 애가 눈에 밟혀'), '그 애가 자꾸 생각나고 걱정돼'); // 'That kid caught my eye'
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

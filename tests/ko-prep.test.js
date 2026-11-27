@@ -198,6 +198,12 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('얼굴이 반쪽이 됐네'), '얼굴이 많이 야위었네'); // 'My face has become half full'
   assert.equal(p('인물이 좋네'), '잘생겼네'); // 'The person is nice'
   for (const s of ['3일 동안이야', '그 동안이다']) assert.equal(p(s), s, s);
+  // 케이팝 팬 말 — 음방 = 영어·베트남어·태국어 'I saw a sex room'
+  assert.equal(p('음방 봤어'), '음악 방송 봤어');
+  assert.equal(p('피켓팅 실패했어'), '경쟁이 치열한 티켓 예매 실패했어'); // 'Picketing failed'
+  assert.equal(p('본방 사수해야지'), '방송을 실시간으로 꼭 봐야지'); // 'protect the actual room'
+  assert.equal(p('그 노래 역주행 중이야'), '그 노래가 뒤늦게 다시 인기를 얻고 있어'); // 'running backwards'
+  for (const s of ['차가 역주행 중이야', '떡밥 사러 가자']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

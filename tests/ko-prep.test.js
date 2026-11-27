@@ -145,6 +145,12 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('오히려 좋아'), '오히려 더 좋아'); // 'rather good'
   assert.equal(p('찐친이야'), '진짜 친한 친구야'); // 'It's Jinchin.'
   for (const s of ['각도가 이상해', '썰매 타자', '댕댕 울린다', '현타임']) assert.equal(p(s), s, s);
+  // 쇼핑·게임·외모 — 글자 그대로 뜻(채소 당근, 연장 공구, 쌍수 들고)은 그대로
+  assert.equal(p('당근에 올렸어'), '중고 거래 앱에 올렸어'); // 'I put it on carrots'
+  assert.equal(p('공구 같이 할래'), '공동 구매 같이 할래'); // 'work with tools'
+  assert.equal(p('쌍수 했어'), '쌍꺼풀 수술 했어'); // 'I double-wielded'
+  assert.equal(p('개이득'), '완전 이득'); // 'dog gain'
+  for (const s of ['당근 사 왔어', '당근 케이크', '공구 상자', '쌍수 들고 환영', '멍이 들었어']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

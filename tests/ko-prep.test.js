@@ -193,6 +193,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('대리 불러'), '대리운전 기사 불러'); // 'call the assistant manager'
   assert.equal(p('김 대리 불러'), '김 대리 불러'); // 사람(대리님)은 그대로
   assert.equal(p('말년 병장이야'), '제대 직전 병장이야'); // 'He's a late sergeant.'(죽은)
+  // 외모·칭찬 — '3일 동안이야'(기간)는 그대로
+  assert.equal(p('너 진짜 동안이다'), '너 진짜 나이보다 어려 보인다'); // 일본어 '本当の間'
+  assert.equal(p('얼굴이 반쪽이 됐네'), '얼굴이 많이 야위었네'); // 'My face has become half full'
+  assert.equal(p('인물이 좋네'), '잘생겼네'); // 'The person is nice'
+  for (const s of ['3일 동안이야', '그 동안이다']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

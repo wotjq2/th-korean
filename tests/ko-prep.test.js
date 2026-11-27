@@ -184,6 +184,12 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('다음 주에 상견례야'), '다음 주에 결혼 전에 두 집안 부모님이 처음 만나는 자리야'); // 'I have a meeting next week.'
   assert.equal(p('백일 기념이야'), '사귄 지 100일 기념이야'); // 'the 100th anniversary'
   for (const s of ['네 차례야', '아기 백일 기념 사진']) assert.equal(p(s), s, s);
+  // 집·학교 — '재수 없어'(운)·야자수·집안 족보·'학식이 풍부해' 는 그대로
+  assert.equal(p('오늘 야자 있어'), '오늘 밤에 학교에서 하는 자율 학습 있어'); // 'I have palm trees today'
+  assert.equal(p('족보 구했어'), '작년 시험 문제 구했어'); // 'I got the genealogy'
+  assert.equal(p('재수해'), '대학 입시를 한 번 더 준비해'); // 'Flood again'
+  assert.equal(p('학식 먹자'), '학교 식당 밥 먹자'); // 'Let's eat knowledge'
+  for (const s of ['재수 없어', '야자수 아래', '우리 집안 족보', '학식이 풍부해']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

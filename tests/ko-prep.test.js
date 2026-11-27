@@ -103,6 +103,13 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('오늘 텐션 높다'), '오늘 기분이 들떠 있다'); // 'Tension is high today'
   assert.equal(p('콜!'), '좋아!');
   for (const s of ['좋은 서비스예요', '서비스로 연결해 드릴게요', '헬스 트레이너', '알바트로스', '오바마 대통령', '콜 택시 불러', 'ASAP']) assert.equal(p(s), s, s);
+  // 생활 말 — 방콕(집에만 있기)은 동사 꼴만, 도시 방콕은 그대로
+  assert.equal(p('주말엔 방콕할래'), '주말엔 집에만 있을래'); // 'I want to go to Bangkok this weekend'
+  assert.equal(p('주말에 방콕했어'), '주말에 집에만 있었어');
+  assert.equal(p('해장하러 가자'), '숙취 해소하러 가자'); // 'Let's go hang out'
+  assert.equal(p('지름신이 왔어'), '사고 싶은 마음을 못 참겠어'); // 'A fool has come'
+  assert.equal(p('오후 반차야'), '오후 반나절 휴가야'); // 'It's half afternoon'
+  for (const s of ['다음 주에 방콕 가', '방콕 가자', '방콕에서 만나', '방콕 중이야', '해장국 먹자', '짤렸어']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

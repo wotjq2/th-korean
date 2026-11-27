@@ -110,6 +110,13 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('지름신이 왔어'), '사고 싶은 마음을 못 참겠어'); // 'A fool has come'
   assert.equal(p('오후 반차야'), '오후 반나절 휴가야'); // 'It's half afternoon'
   for (const s of ['다음 주에 방콕 가', '방콕 가자', '방콕에서 만나', '방콕 중이야', '해장국 먹자', '짤렸어']) assert.equal(p(s), s, s);
+  // 식당·택시 — 바꾼 말의 받침이 달라지면 조사도 맞춘다
+  assert.equal(p('곱빼기로 주세요'), '양을 두 배로 주세요'); // 'Please give me a smaller number', 태국어 '전화번호 주세요'
+  assert.equal(p('잔돈은 됐어요'), '잔돈은 가지세요'); // 'I have some change'
+  assert.equal(p('콘센트 어디 있어요'), '전기 콘센트 어디 있어요'); // 태국어·베트남어 '출구'
+  assert.equal(p('비번이 뭐야'), '비밀번호가 뭐야');
+  assert.equal(p('기사님 여기서 세워 주세요'), '운전기사님 여기서 세워 주세요'); // 일본어 '記事'
+  for (const s of ['택배 기사님이 왔어', '수리기사님', '전기 콘센트']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

@@ -156,6 +156,12 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('아 참 그거 샀어?'), '아 그런데 그거 샀어?'); // 'did you really buy that?'
   assert.equal(p('이 집 맛 미쳤어'), '이 집 맛 정말 대단해'); // 태국어 'บ้า'(미쳤다, 나쁜 뜻)
   for (const s of ['내가 차 몰겠다', '참 좋다', '너 미쳤어?', '걔 미쳤어']) assert.equal(p(s), s, s);
+  // 속담·느낌 말
+  assert.equal(p('꿩 먹고 알 먹고'), '일석이조'); // 'Eat pheasant and eat eggs'
+  assert.equal(p('그건 하늘의 별 따기야'), '그건 정말 어려운 일이야'); // 'picking stars in the sky'
+  assert.equal(p('빛 좋은 개살구네'), '겉만 좋고 실속이 없네'); // 일본어 '光の良い犬肉'
+  assert.equal(p('코끝이 찡해'), '감동해서 눈물이 날 것 같아'); // 'The tip of my nose stings'
+  assert.equal(p('짠하게 건배'), '짠하게 건배');
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

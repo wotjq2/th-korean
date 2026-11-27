@@ -204,6 +204,12 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('본방 사수해야지'), '방송을 실시간으로 꼭 봐야지'); // 'protect the actual room'
   assert.equal(p('그 노래 역주행 중이야'), '그 노래가 뒤늦게 다시 인기를 얻고 있어'); // 'running backwards'
   for (const s of ['차가 역주행 중이야', '떡밥 사러 가자']) assert.equal(p(s), s, s);
+  // 메신저·카페 문화
+  assert.equal(p('걔 칼답이야'), '걔 답장이 엄청 빨라'); // 'He's a kaldap'
+  assert.equal(p('상메 봤어?'), '상태 메시지 봤어?'); // 'Have you seen Sangme?'
+  assert.equal(p('예약 펑크 냈어'), '예약하고 안 갔어'); // 'I got a reservation puncture.'
+  assert.equal(p('썸남이랑 밥 먹었어'), '요즘 썸 타는 남자랑 밥 먹었어');
+  assert.equal(p('상메아리'), '상메아리');
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

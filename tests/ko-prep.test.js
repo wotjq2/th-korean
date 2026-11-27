@@ -210,6 +210,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('예약 펑크 냈어'), '예약하고 안 갔어'); // 'I got a reservation puncture.'
   assert.equal(p('썸남이랑 밥 먹었어'), '요즘 썸 타는 남자랑 밥 먹었어');
   assert.equal(p('상메아리'), '상메아리');
+  // 만남 말
+  assert.equal(p('오늘 번개 할래?'), '오늘 갑자기 모일래?'); // 'play lightning'
+  assert.equal(p('밥약 있어'), '밥 먹기로 한 약속 있어'); // 'I have rice medicine'
+  assert.equal(p('번따 당했어'), '모르는 사람이 내 전화번호를 물어봤어'); // 'I got hit hard'
+  assert.equal(p('번개가 쳤어'), '번개가 쳤어');
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

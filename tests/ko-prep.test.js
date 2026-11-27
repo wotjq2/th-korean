@@ -179,6 +179,11 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('순대 먹을래'), '순대(돼지 창자에 당면을 넣은 한국 음식) 먹을래');
   assert.equal(p('쌈 싸 먹자'), '상추에 고기를 싸서 먹자'); // 태국어 'ห่อหมก'(다른 요리)
   for (const s of ['순댓국 먹자', '아빠랑 붕어빵이네']) assert.equal(p(s), s, s);
+  // 명절·경조사
+  assert.equal(p('설날에 차례 지내'), '설날에 조상께 제사 지내'); // 'Celebrate Lunar New Year', 일본어 '順番に'
+  assert.equal(p('다음 주에 상견례야'), '다음 주에 결혼 전에 두 집안 부모님이 처음 만나는 자리야'); // 'I have a meeting next week.'
+  assert.equal(p('백일 기념이야'), '사귄 지 100일 기념이야'); // 'the 100th anniversary'
+  for (const s of ['네 차례야', '아기 백일 기념 사진']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

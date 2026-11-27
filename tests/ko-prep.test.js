@@ -96,6 +96,13 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('발등에 불 떨어졌어'), '급한 일이 생겼어'); // 'My feet are on fire'
   assert.equal(p('누워서 떡 먹기지'), '아주 쉬운 일이지'); // 'Lie down and eat rice cake'
   for (const s of ['손이 많이 가는 일', '간이 커서 병원 갔어']) assert.equal(p(s), s, s); // 글자 그대로·꾸미는 꼴은 그대로
+  // 한국식 영어·연애 속어
+  assert.equal(p('이거 서비스예요'), '이거 무료로 드리는 거예요'); // 'This is a service'
+  assert.equal(p('나 모쏠이야'), '나 연애 한 번도 안 해 본 사람이야'); // 'I'm Mosol'
+  assert.equal(p('걔 엄친아네'), '걔 완벽한 사람이네'); // 'You're a tough kid'
+  assert.equal(p('오늘 텐션 높다'), '오늘 기분이 들떠 있다'); // 'Tension is high today'
+  assert.equal(p('콜!'), '좋아!');
+  for (const s of ['좋은 서비스예요', '서비스로 연결해 드릴게요', '헬스 트레이너', '알바트로스', '오바마 대통령', '콜 택시 불러', 'ASAP']) assert.equal(p(s), s, s);
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

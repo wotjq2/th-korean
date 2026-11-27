@@ -167,6 +167,9 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('유유상종이네'), '비슷한 사람끼리 모이네'); // 'It's a species of oil.'
   assert.equal(p('적반하장도 유분수지'), '잘못한 사람이 오히려 화를 내네'); // 'It's a red flag.'
   assert.equal(p('그 애가 눈에 밟혀'), '그 애가 자꾸 생각나고 걱정돼'); // 'That kid caught my eye'
+  assert.equal(p('고진감래야'), '고생 끝에 좋은 날이 와'); // 'Gojingamraeya'
+  assert.equal(p('일취월장했네'), '실력이 정말 빨리 늘었네'); // 'I bought a day and a month.'
+  assert.equal(p('전화위복이 됐어'), '나쁜 일이 오히려 좋은 일이 됐어'); // 'The phone call was a blessing in disguise.'
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);

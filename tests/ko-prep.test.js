@@ -202,7 +202,8 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('음방 봤어'), '음악 방송 봤어');
   assert.equal(p('피켓팅 실패했어'), '경쟁이 치열한 티켓 예매 실패했어'); // 'Picketing failed'
   assert.equal(p('본방 사수해야지'), '방송을 실시간으로 꼭 봐야지'); // 'protect the actual room'
-  assert.equal(p('그 노래 역주행 중이야'), '그 노래가 뒤늦게 다시 인기를 얻고 있어'); // 'running backwards'
+  assert.equal(p('그 노래 역주행 중이야'), '그 노래 요즘 뒤늦게 다시 인기를 얻고 있어'); // 'running backwards'
+  assert.equal(p('그 영상 역주행 중이야'), '그 영상 요즘 뒤늦게 다시 인기를 얻고 있어'); // 예전 '그 영상가' — 조사를 붙이지 않는다
   for (const s of ['차가 역주행 중이야', '떡밥 사러 가자']) assert.equal(p(s), s, s);
   // 메신저·카페 문화
   assert.equal(p('걔 칼답이야'), '걔 답장이 엄청 빨라'); // 'He's a kaldap'
@@ -215,6 +216,35 @@ test('config.json: 초성체·요즘 말·귀여운 말끝 (2026-11-26, 구글 e
   assert.equal(p('밥약 있어'), '밥 먹기로 한 약속 있어'); // 'I have rice medicine'
   assert.equal(p('번따 당했어'), '모르는 사람이 내 전화번호를 물어봤어'); // 'I got hit hard'
   assert.equal(p('번개가 쳤어'), '번개가 쳤어');
+  // 2026-11-28 검토(말뭉치 44만 줄에 돌려 보고 구글 en·vi·ja·th 로 확인): 다른 낱말을 먹거나, 말이 겹치거나, 뜻이 뒤집히던 것
+  for (const s of [
+    '이름은 무엇입니까', // '제 이름은 …' = 'What is my name'
+    '집에 오자 마자 잤어', // 일본어 '家に帰りましょう'
+    '맛있게 잘 먹었습니다', // '맛있게 맛있게 … 감사합니다'
+    '그냥 그래 봤어', // 'I just saw it as average'
+    '알바니아에 가 봤어', '핫플레이트 추천해 줘', '피부 관리실 예약했어', '세븐에이스 가방', '과외활동 많이 해?', '생파리 같은 놈', '이거 개꿀맛이다',
+    '베란다에 고인물 냄새 나', '화분 고인물 버려', // 'old coriander'
+    '세금 계산해 주세요', '자동으로 계산해 줘', // 'I will pay the tax'
+    '종이 한 장만 빌려 줘', // '10,000 won of paper'
+    '야자 있어요?', // 코코넛 — 'self-study at school at night'
+    '장례식 조의금 얼마 해?',
+  ]) assert.equal(p(s), s, s);
+  assert.equal(p('이름은 메리예요'), '제 이름은 메리예요');
+  assert.equal(p('잘 먹었습니다'), '맛있게 잘 먹었습니다 감사합니다');
+  assert.equal(p('잘 먹었습니다. 감사합니다'), '맛있게 잘 먹었습니다. 감사합니다');
+  assert.equal(p('그냥 그래'), '그냥 보통이야');
+  assert.equal(p('오늘 알바야'), '오늘 아르바이트야');
+  assert.equal(p('관리실에 말했어'), '건물 관리 사무실에 말했어');
+  assert.equal(p('세븐에서 만나'), '세븐일레븐에서 만나');
+  assert.equal(p('이 게임 고인물들 너무 많아'), '이 게임 경력이 오래된 숙련자들 너무 많아'); // 일본어 '古いコリアンダー'(고수 = 풀)
+  assert.equal(p('결혼식에 축의금 얼마 내?'), '결혼식 축하금 얼마 내?'); // 예전 '결혼식에 결혼식 축하금'
+  assert.equal(p('축의금 얼마 내?'), '결혼식 축하금 얼마 내?');
+  assert.equal(p('조의금은 얼마나 해요?'), '장례식 조의금은 얼마나 해요?'); // '위로금' = 영어·베트남어·태국어 '보상금'
+  assert.equal(p('해외 직구 배송 얼마나 걸려?'), '해외 직접 구매 배송 얼마나 걸려?'); // 예전 '해외 해외 …'
+  assert.equal(p('여기 계산해 주세요'), '여기 결제할게요');
+  assert.equal(p('손님한테 갑질 당했어'), '손님한테 권력 남용을 당했어'); // 예전 '윗사람한테' — 손님이 윗사람이 됐다
+  assert.equal(p('갑질하는 손님'), '권력 남용하는 손님'); // 예전 'A customer treated unfairly by a superior'
+  assert.equal(p('프사가 예쁘다'), '프로필 이미지가 예쁘다'); // 예전 '프로필 사진가' = 'photographer'
   // 다른 말은 그대로
   for (const s of ['머리를 조아리다', '담주머니', '오지랖이 넓어', '불고기 먹자', '시러베아들', '조아라 씨', 'ㄷㄷ 무섭다']) {
     assert.equal(p(s), s === 'ㄷㄷ 무섭다' ? '덜덜 무섭다' : s, s);
